@@ -24,16 +24,27 @@ const task: VoiceInput = {
   receipt: "DEMO · #17 is open. Nothing has been posted.",
 };
 describe("ThinkFeel send composition", () => {
+  test("required delivery preserves sanitized failure reasons without raw fallback", async () => {
+    for (const reason of ["unavailable", "invalid_response"] as const) {
+      const voice = createVoice({
+        enabled: true, persona: PERSONA, required: true,
+        compose: async () => ({ status: "blocked", reason }),
+      });
+      expect(await Effect.runPromise(voice(task, signal()))).toEqual({
+        text: "", source: "model", reason,
+      });
+    }
+  });
   const composer = (rewrite: (draft: string) => unknown) => createThinkFeelComposer({
     key: "private-thinkfeel-key", persona: PERSONA, redact: redactor(["private-thinkfeel-key", "private-account-token"]),
     fetch: async (url, init) => {
-      expect(String(url)).toBe("https://playground.curvelabs.org/api/v1/generate");
+      expect(String(url)).toBe("https://playground.curvelabs.org/api/v1/personify");
       expect(init?.redirect).toBe("manual");
       const request = JSON.parse(String(init?.body));
       expect(request.personaId).toBe(PERSONA);
-      expect(request.includeVariations).toBe(false);
+      expect(typeof request.raw).toBe("string");
       expect(String(init?.body)).not.toContain("private-account-token");
-      return Response.json({ status: "success", result: { finalReply: rewrite(JSON.parse(request.messages.at(-1).content).DRAFT) } });
+      return Response.json({ personified: rewrite(request.raw) });
     },
   });
   test("renders real wording while preserving numerical and source anchors and removing secrets", async () => {

@@ -40,13 +40,18 @@ export class Journal {
   scopeVersion(scope: string): number {
     return Number((this.db.prepare("SELECT COUNT(*) AS n FROM journal WHERE scope=?").get(scope) as Row).n);
   }
+  private depth = 0;
+  private inside<T>(fn: () => T): T { this.depth++; try { return fn(); } finally { this.depth--; } }
   private transaction<T>(fn: () => T): T {
-    return this.db.transaction(fn);
+    if (this.depth) return fail("nested_write", "A read snapshot cannot be escalated to a write");
+    return this.db.transaction(() => this.inside(fn));
   }
-  /** A consistent read view, including heads and revocation checks. No writes inside fn. */
+  /** One consistent snapshot; nested reads share it, including heads and suppression checks. */
   read<T>(fn: () => T): T {
-    return this.db.read(fn);
+    return this.depth ? fn() : this.db.read(() => this.inside(fn));
   }
+  /** Host-only atomic projection updates. Does not create evidence or advance the journal. */
+  derive<T>(fn: () => T): T { return this.transaction(fn); }
   prior(scope: string, key: string, fingerprint: string): MemoryEvent | undefined {
     const row = this.db.prepare("SELECT request_digest, body FROM journal WHERE scope=? AND request_key=?").get(scope, key) as Row | undefined;
     if (!row) return undefined;
@@ -152,6 +157,39 @@ export class Journal {
       WHERE ${conditions.join(" AND ")} ORDER BY o.seq DESC,o.id LIMIT ?`).all(...args) as Row[];
     return rows.map(r => this.observation(scope, String(r.id))!);
   }
+  /** Keyset paging, not recent-N preselection. Canonical hydration remains authoritative. */
+  page(scope: string, input: { after?: string; type?: string; kind?: string; limit: number }): Observation[] {
+    const conditions = ["o.scope=?", "h.forgotten=0", "h.observation=o.id", "o.id>?"];
+    const args: (string | number)[] = [scope, input.after ?? ""];
+    for (const field of ["type", "kind"] as const) if (input[field] !== undefined) { conditions.push(`o.${field}=?`); args.push(input[field]!); }
+    args.push(input.limit);
+    return this.db.prepare(`SELECT o.id FROM observations o JOIN heads h ON h.scope=o.scope AND h.subject=o.subject
+      WHERE ${conditions.join(" AND ")} ORDER BY o.id LIMIT ?`).all(...args).map(row => this.observation(scope, String(row.id))!);
+  }
+  private hasDerived(): boolean { return !!this.db.prepare("SELECT 1 AS found FROM sqlite_master WHERE type='table' AND name='derived'").get(); }
+  /** Disposable, scoped derived data. Never exported as evidence or used without canonical joins.
+   * Lazy schema: reading a pre-index database remains possible on a read-only connection. */
+  derived(scope: string, namespace: string, key: string): unknown | undefined {
+    if (!this.hasDerived()) return undefined;
+    const row = this.db.prepare("SELECT body,digest FROM derived WHERE scope=? AND namespace=? AND key=?").get(scope, namespace, key);
+    if (!row) return undefined;
+    const value = JSON.parse(String(row.body));
+    if (digest("entity-learn.derived/v1", { scope, namespace, key, value }) !== row.digest) fail("corrupt_store", "Derived data integrity check failed");
+    return value;
+  }
+  putDerived(scope: string, namespace: string, key: string, value: unknown): void {
+    const body = canonical(value);
+    if (Buffer.byteLength(body) > MAX_EVENT_BYTES) fail("too_large", "Derived entry exceeds its bound");
+    this.db.exec(`CREATE TABLE IF NOT EXISTS derived (
+      scope TEXT NOT NULL, namespace TEXT NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, digest TEXT NOT NULL,
+      PRIMARY KEY(scope, namespace, key))`);
+    this.db.prepare("INSERT OR IGNORE INTO derived VALUES(?,?,?,?,?)").run(scope, namespace, key, body,
+      digest("entity-learn.derived/v1", { scope, namespace, key, value }));
+  }
+  clearDerived(scope: string, namespace: string): void {
+    if (!this.hasDerived()) return;
+    this.db.prepare("DELETE FROM derived WHERE scope=? AND namespace=?").run(scope, namespace);
+  }
   history(scope: string, subject: string, limit: number): Observation[] {
     const rows = this.db.prepare("SELECT id FROM observations WHERE scope=? AND subject=? ORDER BY seq DESC LIMIT ?").all(scope, subject, limit) as Row[];
     return rows.map(r => this.observation(scope, String(r.id))!);
@@ -160,6 +198,7 @@ export class Journal {
   rebuild(): { events: number; observations: number; root: string } {
     return this.transaction(() => {
       this.db.exec("DELETE FROM observations; DELETE FROM heads; DELETE FROM sources;");
+      if (this.hasDerived()) this.db.exec("DELETE FROM derived;");
       return this.verifyJournal(true);
     });
   }
@@ -248,6 +287,7 @@ export class Journal {
       for (const table of ["journal", "artifacts", "observations", "heads", "sources"])
         if (this.db.prepare(`SELECT 1 AS present FROM ${table} LIMIT 1`).get())
           fail("store_not_empty", "Memory archive import requires an empty destination");
+      if (this.hasDerived()) this.db.exec("DELETE FROM derived;");
       for (const row of archive.artifacts)
         this.db.prepare("INSERT INTO artifacts VALUES(?,?)").run(row.digest, row.body);
       for (const row of archive.journal)

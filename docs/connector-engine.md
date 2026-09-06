@@ -16,7 +16,23 @@ const connection = await engine.connect(result.connectors[0].id);
 // Poll completeAuth(connection.id); never accept an upstream auth ID from the client.
 ```
 
-## Arcade precedence and availability
+## App connections and private sign-in
+
+The Telegram Mini App uses `GET /api/connectors/apps` and `POST /api/connectors/apps/connect {appId}`. Apps group one toolkit's tools under an active OAuth2 provider. Entries needing missing service secrets are omitted. Toolkits with fewer than three usable actions, and LinkedIn's posting-only integration, are omitted from app OAuth. This is a conservative catalog policy, not a claim of complete coverage of every app feature.
+
+A single Arcade `/v1/auth/authorize` request unions the app's scopes. Arcade can return its configured provider ID (for example `arcade-google`) and a direct provider URL (`accounts.google.com`). The engine validates the owner/provider binding and HTTPS public destination, pins the returned host for subsequent polling, and persists the exact authorized tool IDs. App execution requires `toolId` alongside the connection ID; a tool outside that saved set is rejected. Disconnect disables all tool use through that app grant. Provider-side OAuth revocation remains available in the provider's settings.
+
+Cloudflare supplies a native private browser adapter when an external vault is not configured. After a successful app catalog check, apps without eligible OAuth coverage can use private sign-in, including LinkedIn. This app policy supersedes the legacy tool-discovery absence requirement only for the native adapter. A catalog outage does not automatically enable password fallback.
+
+`POST /api/connectors/browser {domain}` creates an account-bound pending connection or resumes the existing one. The Mini App immediately shows native username/password inputs; no remote browser or password-manager instructions are shown. Connect prepares the remote form, then submits only the fields verified for that step through `/api/connectors/native`. Inputs clear immediately before transmission, but remain editable if preparation fails before anything is sent. Credentials travel through the runner's RSA-OAEP/AES-GCM encrypted private transport, never actor arguments, events, memory, network learning, or shell command text. Actor browser tools remain blocked during private sign-in. Expired locks are cleaned before new sign-in; unconfirmed local revocations are retried before another flow starts. Redirected third-party pages cannot receive credentials.
+
+Connection state transitions, login submission and failed submissions emit metadata-only native events through an outbox stored atomically with the connection. Hosts drain pending receipts on connector ingress and Cloudflare alarms. Only a verified `connected` transition routes `AikoConnectionIndexRequested` to the owner's hidden indexer. Its read-only initial page pass checks the domain and active grant, collects bounded context, and calls the native entity-learn source/index pipeline, then the existing Merkle/reflection hooks. Pending, failed, expired and foreign connections never grant indexing access. The control panel and Telegram status include this work. Coverage is explicitly initial-page-only, not a full account crawl. Missing context adapters or failed reads are recorded as failures, not completed indexes.
+
+A click on "I'm signed in" does not itself establish success. The runner checks signed-in page markers and secure HttpOnly session cookies, closes login pages, and returns only a bounded verification. Some sites, MFA methods, popup flows, CAPTCHA challenges, and unrecognized signed-in pages still require additional site support; the UI must not claim those connections succeeded. Cookies remain in the owner's existing isolated browser profile. Cancel/disconnect clears the app's browser storage and cookies before releasing the lock. A failed cleanup remains visibly unconfirmed.
+
+Closing an already-removed login tab is accepted only after a fresh browser target inventory confirms it is gone. Other close failures retain the private lock. Sandbox diagnostics record fixed sign-in stages and CDP method names, never arguments or raw errors. Regression tests cover expired locks, vanished tabs, immediate editable inputs, owner-bound connection effects, event replay and native memory indexing. A production canary checked LinkedIn's real username/password form without submitting credentials; this is not proof of completed authentication for every website.
+
+## Legacy tool discovery and availability
 
 Search reads all pages of `/v1/tools?limit=1000&offset=...`, with at most three page requests in flight after the first page. The live engine accepts 1,000 tools per page (8,252 tools in nine requests). It validates `items`, `offset`, stable `total_count`, unique tool identities and metadata. Limits, empty catalogs, malformed responses, unstable pagination, missing configuration, denied access, timeouts, and service errors all return `unavailable`, with `fallbackAllowed:false`. There are no automatic retries of side effects.
 
@@ -78,3 +94,29 @@ Verified 2026-09-06 against Arcade's authoritative docs and generated TypeScript
 ## Verification
 
 Run `bun test apps/agent/test/connector-engine.test.ts apps/agent/test/connector-catalog.test.ts` and `bun run --cwd apps/agent typecheck`. Tests exercise pagination, catalog failure/coverage rules, account isolation, auth identity/flow substitution, expired auth, disconnect races, output redaction, SSRF URL rejection, same-owner discovery, durable restart and unconfigured relay behavior. Regression tests use deterministic contract fixtures. A separate read-only live verification on 2026-09-06 loaded 8,252 tools and 27 auth providers, confirmed `Gmail` (31 text matches), `gmail.com` (30 tools), and `slack.com` (83 tools). Three simultaneous searches used nine tool-page requests plus one provider request in approximately 20.2 seconds cold; the subsequent `listCatalog()` made no extra requests. The key was read with `privateEnv` from the authorized private environment file and was not printed or persisted by the probe. No live authorization, tool execution or auth-flow URLs were requested. Regression tests additionally cover coalescing across engine instances, key-scope separation, pinned credentials during rotation, cache expiry/failure/recovery, mutation resistance, documented domain mapping, semantic categories, provider-only availability, schema projection and BM25 ranking. Existing public-reader network tests cover DNS pinning and redirect protection.
+
+## Native Arcade production verifier
+
+A direct Google/Slack authorization link alone does **not** remove Arcade's account screen. Arcade's default OAuth apps always use the Arcade user verifier. Production without an Arcade end-user login requires the application's own provider client credentials and a custom verifier; see https://docs.arcade.dev/en/build/user-facing-agents/secure-auth-production.
+
+The Cloudflare host now supplies these routes:
+
+- `/connect/oauth/launch?ticket=...`: accepts a signed, ten-minute, connection-scoped handoff from an authenticated Aiko request; establishes an HttpOnly, Secure, SameSite=Lax browser cookie before redirecting to the saved provider URL.
+- `/connect/oauth/callback?flow_id=...`: obtains the Aiko owner from that signed cookie, calls Arcade's server-only `confirm_user` endpoint, checks its returned `auth_id` against the saved grant, then redirects to Aiko's own status page. Query-string user IDs and redirects are never trusted.
+- `/connect/oauth/return`: polls the saved authorization and displays success only when Arcade reports completion; provides a return link to Telegram. It never grants general API access from the callback cookie.
+
+The custom verifier redirects to the fixed `/connect/oauth/return` route after confirmation. Authorization deliberately omits `next_uri`: Arcade rejects return URLs that are not configured for the project. In the Arcade Dashboard, choose **Auth → Settings → Custom verifier** and set:
+
+`https://aiko-agent.lewis-6d8.workers.dev/connect/oauth/callback`
+
+For each provider, configure Aiko-owned OAuth client credentials in Arcade and register **Arcade's generated provider callback URL** at Google/Slack/etc. That provider callback is different from Aiko's user-verifier callback above. Do not replace the provider callback with Aiko's verifier URL.
+
+Deployment of these routes alone is not proof that the project uses custom credentials or that the Arcade login screen has been removed. A real end-to-end consent test must confirm the configured provider and verifier after those settings are supplied.
+
+
+### Rollout flag
+
+`AIKO_ARCADE_OAUTH_ENABLED` defaults to `false` in both production hosts. Until set to exactly `true`, app OAuth is hidden from Connect; new app/tool grants, pending completion and browser verifier routes are disabled. Saved authorization links are omitted. Existing connected accounts can still execute and disconnect; private browser sign-in and Secretary Mode remain available. Deployment explicitly publishes the flag, so an old enabled setting cannot silently persist. Enable only after custom provider credentials, the verifier configuration and end-to-end consent have been verified.
+
+
+When OAuth is disabled, the frontend silently omits OAuth catalog entries and incomplete OAuth connections and stops polling their pending grants. It does not display an unavailable-feature notice. Already connected accounts retain management controls. Browser sign-in is unchanged; this UI decision does not replace or alter entity-learn request replay.

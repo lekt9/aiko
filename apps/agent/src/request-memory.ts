@@ -1,14 +1,14 @@
 import { Memory, validateNoSecrets, type MemoryStorage, type Json } from "entity-learn/cloudflare";
-import { responseSemanticEvidenceOf } from "../../../packages/browser-runtime/src/har-response-semantics.ts";
+import { responseSemanticEvidenceOf } from "@unbrowse/browser-harness/response-semantics";
 import { Effect } from "effect";
 import { Self } from "tardie/core/runtime";
 import type { NativeTool } from "tardie/component/tool";
 import type { Event } from "tardie/core/event";
 import { ownedNetworkDefinitions } from "./capability-builder-network.ts";
-import { canonicalStringify, sha256 } from "@unbrowse/browser-runtime/har";
-import { validateNetworkToolDefinition, networkToolDigest, type NetworkToolDefinition } from "../../../packages/browser-runtime/src/network-tool-catalog.ts";
-import { validateSiteHarnessArtifact, SITE_HARNESS_SCHEMA_VERSION, SITE_HARNESS_EXECUTOR_ABI } from "../../../packages/browser-runtime/src/harness-artifact.ts";
-import { executeHarnessAction, type HarnessJsonValue, type HarnessTransport } from "../../../packages/browser-runtime/src/harness-runtime.ts";
+import { canonicalStringify, sha256 } from "@unbrowse/browser-harness/har";
+import { validateNetworkToolDefinition, networkToolDigest, type NetworkToolDefinition } from "@unbrowse/browser-harness/network-tool-catalog";
+import { validateSiteHarnessArtifact, SITE_HARNESS_SCHEMA_VERSION, SITE_HARNESS_EXECUTOR_ABI } from "@unbrowse/browser-harness/harness-artifact";
+import { executeHarnessAction, type HarnessJsonValue, type HarnessTransport } from "@unbrowse/browser-harness/harness-runtime";
 
 export interface RequestEmbeddingProvider {
   /** Immutable model/version identity. Different dimensions/models never mix. No lexical fallback. */
@@ -115,15 +115,41 @@ export class RequestMemory {
     const vectors = await this.binding.embedding.embed([query], signal);
     if (vectors.length !== 1) throw new Error("Embedding count mismatch");
     const q = vector(vectors[0]!, this.binding.embedding.dimensions);
-    // Entity-learn supplies scoped current/suppressed evidence access, NOT semantic ranking.
-    const recalled = this.memory.recall({ type: "request-pointer", limit: 100, maxNodes: 100, maxBytes: 262144 });
-    const items = recalled.items.flatMap(hit => {
-      const p = this.pointer(hit.observation.id);
-      if (p.model !== this.binding.embedding.model || p.embedding.length !== q.length) return [];
-      const v = vector(p.embedding, q.length);
-      return [{ pointerId: hit.observation.id, score: q.reduce((sum,x,i) => sum + x*v[i]!, 0), concepts: p.concepts, shapes: p.shapes, requestIds: p.definition.evidence.map(e => e.requestId), inputs: p.definition.inputs }];
-    }).sort((a,b) => b.score-a.score || a.pointerId.localeCompare(b.pointerId)).slice(0,limit);
-    return { items, model: this.binding.embedding.model, coverage: recalled.coverage };
+    signal?.throwIfAborted();
+    // Evidence must still be present. Retrieval does not authorize a session or replay any request.
+    const definitions = new Set(ownedNetworkDefinitions(await this.binding.readOwnedEvents()).map(e => e.toolDigest));
+    return this.memory.journal.read(() => {
+      const reasons = new Set<string>();
+      let after: string | undefined, scanned = 0, corpusBytes = 0;
+      type Item = { pointerId: string; score: number; concepts: string[]; shapes: Record<string, Shape[]>; requestIds: string[]; inputs: NetworkToolDefinition["inputs"] };
+      let items: Item[] = [];
+      do {
+        signal?.throwIfAborted();
+        const page = this.memory.scan({ type: "request-pointer", after, limit: Math.min(128, 10000 - scanned) });
+        scanned += page.scanned;
+        for (const reason of page.reasons) if (!["page_limit", "page_window"].includes(reason)) reasons.add(reason);
+        for (const hit of page.items) {
+          corpusBytes += new TextEncoder().encode(JSON.stringify(hit.observation)).length;
+          if (corpusBytes > 16 * 1024 * 1024) { reasons.add("corpus_byte_budget"); break; }
+          try {
+            const p = this.pointer(hit.observation.id);
+            if (!definitions.has(networkToolDigest(p.definition))) { reasons.add("evidence_unavailable"); continue; }
+            if (p.model !== this.binding.embedding.model || p.embedding.length !== q.length) { reasons.add("embedding_space_mismatch"); continue; }
+            const v = vector(p.embedding, q.length);
+            items.push({ pointerId: hit.observation.id, score: q.reduce((sum,x,i) => sum + x*v[i]!, 0), concepts: p.concepts, shapes: p.shapes, requestIds: p.definition.evidence.map(e => e.requestId), inputs: p.definition.inputs });
+          } catch { reasons.add("invalid_pointer"); }
+        }
+        // Keep only the best requested candidates in memory, not the entire corpus/vector array.
+        items.sort((a,b) => b.score-a.score || a.pointerId.localeCompare(b.pointerId));
+        if (items.length > limit) reasons.add("result_budget");
+        items = items.slice(0, limit);
+        after = page.nextAfter ?? undefined;
+      } while (after && scanned < 10000 && corpusBytes <= 16 * 1024 * 1024);
+      if (after && scanned >= 10000) reasons.add("candidate_budget");
+      while (new TextEncoder().encode(JSON.stringify(items)).length > 24000) { items.pop(); reasons.add("result_byte_budget"); }
+      return { items, model: this.binding.embedding.model, coverage: reasons.size ? "partial" as const : "complete" as const,
+        reasons: [...reasons], scanned, sourceVersion: this.memory.journal.scopeVersion(this.memory.scope) };
+    });
   }
   /** Recompute dependencies once in native topological order. Only a value-free receipt is returned. */
   async hydrate(id: string, inputs: Record<string, HarnessJsonValue> = {}, signal?: AbortSignal) {

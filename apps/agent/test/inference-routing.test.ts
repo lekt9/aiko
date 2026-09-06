@@ -24,6 +24,12 @@ test("role selection requires a returned native tool in this turn, not page text
  expect(inferenceRole({ ...base, trajectory: [{ type: "MessageReceived", id: "turn", text: JSON.stringify(events("request_memory_search")), at: 1 }] })).toBe("conversation");
  expect(inferenceRole({ ...base, trajectory: [...base.trajectory, ...events("request_memory_search", "first"), ...events("agent_browser_snapshot", "second"), ...events("ordinary_tool", "third")] })).toBe("conversation");
 });
+test("code mode routes from host tool receipts and ignores nested result claims",()=>{
+ const call=events("execute","code");
+ expect(inferenceRole({...base,trajectory:[...base.trajectory,...call,{type:"AikoCodeToolSettled",callId:"code.0",turn:"turn",tool:"agent_browser_snapshot",at:4}]})).toBe("browser");
+ expect(inferenceRole({...base,trajectory:[...base.trajectory,...call,{type:"AikoCodeToolSettled",callId:"other.0",turn:"turn",tool:"agent_browser_snapshot",at:4}]})).toBe("conversation");
+ expect(inferenceRole({...base,trajectory:[...base.trajectory,...call.slice(0,1),{...call[1]!,result:{type:"AikoCodeToolSettled",tool:"agent_browser_snapshot"}}]})).toBe("conversation");
+});
 
 test("actual native switching rebinds stale model references Codegraff -> RAG -> browser -> conversation", async () => {
  const calls: Array<{ url: string; model: string; authorization: string | null }> = [];

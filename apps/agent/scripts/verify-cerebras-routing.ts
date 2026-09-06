@@ -2,7 +2,10 @@ import { Effect } from "effect";
 import { Infer, type InferRequest } from "tardie";
 import { privateEnv } from "../src/config.ts";
 import { createModelRouting, parseModelRouting } from "../src/model-routing.ts";
-import { WorkflowController, createWorkflowStore } from "../src/workflow-host.ts";
+import {
+  WorkflowController,
+  createWorkflowStore,
+} from "../src/workflow-host.ts";
 
 // Explicit live probe: one small inference, no tools or user data.
 const env = {
@@ -11,10 +14,21 @@ const env = {
   AIKO_RAG_PROVIDER: "cerebras",
 };
 const toolsMode = process.argv.includes("--tools");
-const controller = new WorkflowController("acct_routing_probe", "probe", {
-  store:createWorkflowStore({get:async()=>undefined,put:async()=>{},list:async()=>[],claim:async()=>false,update:async()=>{}}),
-  dispatcher:{resolve:async()=>undefined},
-},s=>s);
+const controller = new WorkflowController(
+  "acct_routing_probe",
+  "probe",
+  {
+    store: createWorkflowStore({
+      get: async () => undefined,
+      put: async () => {},
+      list: async () => [],
+      claim: async () => false,
+      update: async () => {},
+    }),
+    dispatcher: { resolve: async () => undefined },
+  },
+  (s) => s,
+);
 const routing = createModelRouting({
   owner: "acct_routing_probe",
   env,
@@ -25,7 +39,9 @@ const request: InferRequest = {
     {
       type: "MessageReceived",
       id: "probe",
-      text: toolsMode ? "Call workflow_list with empty arguments now. Do not write any prose." : "Reply exactly: routing verified",
+      text: toolsMode
+        ? "Call workflow_list with empty arguments now. Do not write any prose."
+        : "Reply exactly: routing verified",
       at: Date.now(),
     },
   ],
@@ -36,7 +52,7 @@ const request: InferRequest = {
     turn: "probe",
   },
   system: "Follow the requested output format.",
-  tools: toolsMode ? controller.tools().map(t=>t.spec) : [],
+  tools: toolsMode ? controller.tools().map((t) => t.spec) : [],
 };
 const result = await Effect.runPromise(
   Effect.gen(function* () {
@@ -45,7 +61,10 @@ const result = await Effect.runPromise(
   }).pipe(Effect.provide(routing.layer("rag"))),
 );
 if (
-  toolsMode ? result.kind !== "call" || result.name !== "workflow_list" : result.kind !== "complete" || !String(result.output).toLowerCase().includes("routing verified")
+  toolsMode
+    ? result.kind !== "call" || result.name !== "workflow_list"
+    : result.kind !== "complete" ||
+      !String(result.output).toLowerCase().includes("routing verified")
 )
   throw new Error("Live Cerebras routing probe did not complete");
 console.log(

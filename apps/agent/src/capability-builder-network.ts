@@ -1,6 +1,6 @@
 import type { Event } from "tardie/core/event";
-import { decodeBrowserTraceEvent, type BrowserNetworkToolPrepared } from "@unbrowse/browser-runtime/trace";
-import { assertNetworkSnapshotBackedByLog, networkGraphCheckpointOf, validatedHarCaptureFactsOf } from "@unbrowse/browser-runtime/network-facts";
+import { decodeBrowserTraceEvent, type BrowserNetworkToolPrepared } from "@unbrowse/browser-harness/trace";
+import { assertNetworkSnapshotBackedByLog, networkGraphCheckpointOf, validatedHarCaptureFactsOf } from "@unbrowse/browser-harness/network-facts";
 
 /** Events must come from the host-bound owner log. Native browser identities are per-VM trace IDs, not account IDs.
  * Validate the compiler digest AND graph manifest AND acknowledged network-fact prefix; nested copies are ignored. */

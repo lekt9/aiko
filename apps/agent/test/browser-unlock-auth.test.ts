@@ -176,3 +176,59 @@ test("a later published revision can renew independently without replaying an un
  f.status.revision++;expect((await f.broker.requestRenewal(nav)).status).toBe("renewal_pending");
  expect((await f.broker.beforeNavigate(nav)).status).toBe("renewal_pending");expect(f.calls.filter(c=>c.method==="POST")).toHaveLength(2);
 });
+
+test("routine retirement uses release, while failures, removed assignment and default clear retain revoke",async()=>{
+ for(const action of ["public","release","failure","removed","clear"] as const){
+  const reasons:unknown[]=[];const f=fixture({clear:async scope=>{reasons.push(scope.reason);}});
+  expect((await f.broker.beforeNavigate(nav)).status).toBe("ready");
+  if(action==="public")await f.broker.beforeNavigate({...nav,url:"https://public.example.org"});
+  if(action==="release")await f.broker.release();
+  if(action==="failure"){f.status.verified=false;await f.broker.beforeNavigate(nav);}
+  if(action==="removed"){delete f.getConfig().accounts["123"]!.connections["example.com"];await f.broker.beforeNavigate(nav);}
+  if(action==="clear")await f.broker.clear();
+  expect(reasons).toEqual([action==="public"||action==="release"?"release":"revoke"]);
+ }
+});
+
+test("partial install failures cannot downgrade revocation by requesting routine release",async()=>{
+ const reasons:unknown[]=[];const f=fixture({install:async()=>{throw new Error("Partial install failed");},clear:async scope=>{reasons.push(scope.reason);throw new Error("Cleanup failed");}});
+ expect((await f.broker.beforeNavigate(nav)).status).toBe("unavailable");expect((await f.broker.release()).status).toBe("unavailable");expect(reasons).toEqual(["revoke","revoke"]);
+});
+
+test("broker plus actual PrivateBrowserSessions allows A -> B -> A at same revision, but revocation stays fenced",async()=>{
+ const {PrivateBrowserSessions}=await import("../src/browser-driver.ts");
+ type Cookie=PrivateUnlockInstall["cookies"][number];
+ const jar:Cookie[]=[];const saves:unknown[]=[];const clearReasons:unknown[]=[];
+ const sessions=new PrivateBrowserSessions({owner:nav.owner,contextId:nav.contextId,generation:nav.generation},async()=>({
+  replaceCookies:async(cookies,domains)=>{for(let i=jar.length-1;i>=0;i--)if(domains.includes(jar[i]!.domain.replace(/^\./,"")))jar.splice(i,1);jar.push(...structuredClone(cookies));},
+  exportCookies:async domains=>structuredClone(jar.filter(c=>domains.includes(c.domain.replace(/^\./,"")))),
+ }),record=>{saves.push(structuredClone(record));});
+ const f=fixture({install:(packet,signal)=>sessions.install(packet,signal),clear:(scope,signal)=>{clearReasons.push(scope.reason);return sessions.clear(scope,signal);}});
+ f.getConfig().accounts["123"]!.connections["other.com"]=job;
+ const metaB={...f.metadata,id:job,name:"Other",website:"https://other.com",domains:["other.com"]};
+ const stateB={...f.status,connectionId:job,allowedDomains:["other.com"]};
+ const materialB={...f.material,connectionId:job,allowedDomains:["other.com"],cookies:f.material.cookies.map(c=>({...c,domain:"other.com",value:"fixture-other-cookie"}))};
+ f.setTransport(path=>{
+  if(path==="/v1/runtime/connections")return Response.json([f.metadata,metaB]);
+  if(path===`/v1/runtime/connections/${job}/status`)return Response.json(stateB);
+  if(path===`/v1/runtime/connections/${job}/session`)return Response.json(materialB);
+  return undefined;
+ });
+ try {
+  expect(await f.broker.beforeNavigate(nav)).toEqual({status:"ready",revision:7});expect(jar.map(c=>c.domain)).toEqual(["example.com"]);
+  expect(await f.broker.beforeNavigate({...nav,url:"https://other.com"})).toEqual({status:"ready",revision:7});expect(jar.map(c=>c.domain)).toEqual(["other.com"]);
+  expect(await f.broker.beforeNavigate(nav)).toEqual({status:"ready",revision:7});expect(jar.map(c=>c.domain)).toEqual(["example.com"]);expect(clearReasons).toEqual(["release","release"]);
+  await f.broker.release();expect(jar).toHaveLength(0);
+  expect(await f.broker.beforeNavigate(nav)).toEqual({status:"ready",revision:7});
+  await f.broker.clear();expect(jar).toHaveLength(0);
+  expect((await f.broker.beforeNavigate(nav)).status).toBe("unavailable");expect(jar).toHaveLength(0);
+  expect(JSON.stringify(saves)).not.toContain("fixture-private-cookie-value");expect(JSON.stringify(saves)).not.toContain("fixture-other-cookie");
+ } finally {await sessions.close();}
+});
+
+test("switching to another assigned account cannot retire an old assignment that was removed",async()=>{
+ const reasons:unknown[]=[];const f=fixture({clear:async scope=>{reasons.push(scope.reason);}});
+ expect((await f.broker.beforeNavigate(nav)).status).toBe("ready");
+ delete f.getConfig().accounts["123"]!.connections["example.com"];f.getConfig().accounts["123"]!.connections["other.com"]=job;
+ await f.broker.beforeNavigate({...nav,url:"https://other.com"});expect(reasons).toEqual(["revoke"]);
+});

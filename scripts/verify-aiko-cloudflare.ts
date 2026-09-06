@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { loadConfig, privateEnv } from "../apps/agent/src/config.ts";
 
 process.umask(0o077);
@@ -466,6 +467,53 @@ if (process.argv.includes("--automations-test")) {
       JSON.stringify(evidence, null, 2) + "\n",
       { mode: 0o600 },
     );
+    console.log(JSON.stringify(evidence));
+  }
+} else if (process.argv.includes("--browser-default")) {
+  assert.equal(owner, "acct_cloudflare_e2e02", "Only the isolated canary may run this probe");
+  const id = `browser-default-${Date.now()}`, turn = `plane:${id}`, startedAt = Date.now();
+  const thread = `user-${owner}`;
+  const evidence: Record<string, any> = { verified: false, url, owner, turn, startedAt };
+  try {
+    const ready = await request("/ready");
+    assert.equal(ready.capabilities.browser, true);
+    assert.equal(ready.capabilities.persistentSandbox, true);
+    for (const role of ["conversation", "rag", "browser", "vision"])
+      assert.equal(ready.models[role].provider, "cerebras", `Preserve temporary ${role} routing`);
+    const threads = await request(`/api/control/threads?account=${owner}`);
+    eventCache.set(thread, { result: [], after: threads.threads.find((t: any) => t.id === thread)?.eventCount ?? 0 });
+    const expectedVersion = createHash("sha256")
+      .update(await Bun.file("apps/agent/assets/runner.txt").text())
+      .update(await Bun.file("apps/agent/assets/bootstrap.sh").text()).digest("hex");
+    await request("/v1/messages", { id, text: "Browser verification: use agent_browser_navigate to open https://example.com, then agent_browser_title to read the live page title. Finish with respond containing that title. Use the browser for this check; no web search, account connection, or message to any other channel." });
+    let history: any[] = [], reply: any;
+    while (Date.now() - startedAt < 10 * 60_000) {
+      history = await events(thread);
+      reply = history.find(e => e.type === "AikoReplyPrepared" && e.turn === turn);
+      if (reply) break;
+      assert.ok(!history.some(e => ["TurnFailed", "TurnCancelled"].includes(e.type) && e.turn === turn), "Browser canary turn failed");
+      await Bun.sleep(2000);
+    }
+    assert.equal(reply?.result?.source, "model", "Native response missing");
+    assert.match(reply.result.text, /Example Domain/i);
+    const own = history.filter(e => e.turn === turn);
+    const reads = own.filter(e => e.type === "ToolReturned" && e.result?.kind === "browser-receipt" && e.result.status === "completed");
+    assert.ok(reads.some(e => e.result.operation === "agent_browser_navigate"), "Browser navigation receipt missing");
+    assert.ok(reads.some(e => e.result.operation === "agent_browser_title"), "Browser title receipt missing");
+    assert.ok(own.some(e => e.type === "ToolCalled" && e.name === "respond"), "Native respond call missing");
+    const status = await request("/v1/status");
+    assert.equal(status.sandbox.runnerVersion, expectedVersion, "Deployed browser bundle differs from verified build");
+    const models = own.filter(e => e.type === "ModelCalled");
+    assert.ok(models.length && models.every(e => e.model?.provider === "cerebras"), "Browser reasoning left Cerebras");
+    Object.assign(evidence, { verified: true, runnerVersion: expectedVersion, browserReads: reads.map(e => e.result.operation),
+      modelProviders: [...new Set(models.map(e => e.model.provider))], responseTool: "respond", latencyMs: Date.now() - startedAt });
+  } catch (error) {
+    evidence.error = error instanceof assert.AssertionError ? error.message : "Browser default probe failed; inspect owner-scoped trace";
+    await request("/v1/cancel", { id: turn }).catch(() => undefined);
+    process.exitCode = 1;
+  } finally {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await writeFile(`${directory}/browser-default-deployed.json`, JSON.stringify(evidence, null, 2) + "\n", { mode: 0o600 });
     console.log(JSON.stringify(evidence));
   }
 } else if (process.argv.includes("--probe")) {

@@ -16,7 +16,7 @@
     "aiko:build": "pnpm --filter @unlock/agent build",
     "aiko:backup": "bun apps/agent/src/backup.ts",
     "test:aiko": "pnpm --filter @unlock/agent test",
-    "test:browser-client": "pnpm --filter @unbrowse/browser-runtime test",
+    "test:browser-client": "bun run --cwd ../unbrowse-playground/runtime test:client",
     "aiko:browser:init": "bun scripts/init-aiko-browser.ts",
     "server:dev": "pnpm --filter @unlock/server dev",
     "server:start": "pnpm --filter @unlock/server start",
@@ -40,5 +40,8 @@
     "typescript": "^5.9.3",
     "undici": "7.29.1",
     "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@unbrowse/browser-harness": "link:../unbrowse-playground/runtime"
   }
 }

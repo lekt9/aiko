@@ -10,7 +10,7 @@ import { BrowserLearning } from "../apps/agent/src/browser-learning.ts";
 import { ownedNetworkDefinitions } from "../apps/agent/src/capability-builder-network.ts";
 import { RequestMemory } from "../apps/agent/src/request-memory.ts";
 import { createRequestEmbedding } from "../apps/agent/src/request-embedding.ts";
-import type { HarnessTransportRequest, HarnessTransportResponse } from "../packages/browser-runtime/src/harness-runtime.ts";
+import type { HarnessTransportRequest, HarnessTransportResponse } from "@unbrowse/browser-harness/harness-runtime";
 const events:Event[]=[];let sequence=0;
 const learning=new BrowserLearning({threadId:"witness",nextSequence:()=>++sequence,emit:async event=>{events.push(event)}});
 const entry=(url:string,body:string,index:number)=>({startedDateTime:new Date(1000+index*100).toISOString(),time:20,_observationComplete:true,request:{method:"GET",url,headers:[],cookies:[]},response:{status:200,headers:[],cookies:[],content:{mimeType:"application/json",size:body.length,text:body}}});

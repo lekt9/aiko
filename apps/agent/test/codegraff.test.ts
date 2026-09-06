@@ -6,6 +6,7 @@ import {
   type SandboxStore,
 } from "../src/codegraff.ts";
 import { Memory } from "entity-learn";
+import { AgentBrowserClientError, agentBrowserAgentActionOf } from "@unbrowse/browser-harness/client";
 import { Effect } from "effect";
 import { Self } from "tardie/core/runtime";
 import type { MemoryBinding } from "../src/memory.ts";
@@ -106,7 +107,41 @@ test("concurrent wake and reconstructed host reuse exactly one tenant VM and dis
   expect(f.calls.filter((c) => c.path === "/v1/sandboxes")).toHaveLength(1);
   expect(f.calls.some((c) => c.path.endsWith("/start"))).toBe(true);
   expect(f.calls.some((c) => c.path.includes("delete"))).toBe(false);
+  const commands = f.calls.filter(c => c.path.endsWith("/exec"));
+  expect(commands.filter(c => c.body.command === "bash /tmp/aiko-bootstrap.sh")).toHaveLength(1);
+  expect(commands.filter(c => c.body.command.endsWith("runner.js install"))).toHaveLength(1);
+  expect(commands.every(c => c.body.async === true)).toBe(true);
 });
+
+for (const stage of ["bootstrap", "install", "health"]) {
+  test(`first-use ${stage} failure cannot publish readiness; retry reuses the allocated VM`, async () => {
+    const f = fixture();
+    const events: Record<string, unknown>[] = [];
+    const sandbox = new CodegraffSandbox({ ...f.options, emit: async event => { events.push(event); } });
+    const request = f.options.gateway.request.bind(f.options.gateway);
+    let fail = true;
+    const spy = spyOn(f.options.gateway, "request").mockImplementation(async (path, body: any, ...rest) => {
+      const command = body?.command;
+      if (fail && typeof command === "string" &&
+        (stage === "bootstrap" ? command === "bash /tmp/aiko-bootstrap.sh" : command.endsWith(`runner.js ${stage}`))) {
+        fail = false;
+        throw new Error("interrupted_installation");
+      }
+      return request(path, body, ...rest);
+    });
+    try {
+      await expect(sandbox.ensure()).rejects.toThrow("interrupted_installation");
+      expect(await f.state.get("codegraff:sandbox")).toMatchObject({ owner: f.options.owner, id: "vm-fixture" });
+      expect((await f.state.get<any>("codegraff:sandbox")).runnerVersion).toBeUndefined();
+      expect(events.some(e => e.type === "AikoSandboxReady")).toBe(false);
+      expect(sandbox.busy).toBe(false);
+      expect(await sandbox.ensure()).toBe("vm-fixture");
+      expect(f.calls.filter(c => c.path === "/v1/sandboxes")).toHaveLength(1);
+      expect(events.filter(e => e.type === "AikoSandboxReady")).toHaveLength(1);
+      expect((await f.state.get<any>("codegraff:sandbox")).runnerVersion).toBeString();
+    } finally { spy.mockRestore(); }
+  });
+}
 
 test("unknown allocation never automatically allocates another VM", async () => {
   const state = store();
@@ -727,4 +762,156 @@ test("VM browser replay encrypts uploads and output before gateway journals", as
     upload.mockRestore();
     exec.mockRestore();
   }
+});
+
+for (const failure of ["settled-read", "unknown", "commit-failed"] as const) {
+  test(`remote selector wait preserves typed failure after durable trace: ${failure}`, async () => {
+    const f = fixture();
+    const order: string[] = [];
+    const driver = await f.sandbox.browserFactory()({ domains: ["*"], emit: async () => {
+      order.push("commit");
+      if (failure === "commit-failed") throw new Error("durable commit failed");
+    } });
+    let action: any;
+    const upload = spyOn(f.sandbox, "upload").mockImplementation(async (_id, _path, text) => {
+      action = agentBrowserAgentActionOf(JSON.parse(text).action, ["*"]);
+    });
+    const exec = spyOn(f.sandbox, "exec").mockImplementation(async (_id, command) => {
+      if (command.includes(" acknowledge ")) { order.push("acknowledge"); return "{}"; }
+      expect(action).toEqual({ action: "wait", selector: "#missing" });
+      return JSON.stringify({ status: failure === "unknown" ? "unknown" : "failed", reason: "element_not_found", events: [{type: "BrowserToolResultObserved", success: false}], through: 1, hasMore: false });
+    });
+    try {
+      let caught: unknown;
+      try { await driver.execute({ action: "wait", selector: "#missing" }); } catch (error) { caught = error; order.push("throw"); }
+      if (failure === "settled-read") {
+        expect(caught).toBeInstanceOf(AgentBrowserClientError);
+        expect(caught).toMatchObject({code: "element_not_found"});
+      } else {
+        expect(caught).not.toBeInstanceOf(AgentBrowserClientError);
+        expect(String(caught)).toContain(failure === "unknown" ? "outcome_unknown" : "durable commit failed");
+      }
+      expect(order).toEqual(failure === "commit-failed" ? ["commit", "throw"] : ["commit", "acknowledge", "throw"]);
+      expect(f.sandbox.busy).toBe(false);
+    } finally { upload.mockRestore(); exec.mockRestore(); }
+  });
+}
+
+for (const started of [false, true]) {
+  test(`transient restart failure reconciles the same VM (start already succeeded: ${started})`, async () => {
+    const f = fixture();
+    await f.sandbox.ensure();
+    await f.sandbox.stop();
+    const request = f.options.gateway.request.bind(f.options.gateway);
+    let starts = 0;
+    const intercepted = spyOn(f.options.gateway, "request").mockImplementation(async (path, body, signal, method, maxBytes) => {
+      if (path.endsWith("/start") && ++starts === 1) {
+        if (started) await request(path, body, signal, method, maxBytes);
+        throw new Error("codegraff_http_502");
+      }
+      return request(path, body, signal, method, maxBytes);
+    });
+    try {
+      expect(await f.sandbox.ensure()).toBe("vm-fixture");
+      expect(starts).toBe(started ? 1 : 2);
+      expect(f.calls.filter(c => c.path === "/v1/sandboxes")).toHaveLength(1);
+      expect((await f.sandbox.status() as {stoppedAt?: number}).stoppedAt).toBeUndefined();
+    } finally { intercepted.mockRestore(); }
+  });
+}
+
+test("repeated restart failures stop without replacing the known VM or advancing readiness", async () => {
+  const f = fixture();
+  await f.sandbox.ensure();
+  await f.sandbox.stop();
+  const before = await f.sandbox.status();
+  const request = f.options.gateway.request.bind(f.options.gateway);
+  let starts = 0;
+  const intercepted = spyOn(f.options.gateway, "request").mockImplementation(async (path, body, signal, method, maxBytes) => {
+    if (path.endsWith("/start")) { starts++; throw new Error("codegraff_http_502"); }
+    return request(path, body, signal, method, maxBytes);
+  });
+  try {
+    await expect(f.sandbox.ensure()).rejects.toThrow("codegraff_http_502");
+    expect(starts).toBe(3);
+    expect(await f.sandbox.status()).toEqual(before);
+    expect(f.calls.filter(c => c.path === "/v1/sandboxes")).toHaveLength(1);
+  } finally { intercepted.mockRestore(); }
+});
+
+for (const confirmation of ["settled", "unconfirmed", "deadline"] as const) {
+  test(`browser cancellation waits for independent bounded remote settlement: ${confirmation}`, async () => {
+    const f = fixture();
+    const events: object[] = [];
+    const driver = await f.sandbox.browserFactory()({ domains: ["*"], emit: async event => { events.push(event); } });
+    const caller = new AbortController();
+    const durations: number[] = [];
+    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+    const timeout = spyOn(AbortSignal, "timeout").mockImplementation(ms => {
+      durations.push(ms);
+      return originalTimeout(ms === 35_000 && confirmation === "deadline" ? 10 : ms);
+    });
+    let settle!: () => void;
+    let cleanupSignal: AbortSignal | undefined;
+    const upload = spyOn(f.sandbox, "upload").mockResolvedValue(undefined);
+    const exec = spyOn(f.sandbox, "exec").mockImplementation(async (_id, command, signal) => {
+      if (command.includes(" execute ")) { caller.abort(); throw new Error("caller_cancelled"); }
+      if (command.includes(" acknowledge ")) return "{}";
+      expect(command).toMatch(/runner.js cancel [a-f0-9-]{36}$/);
+      cleanupSignal = signal;
+      expect(signal).toBeDefined();
+      expect(signal).not.toBe(caller.signal);
+      expect(signal!.aborted).toBe(false);
+      await new Promise<void>((resolve, reject) => {
+        settle = resolve;
+        signal!.addEventListener("abort", () => reject(new Error("cleanup_deadline")), { once: true });
+      });
+      return JSON.stringify({ cancellationRequested: true, settled: confirmation === "settled", events: [{type: "BrowserToolResultObserved", success: false}], through: 1, hasMore: false });
+    });
+    try {
+      const work = driver.execute({action: "wait", milliseconds: 30_000}, caller.signal).catch(error => error);
+      await Bun.sleep(0);
+      expect(cleanupSignal).toBeDefined();
+      expect(f.sandbox.busy).toBe(true);
+      expect(events).toHaveLength(0);
+      if (confirmation !== "deadline") settle();
+      const error = await work;
+      expect(String(error)).toContain(confirmation === "settled" ? "caller_cancelled" : confirmation === "deadline" ? "cleanup_deadline" : "cancellation_unconfirmed");
+      expect(events).toHaveLength(confirmation === "settled" ? 1 : 0);
+      expect(durations).toContain(35_000);
+      expect(f.sandbox.busy).toBe(false);
+    } finally { exec.mockRestore(); upload.mockRestore(); timeout.mockRestore(); }
+  });
+}
+
+test("actual sandbox exec bounds provider DELETE after cancellation with its own signal", async () => {
+  const caller = new AbortController();
+  const durations: number[] = [];
+  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+  const timeout = spyOn(AbortSignal, "timeout").mockImplementation(ms => {
+    durations.push(ms);
+    return originalTimeout(ms === 5000 ? 10 : ms);
+  });
+  let deleting = false, deleteSignal: AbortSignal | undefined;
+  const f = fixture();
+  const sandbox = new CodegraffSandbox({ ...f.options, gateway: new Codegraff("fixture", async (_input, init) => {
+    if (init?.method === "POST") return Response.json({execId: "cancelled-job"});
+    if (init?.method === "DELETE") {
+      deleting = true;
+      deleteSignal = init.signal ?? undefined;
+      expect(deleteSignal?.aborted).toBe(false);
+      return await new Promise<Response>((_resolve, reject) => {
+        deleteSignal!.addEventListener("abort", () => reject(new Error("delete timed out")), {once: true});
+      });
+    }
+    caller.abort();
+    throw new Error("original cancellation");
+  }) });
+  try {
+    await expect(sandbox.exec("vm-fixture", "trusted-command", caller.signal)).rejects.toThrow("original cancellation");
+    expect(deleting).toBe(true);
+    expect(deleteSignal?.aborted).toBe(true);
+    expect(deleteSignal).not.toBe(caller.signal);
+    expect(durations).toContain(5000);
+  } finally { timeout.mockRestore(); }
 });

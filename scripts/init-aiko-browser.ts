@@ -5,7 +5,7 @@ import {
   pinnedAgentBrowserAssetFor,
   pinnedAgentBrowserExecutablePath,
   verifyPinnedAgentBrowserExecutable,
-} from "../packages/browser-runtime/src/agent-browser-client.ts";
+} from "@unbrowse/browser-harness/client";
 process.umask(0o077);
 const asset = pinnedAgentBrowserAssetFor(),
   target = pinnedAgentBrowserExecutablePath(asset);

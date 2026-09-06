@@ -20,10 +20,11 @@ flowchart LR
 
 - `request_memory_search` searches the response embeddings, returning pointers and required caller inputs.
 - `request_memory_hydrate` recomputes a pointer from current responses. Dependency bindings use the current upstream result rather than an old captured value.
-- Native playground observation/compiler/runtime modules are reused in `packages/browser-runtime`; `entity-learn` is imported from `packages/entity-learn`.
+- Native playground observation/compiler/runtime modules are imported directly from the linked `@unbrowse/browser-harness` package; `entity-learn` is imported from `packages/entity-learn`.
 - The local embedding model is `Xenova/all-MiniLM-L6-v2`, revision `751bff37182d3f1213fa05d7196b954e230abad9`, quantized CPU inference, 384 dimensions. Text is not sent to an embedding API. Only public model assets are downloaded.
 - The trusted browser session supplies implicit cookies. Explicit authorization headers, writes, missing dependencies, unsafe destinations, and unresolved session requirements cannot be replayed through this path.
-- The current semantic scan considers at most 100 recalled pointers and reports its coverage. It is not an unlimited vector index.
+- Semantic retrieval uses entity-learn's current-record keyset scan, bounded to 10,000 pointers or 16 MiB. It checks available native definition evidence and model identity, returns at most 24,000 bytes of items, and reports exclusions/coverage. It is not an unlimited vector index.
+- Inspect **`/control` → Node graph → Browser indexing** for recorded request dependencies, preparation, keyed index receipts and failures. The graph is read-only: it does not provision a browser, call embeddings or replay requests. Historical receipts do not prove current pointer availability. See [admin graph](aiko-memory-graph.md).
 
 Request and response values cross the VM bridge encrypted. Native tool logs contain opaque call handles and receipts. The inference seam expands only bounded transient results. User-facing answers may quote requested facts and enter normal conversation history; this does not mean the response body is retained in the request index.
 
@@ -64,7 +65,13 @@ Runs are atomically claimed before dispatch. Definitions are immutable by digest
 
 ## Model roles
 
-Set `AIKO_CONVERSATION_PROVIDER`, `AIKO_RAG_PROVIDER`, and `AIKO_BROWSER_PROVIDER` to `codegraff` or `cerebras`; corresponding `AIKO_<ROLE>_MODEL` values select the model. Credentials remain server-side in `CODEGRAFF_API_KEY` and `CEREBRAS_API_KEY`. RAG and browser roles are configured for Cerebras `qwen-3.8-27b`; conversation retains Codegraff `glm-5.3-flash`.
+Set `AIKO_CONVERSATION_PROVIDER`, `AIKO_RAG_PROVIDER`, and `AIKO_BROWSER_PROVIDER` to `codegraff` or `cerebras`; corresponding `AIKO_<ROLE>_MODEL` values select the model. Credentials remain server-side in `CODEGRAFF_API_KEY` and `CEREBRAS_API_KEY`.
+
+Temporary deployment setting (2026-09-06): conversation, background reasoning, RAG, browser reasoning and vision all use Cerebras `qwen-3.8-27b`. `AIKO_VISION_PROVIDER` and `AIKO_VISION_MODEL` select the fixed image adapter. `AIKO_REPLY_STYLE=direct` delivers the model's validated, redacted wording through the native response tool/outbox without a ThinkFeel model call. It does not relax destination binding, effect authorization or uncertain-send recovery. `/ready` reports the deployed routes and reply style without credentials.
+
+Cerebras requires one strictness setting for the complete tool list. A closed tool set uses strict decoding with unsupported wire constraints removed; original host schemas stay unchanged. A set containing open connector argument objects uses non-strict decoding for all tools and preserves the original schemas. Host argument and authorization checks still decide whether a tool can execute. This handles the live provider's schema rejection without closing dynamic connector inputs into empty objects.
+
+To restore the previous split, set `AIKO_MODEL` and `AIKO_CONVERSATION_MODEL` to `glm-5.3-flash`, `AIKO_CONVERSATION_PROVIDER=codegraff`, `AIKO_VISION_PROVIDER=codegraff`, `AIKO_VISION_MODEL=glm-5.3-flash` and `AIKO_REPLY_STYLE=thinkfeel`, then redeploy. Keep RAG and browser roles on Cerebras. The deployment values live in `apps/agent/wrangler.jsonc`; mirror the conversation/reply settings in the private Node environment when changing that host. Codegraff still supplies browser VMs and search tools. Local speech/transcription and request embeddings remain their existing local processors; they are not hosted LLM calls.
 
 Routing uses completed native tool-call provenance in the current turn. Page text cannot select a provider. The first turn uses the conversation model; after a request-memory tool it uses RAG, and after a browser tool it uses the browser model. There is no silent provider fallback. Existing local model accounting remains in effect.
 
@@ -74,4 +81,4 @@ Verification artifacts are under `artifacts/request-memory/`. The live Cerebras 
 
 The browser factory composes the Unlock broker beneath ordinary tools. It obtains current session material using the actual SDK, sends cookies over the private encrypted VM seam, and installs them through the SDK CDP adapter before navigation. Session installation, clearing and context identity are never offered as model tools. Runtime tokens remain on the host and passwords remain in Unlock's login/renewal recipes.
 
-This path is configured by the existing owner-to-runtime assignments in `AIKO_CONNECTOR_VAULT_JSON`; see [vault setup](connector-vault-setup.md). It remains Arcade-first. Installation requires current verified metadata, exact domain assignments, and matching owner/context/generation/revision. Expiry or revocation clears private browser scope; an expired ready session may request mechanical renewal, while revoked or stale access remains blocked. Test fixtures prove this mechanism; a production login additionally requires a deployed vault and a real owner's assignment.
+This path is configured by the existing owner-to-runtime assignments in `AIKO_CONNECTOR_VAULT_JSON`; see [vault setup](connector-vault-setup.md). It remains Arcade-first. Installation requires current verified metadata, exact domain assignments, and matching owner/context/generation/revision. Routine switching removes scoped cookies without revoking the vault session. Revocation retains a fence against stale session installation. Expiry or revocation clears private browser scope; an expired ready session may request mechanical renewal, while revoked or stale access remains blocked. Test fixtures prove this mechanism; a production login additionally requires a deployed vault and a real owner's assignment.

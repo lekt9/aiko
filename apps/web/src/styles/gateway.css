@@ -330,3 +330,36 @@
     flex-basis: auto;
   }
 }
+
+.secretary-panel {
+  margin-block: 24px;
+  padding-block: 24px;
+  border-block: 1px solid var(--border, #d7d7d7);
+}
+.secretary-panel ol {
+  padding-left: 24px;
+  line-height: 1.7;
+}
+.secretary-contact {
+  padding-block: 20px;
+  border-top: 1px solid var(--border, #d7d7d7);
+}
+.secretary-contact h4 {
+  margin: 0;
+}
+.secretary-contact .app-section-heading {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.secretary-panel button,
+.secretary-import input {
+  min-height: 44px;
+}
+.secretary-import {
+  display: grid;
+  gap: 8px;
+  font-size: 14px;
+}
+.secretary-import input {
+  max-width: 100%;
+}

@@ -1,3 +1,4 @@
+import { trustedMiniAppUrl } from "./telegram-mini-app.ts";
 import {
   telegramOwner,
   TELEGRAM_MEDIA_LIMITS,
@@ -9,6 +10,8 @@ export type TelegramDelivery = {
   status: "delivered" | "unknown" | "rejected";
   providerId?: string;
   providerIds?: string[];
+  reason?: "rate_limited" | "forbidden" | "invalid_request" | "provider_failure" | "invalid_response" | "transport";
+  retryAfter?: number;
 };
 export type TelegramButton = {
   text: string;
@@ -22,12 +25,17 @@ export type TelegramFile =
   | { owner: string; bytes: Uint8Array; mimeType: string; fileName: string };
 type ReplyOptions = {
   replyTo?: number;
+  messageThreadId?: number;
   silent?: boolean;
   buttons?: TelegramButton[][];
 };
 export type TelegramRichResponse = ReplyOptions &
   (
     | { kind: "text"; text: string }
+    | { kind: "location"; latitude: number; longitude: number }
+    | { kind: "venue"; latitude: number; longitude: number; title: string; address: string }
+    | { kind: "contact"; phoneNumber: string; firstName: string; lastName?: string }
+    | { kind: "poll"; question: string; choices: string[] }
     | {
         kind: TelegramMediaKind;
         file: TelegramFile;
@@ -140,9 +148,11 @@ export function createTelegramOutbound(options: {
           response.status >= 400 && response.status < 500 && value?.ok === false
             ? "rejected"
             : "unknown",
+        reason: response.status === 429 ? "rate_limited" : response.status === 403 ? "forbidden" : response.status >= 400 && response.status < 500 ? "invalid_request" : response.status >= 500 ? "provider_failure" : "invalid_response",
+        ...(positive(value?.parameters?.retry_after) ? { retryAfter: value.parameters.retry_after } : {}),
       };
     } catch {
-      return { status: "unknown" };
+      return { status: "unknown", reason: "transport" };
     }
   };
   function markup(buttons: TelegramButton[][] | undefined) {
@@ -181,7 +191,7 @@ export function createTelegramOutbound(options: {
           if (url.protocol !== "https:" || url.username || url.password)
             throw new Error("invalid_button_url");
           if (button.webAppUrl !== undefined) {
-            if (!options.miniAppUrl || url.href !== options.miniAppUrl)
+            if (!trustedMiniAppUrl(url.href, options.miniAppUrl))
               throw new Error("untrusted_mini_app");
             return { text: safe(button.text), web_app: { url: url.href } };
           }
@@ -199,8 +209,10 @@ export function createTelegramOutbound(options: {
     try {
       if (message.replyTo !== undefined && !positive(message.replyTo))
         return { status: "rejected" };
+      if (message.messageThreadId !== undefined && !positive(message.messageThreadId)) return { status: "rejected", reason: "invalid_request" };
       const common: Record<string, unknown> = {
         chat_id: chat,
+        ...(message.messageThreadId ? { message_thread_id: message.messageThreadId } : {}),
         ...(message.replyTo
           ? {
               reply_parameters: {
@@ -213,8 +225,13 @@ export function createTelegramOutbound(options: {
         ...(message.buttons ? { reply_markup: markup(message.buttons) } : {}),
       };
       if (message.kind === "text") {
-        if (!message.text || [...message.text].length > 4096)
-          return { status: "rejected" };
+        if (!message.text || message.text.length > 16000)
+          return { status: "rejected", reason: "invalid_request" };
+        const text = safe(message.text);
+        // Rich blocks preserve a long reply as one atomic, durable message.
+        if ([...text].length > 4096) return call("sendRichMessage", {
+          ...common, rich_message: { blocks: [{ type: "paragraph", text }] },
+        }, signal, "message");
         return call(
           "sendMessage",
           {
@@ -225,6 +242,20 @@ export function createTelegramOutbound(options: {
           signal,
           "message",
         );
+      }
+      if (message.kind === "location" || message.kind === "venue") {
+        if (!Number.isFinite(message.latitude) || Math.abs(message.latitude) > 90 || !Number.isFinite(message.longitude) || Math.abs(message.longitude) > 180) return { status: "rejected", reason: "invalid_request" };
+        if (message.kind === "venue" && (!message.title || message.title.length > 256 || !message.address || message.address.length > 1024)) return { status: "rejected", reason: "invalid_request" };
+        return call(message.kind === "venue" ? "sendVenue" : "sendLocation", { ...common, latitude: message.latitude, longitude: message.longitude,
+          ...(message.kind === "venue" ? { title: safe(message.title), address: safe(message.address) } : {}) }, signal, "message");
+      }
+      if (message.kind === "contact") {
+        if (!/^\+?[0-9 ()-]{3,32}$/.test(message.phoneNumber) || !message.firstName || message.firstName.length > 128 || (message.lastName?.length ?? 0) > 128) return { status: "rejected", reason: "invalid_request" };
+        return call("sendContact", { ...common, phone_number: safe(message.phoneNumber), first_name: safe(message.firstName), ...(message.lastName ? { last_name: safe(message.lastName) } : {}) }, signal, "message");
+      }
+      if (message.kind === "poll") {
+        if (!message.question || [...message.question].length > 300 || !Array.isArray(message.choices) || message.choices.length < 1 || message.choices.length > 12 || message.choices.some(c => typeof c !== "string" || !c || [...c].length > 100)) return { status: "rejected", reason: "invalid_request" };
+        return call("sendPoll", { ...common, question: safe(message.question), options: message.choices.map(text => ({ text: safe(text) })), is_anonymous: true, type: "regular" }, signal, "message");
       }
       const form = new FormData();
       let uploads = 0,
@@ -371,7 +402,7 @@ export function createTelegramOutbound(options: {
   /** Override the existing turn indicator while a media phase runs; this creates no renewal loop. */
   const activity = (
     chat: string,
-    name: "record_voice" | "upload_voice" | "upload_photo",
+    name: "record_voice" | "upload_voice" | "upload_photo" | "upload_video" | "upload_document" | "choose_sticker" | "upload_video_note",
     signal: AbortSignal,
   ) => {
     if (!canSend(chat) || signal.aborted) return async () => {};
@@ -505,14 +536,16 @@ export function createTelegramOutbound(options: {
     draftId: number,
     text: string,
     signal: AbortSignal,
+    context?: { messageThreadId?: number; canStop?: boolean },
   ) =>
     canSend(chat) &&
+    (context?.messageThreadId === undefined || positive(context.messageThreadId)) &&
     Number.isSafeInteger(draftId) &&
     draftId !== 0 &&
     [...text].length <= 4096
       ? call(
           "sendMessageDraft",
-          { chat_id: chat, draft_id: draftId, text: safe(text) },
+          { chat_id: chat, draft_id: draftId, text: safe(text), ...(context?.messageThreadId ? { message_thread_id: context.messageThreadId } : {}), ...(context?.canStop ? { can_stop: true, keep_on_stop: false } : {}) },
           signal,
         )
       : Promise.resolve<TelegramDelivery>({ status: "rejected" });

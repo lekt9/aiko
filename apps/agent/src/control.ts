@@ -1,3 +1,5 @@
+import { GRAPH_MARKUP, GRAPH_SCRIPT, GRAPH_STYLE } from "./control-graph.ts";
+
 /** Operator/account inspection surface. Credentials live only in this tab's memory. */
 export const CONTROL_HTML = `<!doctype html>
 <html lang="en">
@@ -15,6 +17,7 @@ export const CONTROL_HTML = `<!doctype html>
 @media(max-width:400px){.background-list,.filters{grid-template-columns:1fr}.top-actions a{max-width:90px}.hook-control{display:block}.hook-control button{margin-top:10px;width:100%}.scope{width:100%}.event{padding-left:18px}.fields{grid-template-columns:63px minmax(0,1fr)}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 .event-text:focus-visible{outline:3px solid var(--blue);outline-offset:3px}
+${GRAPH_STYLE}
 </style>
 </head>
 <body>
@@ -47,7 +50,7 @@ export const CONTROL_HTML = `<!doctype html>
         <div class="hook-control"><div class="hook-top"><strong>Proactive hooks</strong><span id="hooks-status" class="status">Unknown</span></div><p id="hooks-description" class="hint">Waiting for the account’s hook state.</p><button id="toggle-hooks" type="button" hidden>Pause proactive hooks</button></div>
       </aside>
       <section class="inspector" aria-label="Thread inspector">
-        <div class="tabs" role="tablist" aria-label="Inspect account"><button id="events-tab" type="button" role="tab" aria-selected="true" aria-controls="events-panel" tabindex="0">Event timeline</button><button id="memory-tab" type="button" role="tab" aria-selected="false" aria-controls="memory-panel" tabindex="-1">Entity memory</button></div>
+        <div class="tabs" role="tablist" aria-label="Inspect account"><button id="events-tab" type="button" role="tab" aria-selected="true" aria-controls="events-panel" tabindex="0">Event timeline</button><button id="memory-tab" type="button" role="tab" aria-selected="false" aria-controls="memory-panel" tabindex="-1">Entity memory</button><button id="graph-tab" type="button" role="tab" aria-selected="false" aria-controls="graph-panel" tabindex="-1">Node graph</button></div>
         <div id="events-panel" role="tabpanel" aria-labelledby="events-tab">
           <div class="panel-head"><div class="panel-title"><div><h2 id="thread-title">Select a thread</h2><code id="thread-id"></code></div><span id="thread-status" class="status" hidden></span></div><div id="thread-root" class="thread-root" hidden></div><div class="pipeline" aria-label="Event sequence"><span>Hook</span><b aria-hidden="true">→</b><span>Index</span><b aria-hidden="true">→</b><span>Reflect</span><b aria-hidden="true">→</b><span>Decide</span><b aria-hidden="true">→</b><span>Telegram</span></div></div>
           <div class="filters"><div class="filter-field"><label for="event-search">Search loaded events, IDs, or causes</label><input id="event-search" type="search" placeholder="Event, cause, root, text…" autocomplete="off"></div><div class="filter-field"><label for="event-kind">Event category</label><select id="event-kind"><option value="all">All events</option><option value="decision">Decisions</option><option value="delivery">Telegram &amp; media</option><option value="runtime">Sandbox &amp; browser</option><option value="memory">Learning &amp; changes</option><option value="failure">Failures &amp; unknowns</option></select></div></div>
@@ -59,6 +62,7 @@ export const CONTROL_HTML = `<!doctype html>
           <p id="memory-error" class="inline-error" role="status" hidden></p><p id="memory-tally" class="event-tally"></p><div id="memory-list" class="memory-list"></div>
           <details id="memory-sources" class="source-details"><summary id="sources-title">Source state</summary><pre id="sources-data"></pre></details>
         </div>
+        ${GRAPH_MARKUP}
       </section>
     </div>
   </section>
@@ -87,6 +91,7 @@ export const CONTROL_HTML = `<!doctype html>
   const memoryKey = (account = state.account, query = $('memory-search').value.trim()) => JSON.stringify([account,query]);
   const badge = status => { const allowed = ['idle','running','failed','blocked','delivered','rejected','unknown']; return element('span','status ' + (allowed.includes(status) ? status : ''), status || 'unknown'); };
   const empty = (title, body) => {const node = element('div','empty'); node.append(element('strong','',title),element('span','',body)); return node;};
+${GRAPH_SCRIPT}
   function invalidate() { state.epoch++; clearTimeout(timer); for(const controller of requests) controller.abort(); requests.clear(); refreshJob = null; refreshAgain = false; moreAgain = false; }
   async function api(path, body) {
     const controller = new AbortController(); requests.add(controller);
@@ -100,7 +105,7 @@ export const CONTROL_HTML = `<!doctype html>
   }
   function connection(text, status = '') { $('connection').textContent = text; $('connection').className = 'status ' + status; }
   function resetViews() {
-    eventCache.clear(); memoryCache.clear(); actorVersion = ''; eventVersion = ''; memoryVersion = '';
+    eventCache.clear(); memoryCache.clear(); graphView.reset(); actorVersion = ''; eventVersion = ''; memoryVersion = '';
     state.threads = []; state.selected = ''; state.foreground = ''; state.paused = null; state.hasThreadData = false;
     $('foreground').replaceChildren(); $('background').replaceChildren(); $('events').replaceChildren(); $('memory-list').replaceChildren(); $('sources-data').textContent = '';
     $('event-search').value = ''; $('event-kind').value = 'all'; $('memory-search').value = '';
@@ -158,7 +163,7 @@ export const CONTROL_HTML = `<!doctype html>
     $('hooks-status').className = 'status ' + (state.paused === null ? '' : state.paused ? 'blocked' : 'running');
     $('hooks-description').textContent = state.paused === null ? 'Waiting for the account’s hook state.' : state.paused ? 'New proactive work is paused. Already-running work may still finish.' : 'Incoming hooks can start background learning and reflection.';
     $('toggle-hooks').textContent = state.paused ? 'Resume proactive hooks' : 'Pause proactive hooks'; $('toggle-hooks').disabled = actionBusy || state.paused === null;
-    $('account').disabled = actionBusy; $('events-tab').disabled = actionBusy; $('memory-tab').disabled = actionBusy; $('memory-search').disabled = actionBusy;
+    $('account').disabled = actionBusy; $('events-tab').disabled = actionBusy; $('memory-tab').disabled = actionBusy; $('graph-tab').disabled = actionBusy; $('memory-search').disabled = actionBusy;
     if(focused) { const button = [...document.querySelectorAll('[data-thread]')].find(node => node.dataset.thread === focused); if(button) button.focus({preventScroll:true}); }
   }
   function eventStatus(event) {return event.result && typeof event.result === 'object' ? event.result.status : event.status;}
@@ -166,7 +171,7 @@ export const CONTROL_HTML = `<!doctype html>
   function eventCategory(event) { const type = event.type || ''; return /Decision/.test(type) ? 'decision' : /Delivery|ReplyPrepared|Telegram/.test(type) || event.media || event.telegram ? 'delivery' : /Sandbox|Browser/.test(type) ? 'runtime' : /Knowledge|Index|Memory|Learn/.test(type) ? 'memory' : 'other'; }
   function eventTitle(event) {
     const type = event.type || 'Event';
-    const titles = {AikoHookReceived:'Hook received',AikoIndexRequested:'Learning index requested',AikoKnowledgeChanged:'Knowledge changed',AikoReflectionRequested:'Reflection requested',AikoDecisionRecorded:'Decision recorded',AikoDecisionPublished:'Decision sent to foreground',AikoProactiveDecision:'Background decision received',AikoReplyPrepared:'Telegram reply prepared',AikoDeliverySettled:'Telegram delivery settled',AikoTelegramActionStarted:'Telegram capability started',AikoTelegramActionSettled:'Telegram capability settled',AikoTelegramTypingStarted:'Typing indicator started',AikoTelegramTypingStopped:'Typing indicator stopped',AikoSandboxProvisioning:'Private sandbox provisioning',AikoSandboxStarting:'Private sandbox starting',AikoSandboxReady:'Private sandbox ready',AikoSandboxStopped:'Private sandbox stopped',AikoSandboxUnavailable:'Sandbox needs reconciliation',AikoBackgroundFailed:'Background work failed',AikoHooksConfigured:'Proactive hooks configured',MessageReceived:'Message received',TurnCompleted:'Actor turn completed'};
+    const titles = {AikoConnectionChanged:'App connection changed',AikoLoginSubmitted:'Private login submitted',AikoLoginAttemptFailed:'Private login needs attention',AikoConnectionIndexRequested:'Connected app context queued',AikoHookReceived:'Hook received',AikoIndexRequested:'Learning index requested',AikoKnowledgeChanged:'Knowledge changed',AikoReflectionRequested:'Reflection requested',AikoDecisionRecorded:'Decision recorded',AikoDecisionPublished:'Decision sent to foreground',AikoProactiveDecision:'Background decision received',AikoReplyPrepared:'Telegram reply prepared',AikoDeliverySettled:'Telegram delivery settled',AikoTelegramActionStarted:'Telegram capability started',AikoTelegramActionSettled:'Telegram capability settled',AikoTelegramTypingStarted:'Typing indicator started',AikoTelegramTypingStopped:'Typing indicator stopped',AikoSandboxProvisioning:'Private sandbox provisioning',AikoSandboxStarting:'Private sandbox starting',AikoSandboxReady:'Private sandbox ready',AikoSandboxStopped:'Private sandbox stopped',AikoSandboxUnavailable:'Sandbox needs reconciliation',AikoBackgroundFailed:'Background work failed',AikoHooksConfigured:'Proactive hooks configured',MessageReceived:'Message received',TurnCompleted:'Actor turn completed'};
     return titles[type] || type.replace(/^Aiko/,'').replace(/([a-z])([A-Z])/g,'$1 $2');
   }
   function field(list, label, value, threadLink = false) {
@@ -196,7 +201,7 @@ export const CONTROL_HTML = `<!doctype html>
     if(event.errorCode || event.type === 'AikoBackgroundFailed') node.append(element('p','event-note failure',[event.stage,event.errorCode || 'Background processing failed'].filter(Boolean).join(' · ')));
     if(event.type === 'AikoHooksConfigured') node.append(element('p','event-note',event.paused ? 'New proactive work paused.' : 'Proactive hooks enabled.'));
     for(const value of [event.reason,event.text,typeof event.output === 'string' ? event.output : null,event.result && event.result.text]) if(typeof value === 'string' && value.trim()) {const text = element('p','event-text',value); text.tabIndex = 0; text.setAttribute('aria-label',eventTitle(event) + ' text, event ' + row.seq); node.append(text);}
-    const fields = element('dl','fields'); field(fields,'Event ID',event.id); field(fields,'Cause',event.cause); field(fields,'Turn',event.turn); field(fields,'Action',action); field(fields,'Account',event.owner); field(fields,'Sandbox',event.sandbox); field(fields,'Runner',event.runnerVersion); field(fields,'Album',telegram.mediaGroupId || event.mediaGroupId); field(fields,'Reply to',telegram.replyTo && telegram.replyTo.messageId); field(fields,'Callback',telegram.callback && telegram.callback.data); field(fields,'File',event.result && event.result.fileId); field(fields,'Source',event.sourceThread,true); field(fields,'Target',event.target || event.targetThread,true); field(fields,'Subject',event.subject); if(fields.childNodes.length) node.append(fields);
+    const fields = element('dl','fields'); field(fields,'App',event.domain); field(fields,'Connection',event.connectionId); field(fields,'Event ID',event.id); field(fields,'Cause',event.cause); field(fields,'Turn',event.turn); field(fields,'Action',action); field(fields,'Account',event.owner); field(fields,'Sandbox',event.sandbox); field(fields,'Runner',event.runnerVersion); field(fields,'Album',telegram.mediaGroupId || event.mediaGroupId); field(fields,'Reply to',telegram.replyTo && telegram.replyTo.messageId); field(fields,'Callback',telegram.callback && telegram.callback.data); field(fields,'File',event.result && event.result.fileId); field(fields,'Source',event.sourceThread,true); field(fields,'Target',event.target || event.targetThread,true); field(fields,'Subject',event.subject); if(fields.childNodes.length) node.append(fields);
     if(event.root || event.previousRoot) {const roots = element('div','root-change'); if(event.previousRoot) roots.append(element('span','','Before'),element('code','',event.previousRoot)); if(event.root) roots.append(element('span','',event.previousRoot ? 'After' : 'Root'),element('code','',event.root)); node.append(roots);}
     if(Array.isArray(event.changed)) node.append(element('p','hint',event.changed.length + ' changed observation' + (event.changed.length === 1 ? '' : 's') + (event.complete === false ? ' · index incomplete' : '')));
     if(Array.isArray(event.supports) && event.supports.length) {const details = element('details'); details.dataset.openKey = 'supports-' + row.seq; details.open = openRaw.has(details.dataset.openKey); details.append(element('summary','',event.supports.length + ' decision citation' + (event.supports.length === 1 ? '' : 's'))); const list = element('ul','supports'); list.append(...event.supports.map(value => element('li','',printable(value)))); details.append(list); node.append(details);}
@@ -236,10 +241,9 @@ export const CONTROL_HTML = `<!doctype html>
     $('sources-title').textContent = 'Source state · ' + sources.length + (sources.length === 1 ? ' source' : ' sources'); $('sources-data').textContent = cache ? JSON.stringify(redact(sources),null,2) : 'No source state loaded.';
   }
   function setTab(tab, shouldRefresh = true) {
-    state.tab = tab; const events = tab === 'events';
-    $('events-tab').setAttribute('aria-selected',String(events)); $('events-tab').tabIndex = events ? 0 : -1; $('events-panel').hidden = !events;
-    $('memory-tab').setAttribute('aria-selected',String(!events)); $('memory-tab').tabIndex = events ? -1 : 0; $('memory-panel').hidden = events;
-    if(shouldRefresh) {invalidate();renderMemory();refresh();}
+    state.tab = tab;
+    for(const name of ['events','memory','graph']) {const active = tab === name;$(name+'-tab').setAttribute('aria-selected',String(active));$(name+'-tab').tabIndex = active ? 0 : -1;$(name+'-panel').hidden = !active;}
+    if(shouldRefresh) {invalidate();renderMemory();graphView.render();refresh();}
   }
   function schedule() {clearTimeout(timer); if(state.token && $('auto').checked && !document.hidden && !actionBusy) timer = setTimeout(refresh,5000);}
   async function refresh(loadMore = false) {
@@ -254,10 +258,12 @@ export const CONTROL_HTML = `<!doctype html>
         api('accounts'),
         job.account ? api('threads?account=' + encodeURIComponent(job.account)) : Promise.resolve(null),
         readEvents ? api('events?thread=' + encodeURIComponent(job.selected) + '&after=' + (oldEvents ? oldEvents.after : 0) + '&limit=100') : Promise.resolve(null),
-        readMemory ? api('memory?account=' + encodeURIComponent(job.account) + '&search=' + encodeURIComponent(job.memoryQuery)) : Promise.resolve(null)
+        readMemory ? api('memory?account=' + encodeURIComponent(job.account) + '&search=' + encodeURIComponent(job.memoryQuery)) : Promise.resolve(null),
+        state.tab === 'graph' && job.account ? graphView.load(job.account,job.epoch) : Promise.resolve(null)
       ]);
       if(job.epoch !== state.epoch) return;
-      for(const result of results.slice(0,3)) if(result.status === 'rejected') throw result.reason;
+      for(const result of results) if(result.status === 'rejected' && [401,403].includes(result.reason.status)) throw result.reason;
+      for(const result of [...results.slice(0,3),results[4]]) if(result.status === 'rejected') throw result.reason;
       const accounts = results[0].value, threads = results[1].value, events = results[2].value;
       state.accounts = Array.isArray(accounts.accounts) ? accounts.accounts : []; state.operator = accounts.operator === true; state.writable = accounts.writable === true;
       updateAccountOptions(state.accounts);
@@ -300,8 +306,8 @@ export const CONTROL_HTML = `<!doctype html>
   $('load-more').addEventListener('click',() => refresh(true));
   $('event-search').addEventListener('input',renderEvents); $('event-kind').addEventListener('change',renderEvents);
   $('memory-search').addEventListener('input',() => {invalidate();$('memory-error').hidden = true;renderMemory();timer = setTimeout(refresh,300);});
-  $('events-tab').addEventListener('click',() => setTab('events')); $('memory-tab').addEventListener('click',() => setTab('memory'));
-  for(const id of ['events-tab','memory-tab']) $(id).addEventListener('keydown',event => {if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) {event.preventDefault();const next = event.key === 'Home' ? 'events' : event.key === 'End' ? 'memory' : state.tab === 'events' ? 'memory' : 'events';setTab(next);$(next + '-tab').focus();}});
+  const tabs = ['events','memory','graph'];
+  for(const name of tabs) {$(name+'-tab').addEventListener('click',()=>setTab(name));$(name+'-tab').addEventListener('keydown',event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){event.preventDefault();const next=event.key==='Home'?tabs[0]:event.key==='End'?tabs.at(-1):tabs[(tabs.indexOf(state.tab)+(event.key==='ArrowLeft'?2:1))%3];setTab(next);$(next+'-tab').focus();}});}
   $('toggle-hooks').addEventListener('click',async () => {
     if(!canManageHooks() || state.paused === null || actionBusy) return;
     invalidate(); const epoch = state.epoch, account = state.account, paused = !state.paused; let failure = ''; actionBusy = true; renderThreads();

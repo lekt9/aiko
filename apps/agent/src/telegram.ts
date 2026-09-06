@@ -1,3 +1,5 @@
+import { AIKO_MINI_APP_URL } from "./telegram-mini-app.ts";
+import { secretaryTelegram } from "./secretary-telegram.ts";
 import { telegram } from "tardie/channels/telegram";
 import { Effect } from "effect";
 import { boundedText, equalSecret, type HttpFetch } from "./security.ts";
@@ -28,6 +30,7 @@ export {
   type TelegramFile,
 } from "./telegram-outbound.ts";
 export function createTelegram(options: {
+  miniAppUrl?: string;
   token: string;
   secret: string;
   allowedUsers: ReadonlySet<string>;
@@ -67,6 +70,8 @@ export function createTelegram(options: {
     } catch {
       return { status: 400 };
     }
+    if (update && (update.business_connection || update.business_message || update.edited_business_message || update.deleted_business_messages))
+      return { status: 200, inbound: await secretaryTelegram(options.token, options.fetch).receive(update, options) };
     const result = normalizeTelegramUpdate(update, options);
     if (!result.inbound) return result;
     const inbound = result.inbound;
@@ -104,54 +109,9 @@ export function createTelegram(options: {
         : {}),
     };
   };
-  const send: Sender = async (chat, text, signal) => {
-    if (
-      (!options.public && !options.allowedUsers.has(chat)) ||
-      !/^[1-9]\d{0,15}$/.test(chat) ||
-      !text ||
-      text.length > 4_000
-    )
-      return { status: "rejected" };
-    try {
-      const response = await (options.fetch ?? fetch)(
-        `https://api.telegram.org/bot${options.token}/sendMessage`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            chat_id: chat,
-            text,
-            link_preview_options: { is_disabled: true },
-          }),
-          signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
-          redirect: "manual",
-        },
-      );
-      const body = JSON.parse(await boundedText(response)) as {
-        ok?: boolean;
-        result?: { message_id?: unknown };
-      };
-      if (
-        response.ok &&
-        body.ok === true &&
-        Number.isSafeInteger(body.result?.message_id)
-      )
-        return {
-          status: "delivered",
-          providerId: String(body.result!.message_id),
-        };
-      // Telegram has no client idempotency key or read-back API. No automatic retry of unknown outcomes.
-      return {
-        status:
-          response.status >= 400 && response.status < 500 && body.ok === false
-            ? "rejected"
-            : "unknown",
-      };
-    } catch {
-      return { status: "unknown" };
-    }
-  };
-  const outbound = createTelegramOutbound(options);
+  const outbound = createTelegramOutbound({ ...options, miniAppUrl: options.miniAppUrl ?? AIKO_MINI_APP_URL });
+  const send: Sender = (chat, text, signal, context) =>
+    outbound.sendRich(chat, { kind: "text", text, ...context }, signal);
   return {
     receive,
     send,

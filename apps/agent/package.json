@@ -12,16 +12,18 @@
     "dev": "bun src/main.ts",
     "start": "bun src/main.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test test",
-    "build": "bun build src/main.ts --target=bun --packages=external --outdir=dist"
+    "test": "bun ../../scripts/check-entity-learn.ts && bun test test",
+    "build": "bun ../../scripts/check-entity-learn.ts && bun build src/main.ts --target=bun --packages=external --outdir=dist"
   },
   "dependencies": {
     "@cfworker/json-schema": "4.1.1",
     "@huggingface/transformers": "3.8.1",
-    "@unbrowse/browser-runtime": "workspace:*",
+    "@jitl/quickjs-singlefile-cjs-release-sync": "0.32.0",
+    "@unbrowse/browser-harness": "link:../../../unbrowse-playground/runtime",
     "@unlock/sdk": "workspace:*",
     "effect": "4.0.0-rc.110",
     "entity-learn": "workspace:*",
+    "quickjs-emscripten-core": "0.32.0",
     "tardie": "0.22.0"
   },
   "devDependencies": {

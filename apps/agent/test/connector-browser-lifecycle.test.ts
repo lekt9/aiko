@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import { ConnectorEngine, type ConnectorStore, type SecureBrowserAdapter, type SecureBrowserBinding } from "../src/connectors.ts";
+import { nativeBrowserConnector } from "../src/native-browser-connector.ts";
 class Store implements ConnectorStore {
  rows = new Map<string, any>();
  async get(key: string) { return structuredClone(this.rows.get(key)); }
@@ -10,6 +11,64 @@ const catalogFetch = async (url: Parameters<typeof fetch>[0]) => new Response(JS
 const engine = (secureBrowser: SecureBrowserAdapter, store = new Store(), owner = "123") => new ConnectorEngine({ owner, store, env: { ARCADE_API_KEY: "fixture-only-browser-key" }, fetch: catalogFetch, secureBrowser });
 const begin = async () => ({ authorizationUrl: "https://signin.aiko.com/owner-only-relay" });
 const verified = (binding: SecureBrowserBinding, revision = 1) => ({ ...binding, status: "connected" as const, verification: { verified: true as const, revision, expiresAt: Date.now() + 600000 } });
+
+test("native connect reuses its flow and reconciles only already-revoked browser grants", async()=>{
+ const store=new Store();let cleanup=0;let confirmed=false;
+ const adapter:SecureBrowserAdapter={native:true,begin,disconnect:async b=>{cleanup++;return {...b,status:confirmed?"disconnected":"unknown"}}};
+ const e=new ConnectorEngine({owner:"123",store,arcadeOAuthEnabled:false,secureBrowser:adapter});
+ const first=await e.connectBrowser("service.net");
+ expect((await e.connectBrowser("service.net")).id).toBe(first.id);
+ await e.disconnect(first.id);expect(cleanup).toBe(1);
+ await expect(e.connectBrowser("second.net")).rejects.toThrow("cleanup");expect(cleanup).toBe(2);
+ confirmed=true;const next=await e.connectBrowser("second.net");expect(cleanup).toBe(3);expect(next.status).toBe("pending");
+ // A legacy duplicate with a newer grant must not lose that grant's cookies.
+ for(const row of store.rows.values())if(row.id===first.id){row.connectorId="browser:second.net";row.relayDisconnectStatus="unknown";}
+ await expect(e.connectBrowser("third.net")).rejects.toThrow("active connection");expect(cleanup).toBe(3);
+});
+
+test("native initial context uses read-only actions, rejects login walls and strips URL secrets",async()=>{
+ const calls:string[]=[];let login=0;let url="https://service.net/home?session=private#fragment";
+ const adapter=nativeBrowserConnector("123",async()=>({execute:async(input:any)=>{
+   calls.push(input.action);
+   if(input.action==="url")return {url};
+   if(input.action==="get_count")return {count:login};
+   return {text:"Project review due tomorrow"};
+ }} as any));
+ const binding={owner:"123",connectionId:"fixture-context",domain:"service.net"};
+ const context=await adapter.readContext!(binding);expect(context.url).toBe("https://service.net/home");
+ expect(calls).toEqual(["navigate","url","get_count","snapshot","get_text","url"]);
+ expect(JSON.stringify(context)).not.toContain("session");
+ login=1;await expect(adapter.readContext!(binding)).rejects.toThrow("sign-in");
+ login=0;url="https://other.net/";await expect(adapter.readContext!(binding)).rejects.toThrow("domain");
+ const count=calls.length;await expect(adapter.readContext!({...binding,owner:"456"})).rejects.toThrow("Owner");expect(calls).toHaveLength(count);
+});
+
+test("connection events are durable metadata and replay a lost delivery acknowledgement", async () => {
+ const store=new Store(); const seen:any[]=[]; let unavailable=true;
+ const options={owner:"123",store,arcadeOAuthEnabled:false,secureBrowser:{native:true,begin,status:async (b:SecureBrowserBinding)=>verified(b)},onEvent:async(e:any)=>{if(unavailable)throw Error("offline");seen.push(e)}};
+ const first=new ConnectorEngine(options); const row=await first.connectBrowser("service.net");
+ expect(seen).toHaveLength(0);
+ expect([...store.rows.values()][0].pendingEvents).toHaveLength(1);
+ unavailable=false;const recovered=new ConnectorEngine(options);await recovered.flushEvents();
+ await recovered.completeAuth(row.id);await recovered.completeAuth(row.id);await recovered.flushEvents();
+ expect(seen.map(e=>e.status)).toEqual(["pending","connected"]);
+ expect(new Set(seen.map(e=>e.id)).size).toBe(2);
+ expect(JSON.stringify(seen)).not.toMatch(/authorization|password|cookie|token|owner-only-relay/);
+ expect([...store.rows.values()][0].pendingEvents).toHaveLength(0);
+});
+test("initial context needs verified owner access and rechecks disconnection after the read", async()=>{
+ const store=new Store();let reads=0;let revoke:undefined|(()=>Promise<unknown>);
+ const adapter:SecureBrowserAdapter={native:true,begin,status:async b=>verified(b),readContext:async b=>{reads++;await revoke?.();return {url:`https://${b.domain}/home`,text:"A project has a review due tomorrow."}}};
+ const e=new ConnectorEngine({owner:"123",store,arcadeOAuthEnabled:false,secureBrowser:adapter});
+ const c=await e.connectBrowser("service.net");
+ await expect(e.initialContext(c.id)).rejects.toThrow();expect(reads).toBe(0);
+ await e.completeAuth(c.id);
+ const context=await e.initialContext(c.id);expect(context.type).toBe("connected-app-context");
+ const other=new ConnectorEngine({owner:"456",store,arcadeOAuthEnabled:false,secureBrowser:adapter});
+ await expect(other.initialContext(c.id)).rejects.toThrow();expect(reads).toBe(1);
+ revoke=()=>e.disconnect(c.id);
+ await expect(e.initialContext(c.id)).rejects.toThrow("revoked");
+});
 
 test("begin-only relay stays pending; browser execution is never fabricated", async () => {
  const e = engine({ begin }); const connection = await e.connectBrowser("service.net");

@@ -1,4 +1,14 @@
 export { Memory, type MemoryOptions } from "./memory.js";
+export type { ScanInput, ScanResult } from "./memory-core.js";
+export { memoryGraph } from "./graph.js";
+export type { GraphInput, GraphNode, GraphEdge, MemoryGraph } from "./graph.js";
+export { Knowledge, chunkKnowledgeText, KNOWLEDGE_PAGE, KNOWLEDGE_SOURCE } from "./knowledge.js";
+export type { Citation, KnowledgeClaim, KnowledgePage, PageDraft } from "./knowledge.js";
+export { renderKnowledgeHtml, KNOWLEDGE_CSP } from "./knowledge-html.js";
+export { SemanticIndex, embeddingText, checkedVector } from "./semantic.js";
+export type { EmbeddingSpace, EmbeddingDocument, SemanticInput, SemanticResult } from "./semantic.js";
+export { openRouterEmbeddings, GEMINI_EMBEDDING_2 } from "./embeddings.js";
+export type { EmbeddingProvider, EmbeddingAdmission, EmbeddingRequest, EmbeddingUsage } from "./embeddings.js";
 export { nodeStorage } from "./storage-node.js";
 export type { MemoryStorage } from "./storage.js";
 export type { MemoryArchive } from "./journal.js";

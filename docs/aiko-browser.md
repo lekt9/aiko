@@ -57,7 +57,7 @@ Automatic navigation/read operations are not a universal no-side-effect guarante
 
 ## Privacy and network boundary
 
-`packages/browser-runtime` retains the real process adapter, pinned executable verification, strict schemas/argv, value-free telemetry and bounded transport. Aiko does not expose shell/CLI strings, JavaScript evaluation, file access, cookie export, arbitrary flags or imported profiles to the model.
+The linked `@unbrowse/browser-harness` package retains the real process adapter, pinned executable verification, strict schemas/argv, value-free telemetry and bounded transport. Aiko does not expose shell/CLI strings, JavaScript evaluation, file access, cookie export, arbitrary flags or imported profiles to the model.
 
 Page excerpts and model interpretations are retrievable from bounded process memory for up to 15 minutes (and may be evicted earlier); the console displays the latest eight. Expired entries are pruned on access/shutdown, not securely erased on a timer. Chromium can cache pages in its private temporary profile; abrupt process loss can leave private temporary files requiring operator cleanup. Browser tool persistence contains metadata and receipts, not automatic page-body/typed-value transcripts. Live mode sends hydrated excerpts to the configured model provider. ThinkFeel still never receives them. Explicit memory writes can persist selected non-secret claims. User messages themselves remain durable: redaction is defense in depth, **not comprehensive DLP**. Lock clears the console's token and evidence, not server memory or an active task; use Cancel to interrupt work. Profile idle/shutdown cleanup and observation expiry are separate.
 
@@ -75,4 +75,4 @@ Supabase Auth/RLS, website Telegram OAuth, personal account/custody linking, sec
 - `scripts/aiko_browser_qa.py`, run through **browser-harness**, uses actual agent-browser/Chromium to read `example.com` then `iana.org` in one session. No mocked browser is used for those checks.
 - Public-browser and approval layouts are checked at 320/390/768/1440, including actual viewport-width assertions. Approve/deny buttons and hostile-looking snapshot text are tested separately with a synthetic browser driver. Existing console/memory QA is rerun with isolated data. Combined: **11 browser checks and 8 clean axe scans**.
 
-Historical browser-integration evidence: [`artifacts/aiko-browser/verification.json`](../artifacts/aiko-browser/verification.json), logs, review and screenshots. Source provenance: [`packages/browser-runtime/provenance.json`](../packages/browser-runtime/provenance.json).
+Historical browser-integration evidence: [`artifacts/aiko-browser/verification.json`](../artifacts/aiko-browser/verification.json), logs, review and screenshots. Current source linkage: [shared browser runtime](shared-browser-runtime.md).

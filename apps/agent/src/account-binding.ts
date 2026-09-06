@@ -1,11 +1,13 @@
 import { safeUserId } from "./security.ts";
 
-export type ThreadRole = "foreground" | "indexer" | "reflection" | "router" | "control";
+export type ThreadRole = "foreground" | "indexer" | "reflection" | "router" | "control" | "secretary";
 
 /** Account identity is parsed from the complete thread identifier, never a loose prefix. */
 export function threadBinding(
   thread: string,
 ): { owner: string; role: ThreadRole } | undefined {
+  if (thread.startsWith("secretary-") && safeUserId(thread.slice(10)))
+    return { owner: thread.slice(10), role: "secretary" };
   if (thread.startsWith("user-") && safeUserId(thread.slice(5)))
     return { owner: thread.slice(5), role: "foreground" };
   if (thread.startsWith("router-") && safeUserId(thread.slice(7)))

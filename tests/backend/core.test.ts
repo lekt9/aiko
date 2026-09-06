@@ -75,6 +75,173 @@ describe.runIf(enabled)("real PostgreSQL vault and runtime", () => {
   afterAll(async () => {
     await pg?.close();
   });
+  it("commits a verified browser password and bound session together, encrypted and metadata-only", async () => {
+    const f = await fixture(pg.db);
+    const result = await f.runtime.completeBrowserLogin(
+      f.tenant,
+      f.connection.id,
+      {
+        profileId: f.profile.id,
+        runtimeId: f.client.id,
+        version: f.connection.version,
+        identity: input.identity,
+        credential: { password: "SYNTHETIC-NEW-PASSWORD" },
+        cookies: [cookie()],
+      },
+    );
+    expect(result).toMatchObject({
+      version: f.connection.version + 1,
+      revision: 1,
+    });
+    expect(await f.vault.reveal(f.tenant, f.connection.id)).toEqual({
+      password: "SYNTHETIC-NEW-PASSWORD",
+    });
+    expect(await f.runtime.status(f.principal, f.connection.id)).toMatchObject({
+      verified: true,
+      revision: 1,
+    });
+    expect(
+      (await f.runtime.retrieve(f.principal, f.connection.id)).cookies,
+    ).toEqual([cookie()]);
+    const rows = await pg.db.query(
+      "SELECT secret FROM connections WHERE tenant=$1 UNION ALL SELECT secret FROM sessions WHERE tenant=$1",
+      [f.tenant],
+    );
+    expect(JSON.stringify(rows.rows)).not.toContain("SYNTHETIC-NEW-PASSWORD");
+    expect(JSON.stringify(rows.rows)).not.toContain("verified-alice");
+    expect(JSON.stringify(await f.vault.events(f.tenant))).not.toContain(
+      "SYNTHETIC-NEW-PASSWORD",
+    );
+  });
+  it("never replaces a password on failed verification, wrong identity, foreign owner, or stale login", async () => {
+    const f = await fixture(pg.db),
+      other = await fixture(pg.db);
+    const login = {
+      profileId: f.profile.id,
+      runtimeId: f.client.id,
+      version: f.connection.version,
+      identity: input.identity,
+      credential: { password: "SYNTHETIC-FAILED-PASSWORD" },
+      cookies: [cookie()],
+    };
+    await expect(
+      f.runtime.completeBrowserLogin(f.tenant, f.connection.id, {
+        ...login,
+        cookies: [cookie("signed-out")],
+      }),
+    ).rejects.toMatchObject({ code: "REAUTH_REQUIRED" });
+    await expect(
+      f.runtime.completeBrowserLogin(f.tenant, f.connection.id, {
+        ...login,
+        identity: "someone-else",
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(
+      f.runtime.completeBrowserLogin(other.tenant, f.connection.id, login),
+    ).rejects.toThrow();
+    await expect(
+      f.runtime.completeBrowserLogin(f.tenant, f.connection.id, {
+        ...login,
+        version: 999,
+      }),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(await f.vault.reveal(f.tenant, f.connection.id)).toEqual({
+      password: secret,
+    });
+    expect(
+      await f.runtime.stored(pg.db, f.principal, f.connection.id),
+    ).toBeUndefined();
+  });
+  it("rolls back password encryption if publishing the browser session fails", async () => {
+    const f = await fixture(pg.db),
+      seal = f.cipher.seal.bind(f.cipher);
+    f.cipher.seal = async (context, value) => {
+      if (context.includes(":session:")) throw Error("Synthetic storage fault");
+      return seal(context, value);
+    };
+    await expect(
+      f.runtime.completeBrowserLogin(f.tenant, f.connection.id, {
+        profileId: f.profile.id,
+        runtimeId: f.client.id,
+        version: f.connection.version,
+        identity: input.identity,
+        credential: { password: "SYNTHETIC-ROLLBACK-PASSWORD" },
+        cookies: [cookie()],
+      }),
+    ).rejects.toThrow("Synthetic storage fault");
+    expect(await f.vault.reveal(f.tenant, f.connection.id)).toEqual({
+      password: secret,
+    });
+    expect((await f.vault.list(f.tenant))[0].version).toBe(
+      f.connection.version,
+    );
+  });
+  it("does not resurrect access revoked while browser verification is in flight", async () => {
+    let verifying!: () => void, release!: () => void;
+    const started = new Promise<void>((resolve) => {
+        verifying = resolve;
+      }),
+      wait = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    const f = await fixture(pg.db, {
+      recipe: {
+        id: "fixture",
+        async verify(ctx) {
+          verifying();
+          await wait;
+          return {
+            identity: ctx.identity,
+            cookies: ctx.cookies,
+            expiresAt: Date.now() + 60000,
+          };
+        },
+        async renew() {
+          throw Error("not used");
+        },
+      },
+    });
+    const result = f.runtime
+      .completeBrowserLogin(f.tenant, f.connection.id, {
+        profileId: f.profile.id,
+        runtimeId: f.client.id,
+        version: f.connection.version,
+        identity: input.identity,
+        credential: { password: "SYNTHETIC-REVOKED-PASSWORD" },
+        cookies: [cookie()],
+      })
+      .then(
+        () => "unexpected-success",
+        () => "rejected",
+      );
+    await started;
+    try {
+      await f.vault.assign(f.tenant, f.profile.id, []);
+    } finally {
+      release();
+    }
+    expect(await result).toBe("rejected");
+    expect(await f.vault.reveal(f.tenant, f.connection.id)).toEqual({
+      password: secret,
+    });
+  });
+  it("rejects retrieval of a session invalidated by a password generation change", async () => {
+    const f = await fixture(pg.db);
+    await f.runtime.importSession(f.tenant, f.connection.id, {
+      profileId: f.profile.id,
+      runtimeId: f.client.id,
+      cookies: [cookie()],
+    });
+    await f.vault.setPassword(
+      f.tenant,
+      f.connection.id,
+      "SYNTHETIC-ROTATION",
+      f.connection.version,
+    );
+    await expect(
+      f.runtime.retrieve(f.principal, f.connection.id),
+    ).rejects.toMatchObject({ code: "REAUTH_REQUIRED" });
+  });
   it("persists encrypted credentials across connection pools and idempotent migrations", async () => {
     const f = await fixture(pg.db),
       second = postgres(pg.url);

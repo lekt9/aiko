@@ -20,7 +20,7 @@ import { controlApi } from "../src/control-api.ts";
 
 // Positive live-delivery fixtures only: run the real composer against a deterministic local response.
 const positiveVoiceFetch = async (_url: unknown, init?: RequestInit) => Response.json({
-  status: "success", result: { finalReply: JSON.parse(JSON.parse(String(init?.body)).messages[1].content).DRAFT },
+  personified: JSON.parse(String(init?.body)).raw,
 });
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -140,6 +140,31 @@ const learning = (id: string, revision = 1) => ({
 
 const ofType = (events: readonly AikoEvent[], type: string) =>
   events.filter((event) => event.type === type);
+
+test("verified connections trigger one native context index and reflection, never on pending or foreign grants", async()=>{
+ let reads=0;
+ const f=await fixture({arcadeOAuthEnabled:false},{connectorBrowser:owner=>({native:true,
+   begin:async()=>({authorizationUrl:"https://signin.aiko.com/connect"}),
+   status:async binding=>({...binding,status:"connected",verification:{verified:true,revision:1,expiresAt:Date.now()+600000}}),
+   readContext:async binding=>{expect(binding.owner).toBe(owner);reads++;return {url:`https://${binding.domain}/home`,text:"Aurorapanda has a Thursday release review."}},
+ })});
+ const pending=await (await f.request("/api/connectors/browser",{domain:"service.net"})).json() as {id:string};
+ await f.service.host.drive();expect(reads).toBe(0);
+ expect((await f.request("/api/connectors/complete",{connectionId:pending.id},bob)).status).toBe(409);
+ expect((await f.request("/api/connectors/complete",{connectionId:pending.id})).status).toBe(200);
+ await f.service.host.drive();
+ const indexer=backgroundThread("123","indexer");
+ expect(reads).toBe(1);
+ expect(ofType(await f.events(indexer),"AikoConnectionIndexRequested")).toHaveLength(1);
+ expect(ofType(await f.events(indexer),"AikoLearningIndexed")).toHaveLength(1);
+ expect(ofType(await f.events(indexer),"AikoKnowledgeChanged")).toHaveLength(1);
+ const memory=openMemory({stateDir:accountDirectory(f.config.stateDir,"123"),owner:"123"});
+ try {expect(memory.recall({subject:"learning/connected-app-context/service.net"}).items.some(item=>item.observation.type==="connected-app-context")).toBe(true);} finally {memory.close();}
+ await f.restart();
+ await f.request("/api/connectors/complete",{connectionId:pending.id});await f.service.host.drive();
+ expect(reads).toBe(1);
+ expect(ofType(await f.events("user-123"),"AikoConnectionChanged").map(e=>e.status)).toEqual(["pending","connected"]);
+});
 
 test("control thread status follows the current turn and job, not historical failures or unknown deliveries", async () => {
   const foreground: AikoEvent[] = [
@@ -289,6 +314,7 @@ function reflectionModel(
         return Effect.succeed({
           kind: "complete" as const,
           output: JSON.stringify(decide(input.changed, request)),
+          mode: { kind: "local", name: "validate-once" },
         });
       },
     }),
@@ -905,4 +931,23 @@ test("the next foreground turn sees the proactive reply that was actually sent t
     ),
   ).toBe(true);
   expect(JSON.stringify(history)).not.toContain("Private background rationale");
+});
+
+test("a real owner connection event opens a Telegram Mini App through the foreground actor", async () => {
+  const f = await fixture({arcadeOAuthEnabled:false,replyStyle:"direct"}, {connectorBrowser: () => ({native:true,
+    begin: async () => ({authorizationUrl:"https://signin.aiko.com/connect"}),
+    status: async binding => ({...binding,status:"pending"}),
+  })});
+  await f.telegram(19001);
+  await f.service.host.drive();
+  const response = await f.request("/api/connectors/browser",{domain:"service.net"});
+  expect(response.status).toBe(200);
+  const connection = await response.json() as {id:string};
+  await f.service.host.drive();
+  const notices = () => f.deliveries.filter((d:any) => d.reply_markup?.inline_keyboard?.[0]?.[0]?.web_app);
+  expect(notices()).toHaveLength(1);
+  expect(notices()[0]).toMatchObject({chat_id:"123",reply_markup:{inline_keyboard:[[{text:"Sign in",web_app:{url:`https://aiko-agent.lewis-6d8.workers.dev/connect?connection=${connection.id}`}}]]}});
+  expect(ofType(await f.events("user-123"),"AikoLoginNoticeSettled")[0]?.status).toBe("delivered");
+  await f.restart(); await f.request("/api/connectors/connections"); await f.service.host.drive();
+  expect(notices()).toHaveLength(1);
 });

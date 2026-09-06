@@ -3,10 +3,11 @@ import { parseConnectorVault, type ConnectorVaultConfig } from "./connector-vaul
 import { lstat, readFile, mkdir, chmod } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, isAbsolute } from "node:path";
-import { normalizeAgentBrowserAllowedDomains } from "@unbrowse/browser-runtime";
+import { normalizeAgentBrowserAllowedDomains } from "@unbrowse/browser-harness/client";
 
 import { parsePlaneCredentials, type PlaneCredential } from "./plane-auth.ts";
 import { DEFAULT_MODEL_LIMITS, type ModelLimits } from "./model-budget.ts";
+import { safeUserId } from "./security.ts";
 
 export const PERSONA = "3c36e929-50ac-4971-919f-70e6fc6273b7";
 export type AikoConfig = {
@@ -19,13 +20,18 @@ export type AikoConfig = {
   stateDir: string;
   operatorToken: string;
   modelKey?: string;
+  /** Separate opt-in from paid chat inference; explicit owners, revision and global daily embedding allowance. */
+  memoryEmbedding?: { apiKey: string; owners: readonly string[]; maxUsdPerDay: number; revision: string };
   cerebrasKey?: string;
   modelRouting?: ModelRoutingConfig;
   arcadeKey?: string;
+  arcadeOAuthEnabled?: boolean;
+  codeMode?: boolean;
   connectorVault?: ConnectorVaultConfig;
   voiceKey?: string;
   persona: string;
   voiceEnabled: boolean;
+  replyStyle?: "thinkfeel" | "direct";
   botToken?: string;
   webhookSecret?: string;
   allowedUsers: ReadonlySet<string>;
@@ -88,6 +94,19 @@ export async function loadConfig(
     throw new Error(
       "Live inference requires explicit AIKO_ALLOW_PAID_INFERENCE=true",
     );
+  const embeddingFlag = get("AIKO_MEMORY_CLOUD_EMBEDDINGS") ?? "false";
+  if (!["true", "false"].includes(embeddingFlag)) throw new Error("Invalid cloud memory opt-in");
+  let memoryEmbedding: AikoConfig["memoryEmbedding"];
+  if (embeddingFlag === "true") {
+    const apiKey = get("OPENROUTER_EMBEDDING_API_KEY");
+    const owners = (get("AIKO_MEMORY_EMBEDDING_OWNERS") ?? "").split(",").map(v => v.trim());
+    const maxUsdPerDay = Number(get("AIKO_MEMORY_EMBEDDING_MAX_USD_PER_DAY"));
+    const revision = get("AIKO_MEMORY_EMBEDDING_REVISION") ?? "";
+    if (mode !== "live" || !apiKey || /[\r\n]/.test(apiKey) || !owners.length || owners.some(o => !safeUserId(o)) ||
+      !Number.isFinite(maxUsdPerDay) || maxUsdPerDay <= 0 || maxUsdPerDay > 10 || !/^[A-Za-z0-9_.:/-]{1,128}$/.test(revision))
+      throw new Error("Cloud memory requires live mode, a dedicated environment key, explicit owner allowlist, revision and daily USD cap");
+    memoryEmbedding = { apiKey, owners: [...new Set(owners)], maxUsdPerDay, revision };
+  }
   const instanceId = get("AIKO_INSTANCE_ID") ?? mode;
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(instanceId))
     throw new Error("Invalid stable actor instance ID");
@@ -198,8 +217,10 @@ export async function loadConfig(
   const planeCredentials = parsePlaneCredentials(
     get("AIKO_PLANE_CREDENTIALS") ?? "[]",
   );
+  const replyStyle = get("AIKO_REPLY_STYLE") ?? "thinkfeel";
+  if (replyStyle !== "thinkfeel" && replyStyle !== "direct") throw new Error("Invalid reply style");
   const voiceEnabled =
-    mode === "live" && get("AIKO_ALLOW_THINKFEEL") === "true";
+    mode === "live" && replyStyle === "thinkfeel" && get("AIKO_ALLOW_THINKFEEL") === "true";
   const voiceKey = get("THINKFEEL_API_KEY");
   if (voiceEnabled && !voiceKey)
     throw new Error("ThinkFeel enabled without a key");
@@ -258,13 +279,17 @@ export async function loadConfig(
     stateDir,
     operatorToken,
     modelKey,
+    memoryEmbedding,
     cerebrasKey: get("CEREBRAS_API_KEY"),
     modelRouting: parseModelRouting(Object.fromEntries(["AIKO_MODEL", "AIKO_CONVERSATION_PROVIDER", "AIKO_CONVERSATION_MODEL", "AIKO_RAG_PROVIDER", "AIKO_RAG_MODEL", "AIKO_BROWSER_PROVIDER", "AIKO_BROWSER_MODEL"].map(k => [k, get(k)]))),
     arcadeKey: get("ARCADE_API_KEY"),
+    arcadeOAuthEnabled: get("AIKO_ARCADE_OAUTH_ENABLED") === "true",
+    codeMode: get("AIKO_CODE_MODE") === "true",
     connectorVault: parseConnectorVault(get("AIKO_CONNECTOR_VAULT_JSON")),
     voiceKey,
     persona: get("THINKFEEL_PERSONA_ID") ?? PERSONA,
     voiceEnabled,
+    replyStyle,
     botToken,
     webhookSecret,
     allowedUsers,

@@ -15,17 +15,19 @@ function fixture(status: "available" | "absent" | "unavailable" = "available", a
     connections: async () => [connection], execute: async () => ({ status: "succeeded", value: "ok" }),
   }, deliverConnection: async input => { deliveries.push(input); return { status: "delivered" }; } };
   const run = (name: string, input: unknown, thread = binding.thread): Promise<any> => Effect.runPromise(createActorConnectorTools(binding).find(t => t.spec.name === name)!.run(input, { callId: name, turn: "turn", signal: new AbortController().signal }).pipe(Effect.provideService(Self, { actor: "aiko", instance: "test", thread }), Effect.provideService(EventLog, { read: Effect.sync(() => events), head: Effect.sync(() => events.length), readFrom: n => Effect.sync(() => events.slice(n)), append: items => Effect.sync(() => { events.push(...items); }) })));
-  return { calls, deliveries, events, run };
+  return { calls, deliveries, events, run, binding };
 }
-test("Arcade search precedes native button delivery and auth link stays out of receipts/logs", async () => {
+test("Arcade search precedes durable login request and auth link stays out of receipts/logs", async () => {
   const f = fixture();
   const result = await f.run("connector_recommend", { query: "service", connectorId: "read" });
   expect(f.calls).toEqual(["search", "connect"]);
-  expect(f.deliveries).toEqual([{ owner: "123", text: "Connect Service securely to continue.", buttons: [[{ text: "Connect securely", url: "https://cloud.arcade.dev/auth/secret" }]] }]);
+  expect(f.deliveries).toEqual([]);
+  expect(result.delivery).toBe("queued");
+  expect(f.events.filter(e => e.type === "AikoLoginRequested")).toMatchObject([{ owner: "123", connectionId: "connection" }]);
   expect(JSON.stringify([result, f.events])).not.toContain("/auth/secret");
   expect(JSON.stringify(await f.run("connector_connections", {}))).not.toContain("/auth/secret");
   expect((await f.run("connector_recommend", { query: "service", connectorId: "read" })).status).toBe("unknown");
-  expect(f.deliveries).toHaveLength(1);
+  expect(f.events.filter(e => e.type === "AikoLoginRequested")).toHaveLength(1);
 });
 test("browser fallback requires confirmed absence, never unavailable or matching catalog", async () => {
   for (const status of ["available", "unavailable", "absent"] as const) {
@@ -42,6 +44,7 @@ test("owner mismatch and invalid authorization URL cannot deliver", async () => 
     const f = fixture("available", url);
     await f.run("connector_recommend", { query: "service", connectorId: "read" });
     expect(f.deliveries).toEqual([]);
+    expect(f.events.some(e => e.type === "AikoLoginRequested")).toBe(false);
   }
 });
 
@@ -56,4 +59,16 @@ test("frontend, stale Telegram and forged textual provenance cannot deliver reco
     expect((await f.run("connector_recommend", {query: "service", connectorId: "read"})).status).toBe("rejected");
     expect(f.calls).toEqual([]); expect(f.deliveries).toEqual([]);
   }
+});
+
+test("explicit host OAuth disable queues the native sign-in screen without treating an outage as absence", async () => {
+  const f = fixture("unavailable");
+  f.binding.engine.apps = async () => ({ apps: [], oauthEnabled: false, nativeAvailable: true, nativeInline: true });
+  expect((await f.run("connector_recommend", {query:"Service",domain:"service.com"})).delivery).toBe("queued");
+  expect(f.calls).toEqual(["browser"]);
+  expect(f.events.filter(e=>e.type === "AikoLoginRequested")).toHaveLength(1);
+  const missing = fixture();
+  missing.binding.engine.apps = f.binding.engine.apps;
+  expect((await missing.run("connector_recommend", {query:"Service"})).status).toBe("rejected");
+  expect(missing.calls).toEqual([]);
 });

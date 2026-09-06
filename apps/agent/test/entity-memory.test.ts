@@ -91,7 +91,7 @@ describe("real entity-learn engine in native Tardie tools", () => {
     const component = tool(bindings);
     expect(
       component.machine.output(component.machine.initial()).view.tools.length,
-    ).toBe(9);
+    ).toBe(13);
     expect(existsSync(join(f.stateDir, "memory"))).toBe(false);
     expect(f.reads).toBe(0);
     const names = bindings.map((t) => t.spec.name);

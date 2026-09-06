@@ -1,3 +1,4 @@
+import { Knowledge, renderKnowledgeHtml, MemoryError } from "entity-learn";
 import { openMemory, type MemoryBinding } from "./memory.ts";
 
 export const planeManifest = {
@@ -44,6 +45,7 @@ export const planeManifest = {
     { method: "POST", path: "/v1/cancel", body: { id: "accepted message ID" } },
     { method: "GET", path: "/v1/memory/recall?search=..." },
     { method: "GET", path: "/v1/memory/observations/{observationId}" },
+    { method: "GET", path: "/v1/memory/knowledge/{observationId}" },
     { method: "GET", path: "/v1/browser" },
     { method: "POST", path: "/v1/browser/approval" },
   ],
@@ -53,7 +55,7 @@ export const planeManifest = {
 
 export function planeMemoryRead(
   url: URL,
-  binding: Pick<MemoryBinding, "stateDir" | "owner">,
+  binding: Pick<MemoryBinding, "stateDir" | "owner" | "openMemory">,
 ): Response | undefined {
   if (!url.pathname.startsWith("/v1/memory/")) return undefined;
   const json = (data: unknown, status = 200) =>
@@ -76,6 +78,13 @@ export function planeMemoryRead(
           depth: 0,
         }),
       );
+    const pageMatch = /^\/v1\/memory\/knowledge\/(obs_[a-f0-9]{64})$/.exec(url.pathname);
+    if (pageMatch) {
+      return memory.journal.read(() => {
+        const knowledge = new Knowledge(memory); const page = knowledge.get(pageMatch[1]);
+        return page ? json({ page, html: renderKnowledgeHtml(knowledge, pageMatch[1]) }) : json({ error: "not_found" }, 404);
+      });
+    }
     const match = /^\/v1\/memory\/observations\/(obs_[a-f0-9]{64})$/.exec(
       url.pathname,
     );
@@ -84,6 +93,8 @@ export function planeMemoryRead(
       return found ? json(found) : json({ error: "not_found" }, 404);
     }
     return json({ error: "not_found" }, 404);
+  } catch (error) {
+    return json({ error: error instanceof MemoryError ? "memory_unavailable" : "read_failed" }, 409);
   } finally {
     memory.close();
   }

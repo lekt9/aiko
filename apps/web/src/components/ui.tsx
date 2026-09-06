@@ -113,25 +113,51 @@ export function Modal({
   title,
   children,
   close,
+  className,
 }: {
   title: string;
   children: ReactNode;
   close: () => void;
+  className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const closeCurrent = useRef(close);
+  closeCurrent.current = close;
   const id = useId();
   useEffect(() => {
     const d = ref.current!;
+    const previous = document.activeElement as HTMLElement | null;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     d.showModal();
+    const app = (window as Window & { Telegram?: { WebApp?: {
+      initData?: string;
+      BackButton?: { show(): void; hide(): void; onClick(fn: () => void): void; offClick(fn: () => void): void };
+    } } }).Telegram?.WebApp;
+    const back = app?.initData ? app.BackButton : undefined;
+    const goBack = () => {
+      if (Array.from(document.querySelectorAll("dialog[open]")).at(-1) === d)
+        closeCurrent.current();
+    };
+    back?.onClick(goBack);
+    back?.show();
     return () => {
       d.close();
+      back?.offClick(goBack);
+      if (!document.querySelector("dialog[open]")) back?.hide();
+      document.body.style.overflow = overflow;
+      if (previous?.isConnected) previous.focus();
     };
   }, []);
   return (
     <dialog
       ref={ref}
+      className={className}
       aria-labelledby={id}
-      onCancel={close}
+      onCancel={(event) => {
+        event.preventDefault();
+        close();
+      }}
       onKeyDown={(e) => {
         if (e.key !== "Tab") return;
         const stops = Array.from(
@@ -152,7 +178,15 @@ export function Modal({
         }
       }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) close();
+        const bounds = e.currentTarget.getBoundingClientRect();
+        if (
+          e.target === e.currentTarget &&
+          (e.clientX < bounds.left ||
+            e.clientX > bounds.right ||
+            e.clientY < bounds.top ||
+            e.clientY > bounds.bottom)
+        )
+          close();
       }}
     >
       <div className="dialog-inner">

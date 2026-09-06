@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { nodeStorage } from "entity-learn";
-import { Memory } from "entity-learn/cloudflare";
+import { Memory, Knowledge } from "entity-learn/cloudflare";
+import { planeMemoryRead } from "../src/plane.ts";
 import { openMemory, memoryScope, type MemoryStoreBinding } from "../src/memory.ts";
 import { indexLearning, memorySnapshot, validateLearningInput } from "../src/learning.ts";
 
@@ -31,6 +32,23 @@ test("native injected storage shares learned evidence without touching a filesys
     expect(other.recall().items).toEqual([]);
     other.close();
     expect(validateLearningInput({ ...input, id: `sk-${"x".repeat(30)}` })).toBeUndefined();
+  } finally { native.close(); }
+});
+
+test("private knowledge API uses the Worker account storage factory without touching the filesystem opener", async () => {
+  const native = nodeStorage(":memory:"); const shared = { ...native, close: () => {} };
+  const binding: MemoryStoreBinding = { stateDir: "/proc/aiko-must-never-create-this", owner: "123",
+    openMemory: adapters => new Memory({ storage: shared, scope: memoryScope("123"), adapters }) };
+  try {
+    const memory = openMemory(binding); const knowledge = new Knowledge(memory);
+    const options = (key: string) => ({ key, producer: { kind: "agent" as const, reference: "fixture:worker" } });
+    const raw = knowledge.source({ subject: "raw", title: "Source", text: "Review on Friday.", reference: "fixture" }, options("raw"));
+    const page = knowledge.publish({ subject: "wiki", title: "Review", claims: [{ text: "Review on Friday.", basis: "stated",
+      citations: [{ observation: raw.id, path: ["text"], quote: "Review on Friday." }] }] }, options("page"));
+    memory.close();
+    const response = planeMemoryRead(new URL(`https://example.test/v1/memory/knowledge/${page.id}`), binding)!;
+    expect(response.status).toBe(200); expect((await response.json()).html).toContain("Review on Friday.");
+    expect(response.headers.get("cache-control")).toBe("no-store");
   } finally { native.close(); }
 });
 

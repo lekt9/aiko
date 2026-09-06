@@ -9,16 +9,22 @@ import type { NativeTool } from "tardie/component/tool";
 import {
   type Memory,
   MemoryError,
+  SemanticIndex,
+  embeddingText,
+  checkedVector,
+  validateRememberInput,
+  type EmbeddingProvider,
+  type PageDraft,
   tardigradeLogSource,
   type Json,
   type MemoryHit,
   type RecallInput,
-  type RememberInput,
   type SourceInput,
   type SourceRunner,
   type TardigradeLogRow,
 } from "entity-learn";
 import { fixtureRead, type Entity, type ReadReceipt } from "./capabilities.ts";
+import { WikiMemory } from "./wiki-memory.ts";
 
 export interface MemoryReceipt {
   kind: "memory-receipt";
@@ -34,6 +40,9 @@ export interface MemoryBinding {
   thread: string;
   /** Host-owned factory; request-specific source adapters never cross account boundaries. */
   openMemory?: (adapters: Record<string, SourceRunner>) => Memory;
+  /** Explicit host egress grant; absent by default. Never used for local-only request-pointer response values. */
+  embedding?: EmbeddingProvider;
+  styleExampleConsent?: (observationId: string) => boolean;
   redact: (text: string) => string;
   /** Already authorized and bound to exactly this actor thread by the host. */
   readPage: (
@@ -475,7 +484,73 @@ export function memoryTools(
                   text: `DEMO · synthetic data, not your accounts.\n${summary}\nNothing has been posted or changed.\nEvidence: ${refreshed.observations.join(", ")}`,
                 };
               }
+              const wiki = new WikiMemory({ owner: binding.owner, memory, redact: binding.redact, styleExampleConsent: binding.styleExampleConsent });
               switch (operation) {
+                case "scan": {
+                  const args = object(input, ["after", "type", "limit"]);
+                  return result(wiki.contextScan({ ...(args.after ? { after: text(args.after) } : {}),
+                    ...(args.type ? { type: text(args.type) } : {}), limit: integer(args.limit, 1, 8, 4) }),
+                    "A bounded keyset page of current recorded memory. Follow nextAfter for more; this is not a complete corpus unless the cursor is exhausted.");
+                }
+                case "publish_page": {
+                  const saved = wiki.compile(input as PageDraft, { key, producer: { kind: "agent",
+                    reference: `tardigrade:${self.actor}/${self.instance}/${self.thread}#${context.callId}${context.turn ? `@${context.turn}` : ""}` } });
+                  return result(saved, `Saved a compiled page with pinned quotations: ${saved.id}. Quote presence was checked, not semantic truth. No external source was executed.`);
+                }
+                case "page": {
+                  const args = object(input, ["observation"]); const page = wiki.contextCompiled(text(args.observation));
+                  return result(page ? { ...page, viewPath: `/v1/memory/knowledge/${page.hit.observation.id}` } : null,
+                    "Compiled page and cited evidence status. Verify event identity, dates, roles and relationships against original passages; do not substitute a related event. Stated/inferred labels are compiler claims, not certainty. The HTML view is private and account-authenticated.");
+                }
+                case "lint_pages": {
+                  const args = object(input, ["after", "limit"]);
+                  return result(wiki.contextLint({ ...(args.after ? { after: text(args.after) } : {}), limit: integer(args.limit, 1, 8, 4) }),
+                    "Structural and staleness audit only; not a semantic truth audit. Follow the cursor for remaining pages.");
+                }
+                case "index": {
+                  if (!binding.embedding) throw new MemoryError("forbidden", "Embedding capability not granted");
+                  const args = object(input, ["after", "type"]);
+                  const index = new SemanticIndex(memory, binding.embedding.space, binding.embedding.maxInputBytes);
+                  const allowed = (item: MemoryHit) => wiki.allowsContext(item) && binding.redact(embeddingText(item.observation)) === embeddingText(item.observation);
+                  const prepared = index.prepare({ ...(args.after ? { after: text(args.after) } : {}),
+                    ...(args.type ? { type: text(args.type) } : {}), limit: Math.min(8, binding.embedding.maxBatch) }, allowed);
+                  let committed = { accepted: [] as string[], rejected: [] as string[] };
+                  let usage = null;
+                  if (prepared.documents.length) {
+                    const batch = await binding.embedding.embed(prepared.documents.map(d => d.text), { key, purpose: "document", signal: context.signal });
+                    context.signal.throwIfAborted(); usage = batch.usage;
+                    if (batch.vectors.length !== prepared.documents.length) throw new MemoryError("invalid_embedding", "Embedding batch must be aligned");
+                    for (const vector of batch.vectors) checkedVector(vector, binding.embedding.space.dimensions);
+                    // Native cancellation, host consent/redaction and canonical evidence are independent fences.
+                    // Recheck host policy after I/O; commit still checks exact current heads/content atomically.
+                    const acceptedIndices: number[] = []; const excluded: string[] = [];
+                    prepared.documents.forEach((document, i) => {
+                      const hit = memory.get(document.observation);
+                      if (hit && allowed(hit)) acceptedIndices.push(i); else excluded.push(document.observation);
+                    });
+                    if (acceptedIndices.length) committed = index.commit(acceptedIndices.map(i => prepared.documents[i]!), acceptedIndices.map(i => batch.vectors[i]!));
+                    committed.rejected.push(...excluded);
+                    if (excluded.length) { prepared.coverage = "partial"; prepared.reasons = [...new Set([...prepared.reasons, "host_policy"])]; }
+                  }
+                  return result({ ...committed, usage, nextAfter: prepared.nextAfter, scanned: prepared.scanned,
+                    coverage: prepared.coverage, reasons: prepared.reasons, sourceVersion: prepared.sourceVersion },
+                    "Explicitly indexed one bounded batch using the host-approved embedding provider. Changed or suppressed heads were rejected. Oversize documents were skipped, never truncated. No bulk background upload was started.");
+                }
+                case "semantic_recall": {
+                  if (!binding.embedding) throw new MemoryError("forbidden", "Embedding capability not granted");
+                  const args = object(input, ["search", "minSimilarity", "includeStale", "type"]);
+                  const search = text(args.search);
+                  if (typeof args.minSimilarity !== "number" || !Number.isFinite(args.minSimilarity) || args.minSimilarity < -1 || args.minSimilarity > 1 ||
+                    (args.includeStale !== undefined && typeof args.includeStale !== "boolean")) throw new MemoryError("invalid_input", "Invalid similarity policy");
+                  const type = args.type === undefined ? undefined : text(args.type);
+                  if (/[\u0000-\u001f]/.test(search) || (type !== undefined && (type.length > 80 || /[\u0000-\u001f]/.test(type))))
+                    throw new MemoryError("invalid_input", "Invalid semantic query text or type");
+                  const batch = await binding.embedding.embed([search], { key, purpose: "query", signal: context.signal }); context.signal.throwIfAborted();
+                  const recalled = new SemanticIndex(memory, binding.embedding.space, binding.embedding.maxInputBytes).search({ search, vector: batch.vectors[0]!,
+                    minSimilarity: args.minSimilarity, includeStale: args.includeStale === true, ...(type ? { type } : {}), limit: 6, maxBytes: 12000 },
+                    item => wiki.allowsContext(item) && binding.redact(embeddingText(item.observation)) === embeddingText(item.observation));
+                  return result(recalled, "Hybrid lexical/vector matches, not entailment or calibrated confidence. Query embedding used the explicit host grant. Check missing-embedding, candidate and freshness coverage; weak/empty matches are valid. Source execution and corpus indexing did not occur.");
+                }
                 case "recall": {
                   const args = object(input, [
                     "search",
@@ -488,7 +563,7 @@ export function memoryTools(
                     "depth",
                     "includeStale",
                   ]);
-                  const recalled = memory.recall({
+                  const recalled = wiki.contextRecall({
                     ...args,
                     limit: integer(args.limit, 1, 10, 6),
                     maxBytes: integer(args.maxBytes, 512, 12_000, 8_000),
@@ -506,7 +581,7 @@ export function memoryTools(
                 }
                 case "get": {
                   const args = object(input, ["observation"]);
-                  const hit = memory.get(text(args.observation));
+                  const hit = wiki.contextRead(text(args.observation));
                   return result(
                     hit,
                     hit
@@ -514,12 +589,12 @@ export function memoryTools(
                           [hit],
                           "Pinned memory observation — not a fresh external read.",
                         )
-                      : "That observation is unavailable in your memory scope, or it has been suppressed.",
+                      : "That observation is unavailable in your memory scope or under the current host context policy.",
                   );
                 }
                 case "history": {
                   const args = object(input, ["subject", "limit"]);
-                  const hits = memory.history(
+                  const hits = wiki.contextHistory(
                     text(args.subject),
                     integer(args.limit, 1, 10, 5),
                   );
@@ -527,7 +602,7 @@ export function memoryTools(
                     hits,
                     listText(
                       hits,
-                      "Recorded subject history — historical claims may no longer be current.",
+                      "Bounded recorded subject history under current host context policy — private/unavailable records may be excluded, and historical claims may no longer be current.",
                     ),
                   );
                 }
@@ -567,7 +642,9 @@ export function memoryTools(
                     "dependsOn",
                     "links",
                   ]);
-                  const saved = memory.remember(input as RememberInput, {
+                  const checked = validateRememberInput(input);
+                  wiki.requireContextReferences([...(checked.supports ?? []), ...(checked.dependsOn ?? [])]);
+                  const saved = memory.remember(checked, {
                     key,
                     producer: {
                       kind: "agent",
@@ -653,6 +730,19 @@ export function memoryTools(
         schema({}),
       ),
     ),
+    bindingOf("memory_scan", "scan", "Page through current recorded memory without a recent-N cutoff, execution or model calls. Bounded, cursor-based; use for explicit knowledge compilation, not repeated broad searching.",
+      schema({ after: string, type: string, limit: numberSchema(1, 8) })),
+    bindingOf("memory_publish_page", "publish_page", "Compile or save an answer as a versioned knowledge page with 1–24 qualified claims. Every claim needs a stated/inferred label and exact quotations at original payload JSON paths. Preserve distinct events and qualifications. Exact supersedes required for corrections; no auto-merge or model call. Quotation presence is not semantic verification.",
+      schema({ subject: string, title: string, supersedes: string, claims: { type: "array", minItems: 1, maxItems: 24,
+        items: schema({ text: string, basis: { enum: ["stated", "inferred"] }, citations: { type: "array", minItems: 1, maxItems: 8,
+          items: schema({ observation: string, path: { type: "array", maxItems: 16, items: { anyOf: [string, numberSchema(0, 100000)] } }, quote: string }, ["observation", "path", "quote"]) } }, ["text", "basis", "citations"]) } }, ["subject", "title", "claims"])),
+    bindingOf("memory_page", "page", "Read a pinned compiled page and validate its citations. Check stale inputs and inspect original evidence before answering; a related conference, project or person does not establish the requested event. Includes the private HTML-view API path.", schema({ observation: string }, ["observation"])),
+    bindingOf("memory_lint_pages", "lint_pages", "Audit a bounded page of compiled knowledge for structural problems, stale inputs and inferred claims needing review. Never calls a model or refreshes sources.", schema({ after: string, limit: numberSchema(1, 8) })),
+    ...(binding.embedding ? [
+      bindingOf("memory_index", "index", "Explicit egress: embed at most eight current observations using the host-approved provider and durable allowance. Existing matching vectors are reused. Follow nextAfter only for requested indexing work; no implicit bulk upload or source refresh.", schema({ after: string, type: string })),
+      bindingOf("memory_semantic_recall", "semantic_recall", "Explicit egress: embed a query and search recorded lexical/vector evidence. Requires a similarity floor; do not lower it just to force matches. Similarity is not truth or calibrated confidence. No corpus embedding or source refresh occurs. Ordinary memory_recall remains available without provider calls.",
+        schema({ search: string, minSimilarity: { type: "number", minimum: -1, maximum: 1 }, includeStale: { type: "boolean" }, type: string }, ["search", "minSimilarity"])),
+    ] : []),
     bindingOf(
       "memory_recall",
       "recall",

@@ -68,6 +68,8 @@ export interface CloudflareAccountHostOptions<R> {
   actorName: string;
   actorInstance: string;
   ownsThread(thread: string): boolean;
+  /** Only authenticated internal deliveries with a durable parent claim may create these children. */
+  allowChild?(parent: string, child: string): boolean;
   actorFor(thread: string): Actor<R> | undefined;
   layersFor(
     thread: string,
@@ -120,6 +122,7 @@ export async function createCloudflareAccountHost<R>(
   storage.sql.exec(
     "CREATE TABLE IF NOT EXISTS aiko_workspace(thread TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(thread,key)) WITHOUT ROWID",
   );
+  storage.sql.exec("CREATE TABLE IF NOT EXISTS aiko_child_threads(thread TEXT PRIMARY KEY,parent TEXT NOT NULL,root TEXT NOT NULL)");
   await storage.sync();
   let revision = 0;
   let closed = false;
@@ -132,9 +135,14 @@ export async function createCloudflareAccountHost<R>(
       settled: boolean;
     }
   >();
+  function rootThread(thread: string): string | undefined {
+    if (options.ownsThread(thread)) return thread;
+    const root = storage.sql.exec<{root:string}>("SELECT root FROM aiko_child_threads WHERE thread=?",thread).toArray()[0]?.root;
+    return root && options.ownsThread(root) ? root : undefined;
+  }
   function checkThread(thread: string) {
     if (closed) throw new Error("Account host is closed");
-    if (!options.ownsThread(thread))
+    if (!rootThread(thread))
       throw new Error("Thread is outside its account host");
   }
   const addressOf = (thread: string): ThreadAddress => {
@@ -207,8 +215,8 @@ export async function createCloudflareAccountHost<R>(
     const current = await storage.getAlarm();
     if (current === null || current > at) await storage.setAlarm(at);
   };
-  function appendSync(thread: string, events: readonly Event[], guarded = false) {
-    return storage.transactionSync(() => {
+  function appendSync(thread: string, events: readonly Event[], guarded = false, inTransaction = false) {
+    const operation = () => {
       let head = headSync(thread);
       if (guarded && options.canAppend && !options.canAppend(thread, events, () => readSync(thread))) return { appended: 0, head };
       let appended = 0;
@@ -239,7 +247,8 @@ export async function createCloudflareAccountHost<R>(
         runtimes.get(thread)?.interruptions.interrupt(events);
       }
       return { appended, head };
-    });
+    };
+    return inTransaction ? operation() : storage.transactionSync(operation);
   }
   async function append(
     thread: string,
@@ -356,16 +365,12 @@ export async function createCloudflareAccountHost<R>(
     });
   };
   async function commit(envelope: ActorEnvelope) {
-    checkAddress(envelope.link.target);
     if (!isThreadAddress(envelope.link.source))
       throw new Error("Actor delivery requires a thread source");
     checkAddress(envelope.link.source);
-    if (
-      !keyOf(envelope.link.target.thread, envelope.event) &&
-      envelope.event.type !== "MessageReceived"
-    )
-      throw new Error("Cross-thread events require a durable occurrence key");
     const { target, source } = envelope.link;
+    if (target.actor !== options.actorName || target.instance !== options.actorInstance)
+      throw new Error("Delivery is outside its actor instance");
     const landed =
       envelope.event.type === "MessageReceived" || envelope.call !== undefined
         ? linkedEventOf({
@@ -374,7 +379,23 @@ export async function createCloudflareAccountHost<R>(
             ...(envelope.call ? { call: envelope.call } : {}),
           })
         : envelope.event;
-    await append(target.thread, () => {
+    await arm();
+    const result = storage.transactionSync(() => {
+      if (!rootThread(target.thread)) {
+        const parent = threadCreatedOf(readSync(source.thread));
+        const claim = readSync(source.thread).find(e => e.type === "ChildCreated" &&
+          (e.address as ThreadAddress)?.thread === target.thread &&
+          (e.address as ThreadAddress)?.actor === target.actor &&
+          (e.address as ThreadAddress)?.instance === target.instance &&
+          e.depth === envelope.lineage?.depth && e.callId === envelope.event.id);
+        if (!options.allowChild?.(source.thread,target.thread) || !parent || !claim || !envelope.lineage ||
+            envelope.lineage.depth !== parent.depth+1 || envelope.lineage.placement === "independent")
+          throw new Error("Child lacks an owned durable parent claim");
+        storage.sql.exec("INSERT INTO aiko_child_threads(thread,parent,root) VALUES(?,?,?)",target.thread,source.thread,rootThread(source.thread)!);
+      }
+      checkAddress(target);
+      if (!keyOf(target.thread,envelope.event) && envelope.event.type !== "MessageReceived")
+        throw new Error("Cross-thread events require a durable occurrence key");
       const first = readPageSync(target.thread, 0, 1).map((row) => row.event);
       const creation = threadCreatedForDelivery(
         first,
@@ -396,10 +417,13 @@ export async function createCloudflareAccountHost<R>(
       const at = envelope.event.at;
       if (!creation && (typeof at !== "number" || !Number.isFinite(at)))
         throw new Error("First event requires a finite timestamp");
-      return creation
+      const rows = creation
         ? [landed]
         : [threadCreated(target, envelope.lineage, at as number), landed];
+      return appendSync(target.thread,rows,false,true);
     });
+    if (result.appended) driver.mark(target.thread);
+    await storage.sync();
   }
   const router = Layer.succeed(Router, {
     send: (envelope) =>
@@ -494,6 +518,7 @@ export async function createCloudflareAccountHost<R>(
     return next;
   }
   return {
+    rootThread,
     read: async (thread: string) => readSync(thread),
     readPage: async (thread: string, after: number, limit: number) =>
       readPageSync(thread, after, limit),

@@ -16,14 +16,15 @@ Aiko now uses the actual **entity-learn 0.2.0** engine from `/home/deck/work/ent
 
 `apps/agent/src/memory.ts` is the current-version tool/policy adapter, **not another storage, search, normalization or journaling engine**. Only native effects open storage or observe sources; assembling/projecting the tool surface does neither.
 
-The library's bundled `memoryPackage` adapter targets Tardie **0.5**. It is not imported into Aiko. Instead, the version-independent core and existing log adapter are mounted through **0.22 native tools**. The upstream `lib/index.ts` was extended to publicly export the existing log adapter without importing the legacy Tardie package. The declared optional legacy peer warning is expected; dependency inspection confirms that Aiko still installs only Tardie 0.22.0.
+The library's bundled `memoryPackage` adapter targets Tardie **0.5** and is **not exported** from this workspace copy (`entity-learn/tardigrade` does not resolve). Aiko mounts the version-independent core and `tardigradeLogSource` through **0.22 native tools**. Dependency inspection confirms Tardie **0.22.0** and Effect **4.0.0-rc.110**.
 
 ## Reproducible dependency
 
-- Package: `vendor/entity-learn-0.2.0.tgz`, installed through the normal pnpm dependency/lockfile.
-- Origin: the actual local working tree, including its pre-existing changes—not a substituted registry package or an invented classic API.
-- Provenance: `vendor/entity-learn-0.2.0.provenance.json`, with the upstream HEAD, library/build hashes and artifact digest.
-- Updates are deliberate rebuild/repack/test steps. A later edit in the sibling checkout does not silently change the running dependency. See `vendor/README.md`.
+- Current package: `packages/entity-learn`, resolved by `workspace:*`, with native Node and `workerd` entry points only.
+- Source pin: `packages/entity-learn/provenance.json` names [lekt9/entity-learn-private](https://github.com/lekt9/entity-learn-private) commit `44ca591bc45835d5cd8e9c599f7e60f685d2eed9` and SHA-256 hashes for every `lib/*.ts` file. `bun scripts/check-entity-learn.ts` (and `--upstream /home/deck/work/entity-learn`) verifies identity, hashes, the missing legacy adapter export, and the installed Tardie/Effect versions. Hashes detect drift; they are not a signature of a rewritten manifest.
+- Sibling edits do not automatically update this workspace copy or an already running process.
+- `vendor/entity-learn-0.2.0.tgz` is a retained historical artifact, not the current resolution.
+- See [the knowledge integration](aiko-knowledge.md) for compiled pages and optional embeddings.
 
 ## Try it without provider spend
 
@@ -57,13 +58,37 @@ The note in steps 1–3 is actually written by the engine, not supplied as fixtu
 - Forgetting suppresses future retrieval, including cited/derived claims. It does **not** physically erase journal payloads, earlier chat/tool logs, already supplied context or backups. It must not be presented as secure deletion.
 - This does not import legacy command pointers, auto-read the operator's separate personal memory database, implement classic Contract admission, or activate a source scheduler. The unavailable classic branch remains unavailable.
 
+## Knowledge and optional embeddings
+
+Native compilation, citation checks, safe HTML views and optional explicitly budgeted OpenRouter embeddings now compose with this same engine and the existing `WikiMemory` policy adapter. Local request-pointer/response-value embeddings are unchanged. Cloud personal-memory egress is **off by default** and is not mounted in background followers/reflections. See [configuration, APIs and tests](aiko-knowledge.md).
+
+## Native CLI witness
+
+The production Tardie 0.22 CLI, not a second host, compiles, serves, calls, restarts and replays a synthetic memory actor:
+
+```sh
+bun scripts/check-entity-learn.ts --upstream /home/deck/work/entity-learn
+python3 /home/deck/work/aiko/cell/run.py run scripts/native-memory-witness.cell.yaml --inputs '{}' --out /tmp/unlock-native-memory-witness
+```
+
+`apps/agent/scripts/audit-native-memory.ts` is a fixture-only entry. It mounts the same `memoryTools` adapter, injects `Infer`, and never installs a provider, browser, log-import grant or embedding capability. A local catalog fixture is the only loopback HTTP. After restart, replaying `seed-1` adds no events. The later `read` turn scans the compiled page, opens it, and returns `UTC [<source observation id>]` from the original payload. Build digest: `sha256:9a7006cdac7201f684c4c6b7981a3bf8957a81c4d18d76bfe67d727a07baf370`. Paid model calls: 0. Provider tokens: unavailable (deterministic `Infer` layer). The Voyager URL is local to that `tdg dev` process and is not a durable public trace.
+
+| Measure | This witness |
+| --- | --- |
+| Direct dependencies | `tardie@0.22.0`, `effect@4.0.0-rc.110`, `entity-learn@workspace:*` |
+| Paid model calls | 0 |
+| Provider tokens / cost | unavailable (injected `Infer`) |
+| Restart / replay | seed output and event log unchanged |
+| Cited evidence | original observation ID and payload text |
+
 ## Verification
 
-Saved under `artifacts/aiko-entity-learn/`:
+Latest offline workspace gate (`scripts/aiko-gateway-verify.cell.yaml`): **pnpm typecheck, pnpm test, pnpm build, pnpm aiko:build all exit 0**. Focused memory tests: **24 pass** across `entity-learn-dependency`, `knowledge-integration` and `entity-memory`, including the durable host crash recovery that recommits the same observation ID. Upstream pin comparison: 23 hashed library files match commit `44ca591`.
+
+The following counts describe an earlier integration snapshot, not this gate. Saved under `artifacts/aiko-entity-learn/`:
 
 - **142 project tests pass:** 100 Vitest plus 42 Bun-native tests. **33 database-dependent tests remain skipped**, not passed.
 - **41 upstream entity-learn tests pass**, including its own legacy-adapter tests; Aiko's separate suite proves the current-version integration.
-- Workspace typecheck, web/backend build, native build and frozen install pass.
 - The actual native-host crash test commits memory, fails before `ToolReturned`, closes the host, then recovers with the **same observation ID and exactly one memory revision**.
 - Integration tests cover cross-thread sharing, tenant isolation, foreign citations, replay conflicts, exact corrections, historical reads, dependency staleness, forget suppression, disabled-source behavior, byte caps, cancellation, credential rejection, unsafe files, log composition and no command replay.
 - The real GLM adapter is exercised with a mocked stream that advertises these native tools. **No paid inference or live provider call is implied.**

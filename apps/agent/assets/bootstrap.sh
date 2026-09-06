@@ -19,6 +19,6 @@ test -x /usr/bin/chromium
 /home/daytona/.bun/bin/bun --version
 # The trusted VM computes response embeddings locally; only model files are cached.
 cd "$TASK_ROOT"
-if [ ! -f node_modules/@huggingface/transformers/package.json ] || ! /home/daytona/.bun/bin/bun -e 'if(require("@huggingface/transformers/package.json").version!=="3.8.1")process.exit(1)' >/dev/null 2>&1; then
+if [ ! -f node_modules/@huggingface/transformers/package.json ] || ! /home/daytona/.bun/bin/bun -e 'if((await Bun.file("node_modules/@huggingface/transformers/package.json").json()).version!=="3.8.1")process.exit(1)' >/dev/null 2>&1; then
   /home/daytona/.bun/bin/bun add --exact @huggingface/transformers@3.8.1
 fi

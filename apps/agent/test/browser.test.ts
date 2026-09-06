@@ -22,7 +22,7 @@ import {
   publicIPv4,
   createPublicProxy,
 } from "../src/browser-proxy.ts";
-import { isolatedAgentBrowserEnvironment } from "@unbrowse/browser-runtime";
+import { AgentBrowserClientError, isolatedAgentBrowserEnvironment } from "@unbrowse/browser-harness/client";
 import { BrowserController } from "../src/browser.ts";
 import type { BrowserDriverFactory } from "../src/browser-driver.ts";
 import { voiceAndOutbox, type AikoEvent } from "../src/actor.ts";
@@ -288,7 +288,8 @@ describe("native production browser answers", () => {
     expect(app.browser.status("123").sessionActive).toBe(false);
   });
 
-  test("a failed read-only selector is blocked, retains earlier evidence, and reuses the healthy owner session", async () => {
+  for (const read of ["get_text", "wait"] as const)
+  test(`a failed ${read} selector is blocked, retains earlier evidence, and reuses the healthy owner session`, async () => {
     let opens = 0,
       closes = 0,
       priorEvidenceSurvived = false;
@@ -304,7 +305,7 @@ describe("native production browser answers", () => {
             arguments: { url: "https://example.com" },
           },
           {
-            name: "agent_browser_get_text",
+            name: read === "wait" ? "agent_browser_wait_for_selector" : "agent_browser_get_text",
             arguments: { selector: "#missing" },
           },
           { name: "agent_browser_title", arguments: {} },
@@ -322,8 +323,8 @@ describe("native production browser answers", () => {
         return {
           execute: async (action) => {
             executed.push(action.action);
-            if (action.action === "get_text")
-              throw new Error("selector_not_found");
+            if (action.action === read)
+              throw new AgentBrowserClientError("element_not_found", "The element was not found");
             return { evidence: page, title: "Public product" };
           },
           close: async () => {
@@ -347,7 +348,7 @@ describe("native production browser answers", () => {
         .filter((e) => e.type === "AikoBrowserActionFinished")
         .map((e) => (e.receipt as { status: string }).status),
     ).toEqual(["completed", "blocked", "completed"]);
-    expect(executed).toEqual(["navigate", "get_text", "title"]);
+    expect(executed).toEqual(["navigate", read, "title"]);
     expect(priorEvidenceSurvived).toBe(true);
     expect(opens).toBe(1);
     expect(closes).toBe(0);
@@ -436,7 +437,7 @@ describe("Aiko native browser integration", () => {
     expect(calls).toBe(16);
     expect(hydrated).toBe(true);
     const log = (await app.service.host.read("user-local")) as AikoEvent[];
-    expect(log.filter((e) => e.type === "ToolReturned")).toHaveLength(16);
+    expect(log.filter((e) => e.type === "ToolReturned" && (e.result as any)?.kind === "browser-receipt")).toHaveLength(16);
     const reply = String(
       (
         log.find((e) => e.type === "AikoReplyPrepared")?.result as {
@@ -448,7 +449,7 @@ describe("Aiko native browser integration", () => {
     expect(reply).toContain("some results are omitted");
     expect(
       log
-        .filter((e) => e.type === "ToolCalled")
+        .filter((e) => e.type === "ToolCalled" && e.name !== "respond")
         .every((e) => Object.keys(e.arguments as object).join() === "request"),
     ).toBe(true);
     const serialized = JSON.stringify(log);
@@ -683,7 +684,7 @@ describe("Aiko native browser integration", () => {
       "user-local",
     )) as AikoEvent[];
     expect(
-      recovered.filter((e) => e.type === "ToolReturned").at(-1)?.result,
+      recovered.filter((e) => e.type === "ToolReturned" && (e.result as any)?.kind === "browser-receipt").at(-1)?.result,
     ).toMatchObject({ kind: "browser-receipt", status: "unknown" });
     expect(clicked).toBe(1);
   });
@@ -939,7 +940,7 @@ describe("Aiko native browser integration", () => {
     await app.service.host.drive();
     const log = (await app.service.host.read("user-local")) as AikoEvent[];
     expect(calls).toBe(200);
-    expect(log.filter((e) => e.type === "ToolReturned")).toHaveLength(200);
+    expect(log.filter((e) => e.type === "ToolReturned" && (e.result as any)?.kind === "browser-receipt")).toHaveLength(200);
     expect(log.some((e) => e.type === "CompactionCompleted")).toBe(true);
     expect(
       log.some(
@@ -1144,6 +1145,7 @@ describe("public-web boundary", () => {
       session: "a",
       namespace: "a",
       allowedDomains: ["*"],
+      requirePublicProxy: true,
     };
     expect(() => isolatedAgentBrowserEnvironment({}, isolation)).toThrow(
       "proxy",

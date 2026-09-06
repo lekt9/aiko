@@ -8,13 +8,15 @@ import {
   createDecipheriv,
 } from "node:crypto";
 import { Effect } from "effect";
+import { setTimeout as delay } from "node:timers/promises";
+import { AgentBrowserClientError } from "@unbrowse/browser-harness/client";
 import { Self } from "tardie/core/runtime";
 import { EventLog } from "tardie/core/log";
 import type { NativeTool } from "tardie/component/tool";
 import { boundedText, type HttpFetch } from "./security.ts";
 import { openMemory, memoryCallKey, type MemoryBinding } from "./memory.ts";
 import type { BrowserDriverFactory } from "./browser-driver.ts";
-import type { HarnessTransport } from "../../../packages/browser-runtime/src/harness-runtime.ts";
+import type { HarnessTransport } from "@unbrowse/browser-harness/harness-runtime";
 import type { TelegramMediaProcessor } from "./telegram-media.ts";
 
 /** Gateway credentials stay in the control plane, never in a browser VM. */
@@ -186,10 +188,42 @@ export class CodegraffSandbox {
       );
     const id = idOf(record.id),
       prefix = `/v1/sandboxes/${id}`;
-    const current = await gateway.request(prefix, undefined, signal);
-    const state = String(current.state ?? current.status).toLowerCase();
-    if (/stop|archive/.test(state))
-      await gateway.request(`${prefix}/start`, {}, signal);
+    // Stop/start responses can precede the VM transition. Poll that same VM;
+    // never retry allocation or confuse a transient start failure with a new tenant.
+    const startupSignal = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(90_000)])
+      : AbortSignal.timeout(90_000);
+    const readState = async () => {
+      const current = await gateway.request(prefix, undefined, startupSignal);
+      return String(current.state ?? current.status).toLowerCase();
+    };
+    let state = await readState();
+    for (let poll = 0; /^(stopping|starting|archiving|restoring)$/.test(state); poll++) {
+      if (poll >= 60) throw new Error("sandbox_transition_timeout");
+      await delay(1000, undefined, { signal: startupSignal });
+      state = await readState();
+    }
+    if (/^(stopped|archived)$/.test(state)) {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await gateway.request(`${prefix}/start`, {}, startupSignal);
+          break;
+        } catch (error) {
+          if (attempt >= 2 || !(error instanceof Error) || !/^codegraff_http_50[234]$/.test(error.message)) throw error;
+          // A failed response can hide a successful start. Reconcile before retrying.
+          state = await readState();
+          if (/^(started|running|starting)$/.test(state)) break;
+          if (!/^(stopped|archived)$/.test(state)) throw error;
+          await delay(1000 * (attempt + 1), undefined, { signal: startupSignal });
+        }
+      }
+      for (let poll = 0; ; poll++) {
+        state = await readState();
+        if (/^(started|running)$/.test(state)) break;
+        if (poll >= 60 || !/^(stopped|archived|starting|restoring)$/.test(state)) throw new Error("sandbox_start_unconfirmed");
+        await delay(1000, undefined, { signal: startupSignal });
+      }
+    }
     const version = digest(this.options.runnerBundle + this.options.bootstrap);
     await emit({
       type: "AikoSandboxStarting",
@@ -311,7 +345,7 @@ export class CodegraffSandbox {
     } catch (error) {
       if (signal?.aborted)
         await this.options.gateway
-          .request(`${prefix}/${execId}`, undefined, undefined, "DELETE")
+          .request(`${prefix}/${execId}`, undefined, AbortSignal.timeout(5000), "DELETE")
           .catch(() => undefined);
       throw error;
     }
@@ -737,70 +771,99 @@ export class CodegraffSandbox {
       );
     }
   }
+  private async invokePrivate(
+    id: string,
+    request: Record<string, unknown>,
+    callSignal?: AbortSignal,
+  ) {
+    const operationSignal = callSignal;
+    const operation = crypto.randomUUID();
+    this.activeOperations++;
+    let stage = "health";
+    try {
+      const health = runnerReply(
+        await this.exec(
+          id,
+          `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js health`,
+          operationSignal,
+        ),
+      );
+      if (typeof health.replayPublicKey !== "string")
+        throw new Error("Transient browser replay unavailable");
+      stage = "encrypt";
+      const { key, envelope } = await wrapReplayPortable(
+        { ...request, id: operation },
+        health.replayPublicKey,
+      );
+      stage = "upload";
+      await this.upload(
+        id,
+        `${RUNNER_ROOT}/operations/${operation}.json`,
+        JSON.stringify(envelope),
+        operationSignal,
+      );
+      stage = "execute-decrypt";
+      const result = await openReplayPortable(
+        runnerReply(
+          await this.exec(
+            id,
+            `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js request-replay ${operation}`,
+            operationSignal,
+          ),
+        ),
+        key,
+      );
+      stage = "result";
+      if (result.error || result.output === undefined)
+        throw new Error("Transient browser replay unavailable");
+      return result.output;
+    } catch (error) {
+      console.warn("private_browser_transport_failed", stage);
+      throw error;
+    } finally {
+      if (operationSignal?.aborted)
+        await this.exec(
+          id,
+          `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js cancel ${operation}`,
+          AbortSignal.timeout(5000),
+        ).catch(() => undefined);
+      this.activeOperations--;
+    }
+  }
+  async codeSegment(input: import("./code-sandbox-protocol.ts").CodeSegment, signal: AbortSignal): Promise<import("./code-sandbox-protocol.ts").CodeSegmentResult> {
+    const id = await this.ensure(signal);
+    return this.invokePrivate(id, { operation: "code", input }, signal);
+  }
   browserFactory(): BrowserDriverFactory {
     return async ({ emit, signal, owner }) => {
       if (owner && owner !== this.options.owner)
         throw new Error("Browser request-memory owner mismatch");
       const id = await this.ensure(signal);
-      const invoke = async (
-        request: Record<string, unknown>,
-        callSignal?: AbortSignal,
-      ) => {
-        const operationSignal = callSignal ?? signal;
-        const operation = crypto.randomUUID();
-        this.activeOperations++;
-        try {
-          const health = runnerReply(
+      const invoke = (request: Record<string, unknown>, callSignal?: AbortSignal) => this.invokePrivate(id, request, callSignal ?? signal);
+      return {
+        sessionContext: async () => {
+          const result = runnerReply(
             await this.exec(
               id,
               `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js health`,
-              operationSignal,
             ),
           );
-          if (typeof health.replayPublicKey !== "string")
-            throw new Error("Transient browser replay unavailable");
-          const { key, envelope } = wrapReplay(
-            { ...request, id: operation },
-            health.replayPublicKey,
-          );
-          await this.upload(
-            id,
-            `${RUNNER_ROOT}/operations/${operation}.json`,
-            JSON.stringify(envelope),
-            operationSignal,
-          );
-          const result = openReplay(
-            runnerReply(
-              await this.exec(
-                id,
-                `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js request-replay ${operation}`,
-                operationSignal,
-              ),
-            ),
-            key,
-          );
-          if (result.error || !result.output)
-            throw new Error("Transient browser replay unavailable");
-          return result.output;
-        } finally {
-          if (operationSignal?.aborted)
-            await this.exec(
-              id,
-              `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js cancel ${operation}`,
-              AbortSignal.timeout(5000),
-            ).catch(() => undefined);
-          this.activeOperations--;
-        }
-      };
-      return {
-        sessionContext: async () => {
-          const result = runnerReply(await this.exec(id, `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js health`));
           const context = result.privateContext;
-          if (!context || context.owner !== this.options.owner || typeof context.contextId !== "string" || !Number.isSafeInteger(context.generation)) throw new Error("Private browser context unavailable");
+          if (
+            !context ||
+            context.owner !== this.options.owner ||
+            typeof context.contextId !== "string" ||
+            !Number.isSafeInteger(context.generation)
+          )
+            throw new Error("Private browser context unavailable");
           return context;
         },
-        installSession: (input, signal) => invoke({ operation: "session-install", input }, signal),
-        clearSession: async (scope, signal) => { await invoke({ operation: "session-clear", scope }, signal); },
+        nativeAuth: (input, signal) => invoke({ operation: "native-auth", input }, signal),
+        installSession: (input, signal) =>
+          invoke({ operation: "session-install", input }, signal),
+        clearSession: async (scope, signal) => {
+          await invoke({ operation: "session-clear", scope }, signal);
+        },
         requestTransport: {
           send: (request) => invoke({ operation: "send", request }),
         },
@@ -829,16 +892,26 @@ export class CodegraffSandbox {
             );
             const result = JSON.parse(raw.trim());
             await this.flushBrowserEvents(id, result, emit, signal);
+            if (result.status === "failed" && result.reason === "element_not_found")
+              throw new AgentBrowserClientError("element_not_found", "The browser element was not found; refresh the snapshot before another read");
             if (result.status !== "completed")
               throw new Error("sandbox_browser_outcome_unknown");
             return result.output;
           } finally {
-            if (signal?.aborted)
-              await this.exec(
-                id,
-                `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js cancel ${operation}`,
-              ).catch(() => undefined);
-            this.activeOperations--;
+            try {
+              if (signal?.aborted) {
+                // The caller is cancelled; cleanup needs its own bounded signal and
+                // must wait for the remote action plus its failed evidence to settle.
+                const cleanupSignal = AbortSignal.timeout(35_000);
+                const cancelled = runnerReply(await this.exec(
+                  id,
+                  `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js cancel ${operation}`,
+                  cleanupSignal,
+                ));
+                if (cancelled.settled !== true) throw new Error("sandbox_browser_cancellation_unconfirmed");
+                await this.flushBrowserEvents(id, cancelled, emit, cleanupSignal);
+              }
+            } finally { this.activeOperations--; }
           }
         },
       };
@@ -1007,7 +1080,11 @@ export function replayKeys() {
     privateKeyEncoding: { type: "pkcs8", format: "pem" },
   });
 }
-export function sealReplay(value: unknown, key: Uint8Array, maxBytes = 500_000) {
+export function sealReplay(
+  value: unknown,
+  key: Uint8Array,
+  maxBytes = 500_000,
+) {
   const text = JSON.stringify(value);
   if (Buffer.byteLength(text) > maxBytes)
     throw new Error("Replay value too large");
@@ -1045,7 +1122,9 @@ export function wrapReplay(value: unknown, publicKey: string) {
   return {
     key,
     envelope: {
-      key: Buffer.from(publicEncrypt({ key: publicKey, oaepHash: "sha256" }, key)).toString("base64"),
+      key: Buffer.from(
+        publicEncrypt({ key: publicKey, oaepHash: "sha256" }, key),
+      ).toString("base64"),
       ...sealReplay(value, key, 1_100_000),
     },
   };
@@ -1061,4 +1140,40 @@ export function unwrapReplay(
   return { key, value: openReplay(envelope, key) };
 }
 
+/** Process-local replay fence; the runner encryption key rotates on restart. */
+export class PrivateOperationFence {
+  private readonly consumed = new Set<string>();
+  constructor(private readonly capacity = 100_000) {}
+  consume(id: unknown): void {
+    if (
+      typeof id !== "string" ||
+      !/^[a-f0-9-]{36}$/.test(id) ||
+      this.consumed.has(id) ||
+      this.consumed.size >= this.capacity
+    )
+      throw new Error("Private operation rejected");
+    // Consume before effects, including failed/cancelled attempts. Never evict IDs
+    // while their encryption key is live; exhaustion requires a new runner.
+    this.consumed.add(id);
+  }
+}
 
+/** WebCrypto keeps the private transport interoperable between workerd and Bun. */
+export async function wrapReplayPortable(value: unknown, publicKey: string) {
+  const text = JSON.stringify(value);
+  if (Buffer.byteLength(text) > 1_100_000) throw Error("Private replay request too large");
+  const key = crypto.getRandomValues(new Uint8Array(32));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const publicBytes = Uint8Array.from(Buffer.from(publicKey.replace(/-----[^-]+-----|\s/g, ""), "base64"));
+  const rsa = await crypto.subtle.importKey("spki", publicBytes, {name:"RSA-OAEP",hash:"SHA-256"}, false, ["encrypt"]);
+  const aes = await crypto.subtle.importKey("raw", key, "AES-GCM", false, ["encrypt"]);
+  const encrypted = new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv}, aes, new TextEncoder().encode(text)));
+  return {key, envelope:{key:Buffer.from(await crypto.subtle.encrypt("RSA-OAEP",rsa,key)).toString("base64"),iv:Buffer.from(iv).toString("base64"),data:Buffer.from(encrypted.subarray(0,-16)).toString("base64"),tag:Buffer.from(encrypted.subarray(-16)).toString("base64")}};
+}
+export async function openReplayPortable(value: ReturnType<typeof sealReplay>, key: Uint8Array) {
+  if (!value || typeof value.data !== "string" || value.data.length > 3_000_000) throw Error("Invalid private replay envelope");
+  const aes = await crypto.subtle.importKey("raw", Uint8Array.from(key), "AES-GCM", false, ["decrypt"]);
+  const iv=Uint8Array.from(Buffer.from(value.iv,"base64"));
+  const bytes=Uint8Array.from(Buffer.concat([Buffer.from(value.data,"base64"),Buffer.from(value.tag,"base64")]));
+  return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM",iv},aes,bytes)));
+}

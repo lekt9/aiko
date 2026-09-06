@@ -46,6 +46,13 @@ export type AikoRecall = {
   coverage: "complete" | "partial";
   reasons: string[];
 };
+export type AikoKnowledgeView = {
+  page: { hit: AikoMemoryHit; claims: { text: string; basis: "stated" | "inferred";
+    citations: { observation: string; path: (string | number)[]; quote: string }[] }[];
+    verification: "quote-presence-only" };
+  /** Static escaped snapshot. Embed in an empty-sandbox iframe, never inject model-authored markup into the app DOM. */
+  html: string;
+};
 export class AikoPlaneError extends Error {
   constructor(
     public readonly status: number,
@@ -166,6 +173,8 @@ export function createAikoClient(options: {
         request<AikoAdmission>("v1/hooks/unbrowse", "POST", event, opts),
     },
     memory: {
+      page: (observation: string, opts?: AikoRequestOptions) =>
+        request<AikoKnowledgeView>(`v1/memory/knowledge/${encodeURIComponent(observation)}`, "GET", undefined, opts),
       recall: (search: string, opts?: AikoRequestOptions) =>
         request<AikoRecall>(
           `v1/memory/recall?search=${encodeURIComponent(search)}`,

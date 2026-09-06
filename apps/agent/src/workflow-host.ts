@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Effect, Layer } from "effect";
-import { Infer, type InferRequest } from "tardie";
+import { Infer, tool, type InferRequest } from "tardie";
 import { Self } from "tardie/core/runtime";
 import { EventLog } from "tardie/core/log";
 import type { NativeTool } from "tardie/component/tool";
@@ -27,6 +27,16 @@ export function createWorkflowStore(kv: WorkflowKV): Options["store"] {
   const key = (owner: string, kind: string, id: string) =>
     prefix(owner, kind) + digest(id);
   return {
+    getCode: async (owner,id) => (await kv.get(key(owner,"code",id))) as any,
+    putCode: async (owner,record) => {
+      if (record.owner !== owner) throw new Error("Foreign code workflow owner");
+      await kv.update(key(owner,"code",record.id),previous=>{
+        const old=previous as typeof record|undefined;
+        if(old && (old.owner!==owner || old.digest!==record.digest)) throw new Error("Code workflow definition conflict");
+        return old?.reusable ? old : record;
+      });
+    },
+    listCode: async owner => (await kv.list(prefix(owner,"code"))) as any,
     getDefinition: async (owner, id) =>
       (await kv.get(key(owner, "definition", id))) as any,
     putDefinition: async (owner, record) => {
@@ -93,13 +103,15 @@ export function workflowDispatcher(binding: {
           validate: (input: unknown) => validator.validate(input).valid,
           authorize: async () =>
             (await binding.engine.connections()).some(
-              (c) => c.connectorId === toolId && c.status === "connected",
+              (c) => (c.connectorId === toolId || c.toolIds?.includes(toolId)) && c.status === "connected",
             ),
           execute: async ({ input, signal }) => {
             signal.throwIfAborted();
-          const connection = (await binding.engine.connections()).find(c=>c.connectorId===toolId&&c.status==="connected");
-          if(!connection)return {status:"authorization_required" as const};
-          const result = await binding.engine.execute(connection.id, input);
+            const connection = (await binding.engine.connections()).find(
+              c => (c.connectorId === toolId || c.toolIds?.includes(toolId)) && c.status === "connected",
+            );
+            if (!connection) return { status: "authorization_required" as const };
+            const result = await binding.engine.execute(connection.id, input, toolId);
             return result.status === "succeeded"
               ? {
                   status: "succeeded" as const,
@@ -256,6 +268,35 @@ export class WorkflowController {
       }),
     ).pipe(Layer.provide(base));
   }
+  component() {
+    return {
+      ...tool(this.tools()),
+      name: "aiko.workflows",
+      keys: {
+        prefixes: ["aiko-workflow:"],
+        keyOf: (e: Event) => ["AikoWorkflowStarted", "AikoWorkflowSettled"].includes(e.type) && e.owner === this.owner && typeof e.runId === "string"
+          ? `aiko-workflow:${e.type}:${e.runId}` : undefined,
+      },
+    };
+  }
+  codeTools(): NativeTool<Self | EventLog>[] {
+    return this.tools().map(native => ({ spec: native.spec, run: (args, context) => Effect.gen({self:this}, function* () {
+      const self = yield* Self;
+      if (self.actor !== "aiko" || self.thread !== this.thread || !context.turn)
+        return {status:"blocked", reason:"owner_binding_mismatch"};
+      const encoded = JSON.stringify(args);
+      if (!encoded || encoded.length > 32768 || this.redact(encoded) !== encoded) return {status:"blocked"};
+      try { validateRouterInput(args); } catch { return {status:"blocked"}; }
+      const ref = randomUUID();
+      this.calls.set(ref, {turn:context.turn, name:native.spec.name, args, expires:Date.now()+900000});
+      try {
+        const result = yield* native.run({request:ref}, context);
+        const receipt = result as {runId?:string};
+        const output = receipt.runId ? this.outputs.get(receipt.runId) : undefined;
+        return output?.turn === context.turn ? {...receipt, untrustedToolResults:output.value} : result;
+      } finally { this.calls.delete(ref); }
+    }) }));
+  }
   tools(): NativeTool<Self | EventLog>[] {
     return ["run", "crystallize", "list"].map((operation) => ({
       spec: {
@@ -303,6 +344,21 @@ export class WorkflowController {
       ) =>
         Effect.gen({ self: this }, function* () {
           const self = yield* Self;
+          const log = yield* EventLog;
+          if (self.actor !== "aiko" || self.thread !== this.thread)
+            return { kind: "workflow-receipt", owner: this.owner, status: "blocked" };
+          const events = yield* log.read;
+          const runId = digest(JSON.stringify([this.owner, this.thread, context.turn, context.callId]));
+          const settled = events.find(e => e.type === "AikoWorkflowSettled" && e.owner === this.owner && e.runId === runId);
+          if (settled) return settled.result;
+          const started = events.find(e => e.type === "AikoWorkflowStarted" && e.owner === this.owner && e.runId === runId);
+          if (started) {
+            const receipt = yield* Effect.tryPromise(() => this.engine.receipt(runId)).pipe(Effect.catch(() => Effect.succeed(undefined)));
+            const result = { kind: "workflow-receipt", owner: this.owner, runId,
+              ...(receipt ? { receipt } : { status: "unknown", message: "Interrupted workflow; do not repeat this run." }) };
+            yield* log.append([{ type: "AikoWorkflowSettled", owner: this.owner, runId, turn: context.turn, result, at: Date.now() }]);
+            return result;
+          }
           const ref = (input as any)?.request;
           const call = this.calls.get(ref);
           this.calls.delete(ref);
@@ -319,9 +375,9 @@ export class WorkflowController {
               owner: this.owner,
               status: "blocked",
             };
-          return yield* Effect.tryPromise({
+          yield* log.append([{ type: "AikoWorkflowStarted", owner: this.owner, runId, turn: context.turn, callId: context.callId, operation, at: Date.now() }]);
+          const result = yield* Effect.tryPromise({
             try: async () => {
-              const runId = randomUUID();
               this.outputs.set(runId, {
                 turn: context.turn!,
                 value: {},
@@ -365,6 +421,8 @@ export class WorkflowController {
                 "Workflow program, tool access, or execution could not be verified.",
             }),
           }).pipe(Effect.catch((result) => Effect.succeed(result)));
+          yield* log.append([{ type: "AikoWorkflowSettled", owner: this.owner, runId, turn: context.turn, result, at: Date.now() }]);
+          return result;
         }),
     }));
   }

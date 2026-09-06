@@ -42,7 +42,7 @@ async function fixture(
   const configuredOverrides = {
     voiceFetch: async (_url: unknown, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
-      return Response.json({ status: "success", result: { finalReply: JSON.parse(body.messages[1].content).DRAFT } });
+      return Response.json({ personified: body.raw });
     },
     ...overrides,
   };
@@ -121,7 +121,7 @@ test("live API replies never expose raw drafts when ThinkFeel is unavailable", a
   await f.request("/v1/messages", { id: "thinkfeel_failure_001", text: "Explain this" });
   await f.service.host.drive();
   const result = await (await f.request("/v1/messages")).json();
-  expect(result.messages.at(-1)).toMatchObject({ text: "", reason: "unavailable" });
+  expect(result.messages.at(-1)).toMatchObject({ text: "I couldn’t safely prepare my reply. Please try again.", source: "service", reason: "unavailable" });
   expect(JSON.stringify(result)).not.toContain("Raw response must stay private");
 });
 

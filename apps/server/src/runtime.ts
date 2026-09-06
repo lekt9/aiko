@@ -1,4 +1,6 @@
 import {
+  browserLoginCommit,
+  type BrowserLoginCommit,
   sessionWrite,
   type VaultCookie,
   type VaultSession,
@@ -84,7 +86,11 @@ export class Runtime {
         expiresAt,
         // Ordinary maintenance may create an initial session or refresh an expired ready jar.
         // Revoked/stale/failed rows require explicit owner recovery and are never auto-renewed.
-        renewable: !session || (session.status === "ready" && session.generation === c.version && expiresAt <= this.vault.now()),
+        renewable:
+          !session ||
+          (session.status === "ready" &&
+            session.generation === c.version &&
+            expiresAt <= this.vault.now()),
       };
     });
   }
@@ -134,7 +140,12 @@ export class Runtime {
     return this.vault.db.transaction(async (sql) => {
       const c = await this.vault.authorize(sql, p, connection, true),
         s = await this.stored(sql, p, connection, true);
-      if (!s?.verified || Number(s.expires_at) <= this.vault.now())
+      if (
+        !s?.verified ||
+        s.status !== "ready" ||
+        s.generation !== c.version ||
+        Number(s.expires_at) <= this.vault.now()
+      )
         throw new VaultError("REAUTH_REQUIRED", 409);
       const material = await this.vault.cipher.open<{ cookies: VaultCookie[] }>(
           sessionKey(p, connection),
@@ -408,6 +419,23 @@ export class Runtime {
       })
       .strict()
       .parse(body);
+    return this.importVerifiedSession(tenant, connection, input);
+  }
+  /** Owner-authorized only: runtime bearer tokens cannot write passwords. */
+  async completeBrowserLogin(
+    tenant: string,
+    connection: string,
+    body: unknown,
+  ) {
+    const input = browserLoginCommit.parse(body);
+    return this.importVerifiedSession(tenant, connection, input, input);
+  }
+  private async importVerifiedSession(
+    tenant: string,
+    connection: string,
+    input: { profileId: string; runtimeId: string; cookies?: unknown },
+    login?: BrowserLoginCommit,
+  ) {
     const client = requireValue(
       (
         await this.vault.db.query<{ profile: string; connections: string[] }>(
@@ -425,15 +453,68 @@ export class Runtime {
       connections: client.connections,
       scope: ["sessions:write"],
     };
-    const c = await this.vault.authorize(this.vault.db, p, connection),
-      previous = await this.stored(this.vault.db, p, connection);
+    const snapshot = await this.vault.db.transaction(async (sql) => {
+      await this.vault.lock(sql, tenant);
+      const c = await this.vault.authorize(sql, p, connection, true);
+      if (
+        login &&
+        (c.version !== login.version || c.identity !== login.identity)
+      )
+        throw new VaultError("CONFLICT", 409);
+      if (login && c.source_id) throw new VaultError("FORBIDDEN", 403);
+      const previous = await this.stored(sql, p, connection);
+      const profile = requireValue(
+        (
+          await sql.query<{ version: number }>(
+            "SELECT version FROM profiles WHERE tenant=$1 AND id=$2",
+            [tenant, p.profile],
+          )
+        ).rows[0],
+      );
+      return { c, previous, profileVersion: profile.version };
+    });
+    const { c, previous } = snapshot;
     const checked = await this.verify(
       p,
       c,
       validateCookies(input.cookies, c.domains),
     );
-    return this.vault.db.transaction((sql) =>
-      this.publish(sql, p, c, checked, previous?.revision ?? null),
-    );
+    return this.vault.db.transaction(async (sql) => {
+      await this.vault.lock(sql, tenant);
+      // Reauthorize after the network verification; never resurrect revoked assignments.
+      await this.vault.authorize(sql, p, connection, true);
+      const profile = requireValue(
+        (
+          await sql.query<{ version: number }>(
+            "SELECT version FROM profiles WHERE tenant=$1 AND id=$2 FOR SHARE",
+            [tenant, p.profile],
+          )
+        ).rows[0],
+      );
+      if (
+        profile.version !== snapshot.profileVersion ||
+        checked.expiresAt <= this.vault.now()
+      )
+        throw new VaultError("CONFLICT", 409);
+      let version = c.version;
+      if (login) {
+        await this.vault.setPasswordInTransaction(
+          sql,
+          tenant,
+          connection,
+          login.credential.password,
+          version,
+        );
+        version++;
+      }
+      const result = await this.publish(
+        sql,
+        p,
+        { ...c, version },
+        checked,
+        previous?.revision ?? null,
+      );
+      return login ? { ...result, version } : result;
+    });
   }
 }

@@ -1,0 +1,128 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: native-memory-witness
+  description: Offline Tardie CLI memory compilation, citation, restart and replay witness in fresh synthetic state
+spec:
+  membrane:
+    inputs: {}
+    outputs:
+      result: { schema: object }
+    caps: { allow_spawn: true, allow_write: ["out/**"], allow_net: ["127.0.0.1"] }
+  policy: { determinism: best_effort }
+  run:
+    kind: python
+    code: |
+      def run(inputs, ctx):
+          import http.server, json, os, pathlib, shutil, socket, subprocess, tempfile, threading, time
+          root = pathlib.Path(ctx['cell_file']).resolve().parents[1]
+          cli = root / 'apps/agent/node_modules/tardie/src/cli/main.ts'
+          bun = shutil.which('bun')
+          if not bun:
+              raise RuntimeError('Install the workspace-pinned dependencies and Bun first')
+          state = pathlib.Path(tempfile.mkdtemp(prefix='aiko-memory-native-'))
+          project = state / 'project'
+          project.mkdir()
+          (state / 'home').mkdir()
+          (project / 'actor.ts').write_text('export { default, layersFor } from ' + json.dumps(str(root / 'apps/agent/scripts/audit-native-memory.ts')) + ';\n')
+          # No .dev.vars, inherited provider keys, user CLI config or production state.
+          env = {'PATH': os.environ['PATH'], 'HOME': str(state / 'home'), 'NO_COLOR': '1',
+                 'AIKO_MEMORY_AUDIT_DIR': str(state), 'TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS': '1000'}
+          class Catalog(http.server.BaseHTTPRequestHandler):
+              def do_GET(self):
+                  body = b'{"fixture":{"id":"fixture","name":"fixture","models":{"native-memory-witness":{"id":"native-memory-witness","name":"Native memory witness","tool_call":true}}}}'
+                  self.send_response(200 if self.path == '/catalog' else 404)
+                  self.send_header('Content-Type', 'application/json')
+                  self.send_header('Content-Length', str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+              def log_message(self, *args):
+                  pass
+          catalog = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Catalog)
+          threading.Thread(target=catalog.serve_forever, daemon=True).start()
+          env['TARDIGRADE_MODEL_CATALOG_URL'] = 'http://127.0.0.1:%d/catalog' % catalog.server_port
+          with socket.socket() as s:
+              s.bind(('127.0.0.1', 0))
+              port = s.getsockname()[1]
+          url = 'http://127.0.0.1:%d' % port
+          commands = []
+          server = None
+          server_log = None
+          def invoke(name, args, timeout=60):
+              start = time.monotonic()
+              result = subprocess.run([bun, str(cli), *args], cwd=project, env=env, capture_output=True, text=True, timeout=timeout)
+              (state / (name + '.stdout')).write_text(result.stdout)
+              (state / (name + '.stderr')).write_text(result.stderr)
+              commands.append({'name': name, 'exitCode': result.returncode, 'elapsedMs': round((time.monotonic() - start) * 1000)})
+              if result.returncode:
+                  raise RuntimeError(name + ' failed: ' + result.stderr[-3000:] + result.stdout[-3000:])
+              value = json.loads(result.stdout)
+              (state / (name + '.json')).write_text(json.dumps(value, indent=2) + '\n')
+              return value
+          def stop():
+              nonlocal server, server_log
+              if server is not None:
+                  server.terminate()
+                  try:
+                      server.wait(timeout=10)
+                  except subprocess.TimeoutExpired:
+                      server.kill()
+                      server.wait(timeout=5)
+                  server = None
+              if server_log is not None:
+                  server_log.close()
+                  server_log = None
+          def start(name):
+              nonlocal server, server_log
+              server_log = (state / (name + '.log')).open('w')
+              server = subprocess.Popen([bun, str(cli), 'dev', '--port', str(port), '--db', str(state / 'actor.sqlite'), '--no-open'],
+                                        cwd=project, env=env, stdout=server_log, stderr=subprocess.STDOUT)
+              for _ in range(200):
+                  if server.poll() is not None:
+                      raise RuntimeError('Native server stopped: ' + (state / (name + '.log')).read_text()[-4000:])
+                  try:
+                      with socket.create_connection(('127.0.0.1', port), timeout=0.1):
+                          return
+                  except OSError:
+                      time.sleep(0.1)
+              raise RuntimeError('Native CLI server startup timeout')
+          try:
+              built = invoke('build', ['build', 'actor.ts', '--out', str(state / 'build'), '--json'])
+              start('server-before')
+              methods = invoke('methods', ['methods', '--url', url, '--json'])
+              seed = invoke('seed', ['call', 'message', '{"text":"seed"}', '--thread', 'memory-audit', '--id', 'seed-1', '--url', url, '--timeout', '10000', '--json'])
+              before = invoke('events-before', ['events', 'memory-audit', '--url', url, '--json'])
+              stop()
+              start('server-after')
+              replay = invoke('seed-replay', ['call', 'message', '{"text":"seed"}', '--thread', 'memory-audit', '--id', 'seed-1', '--url', url, '--timeout', '10000', '--json'])
+              replayed = invoke('events-replayed', ['events', 'memory-audit', '--url', url, '--json'])
+              if replay['output'] != seed['output'] or before != replayed:
+                  raise RuntimeError('Completed method replay changed the log or output')
+              read = invoke('read', ['call', 'message', '{"text":"read"}', '--thread', 'memory-audit', '--id', 'read-1', '--url', url, '--timeout', '10000', '--json'])
+              rows = invoke('events-after', ['events', 'memory-audit', '--url', url, '--json'])
+              events = [r['event'] for r in rows]
+              calls = [e for e in events if e['type'] == 'ToolCalled']
+              expected = ['memory_remember', 'memory_publish_page', 'memory_scan', 'memory_page', 'memory_get']
+              if [e['name'] for e in calls] != expected:
+                  raise RuntimeError('Unexpected native calls: ' + str([e['name'] for e in calls]))
+              returns = [e for e in events if e['type'] == 'ToolReturned']
+              if len(returns) != 5 or any(e['result'].get('outcome') != 'ok' for e in returns):
+                  raise RuntimeError('Unsuccessful memory returns')
+              source = returns[0]['result']['result']['id']
+              if read['status'] != 'completed' or read['output'] != 'UTC [' + source + ']':
+                  raise RuntimeError('Original evidence citation mismatch')
+              if len([e for e in events if e['type'] == 'TurnCompleted']) != 2 or any(e['type'] == 'TurnFailed' for e in events):
+                  raise RuntimeError('Native turns did not settle exactly once')
+              result = {'passed': True, 'stateDirectory': str(state), 'traceUrl': url + '/?thread=memory-audit',
+                        'serverRunning': False, 'build': built, 'sourceObservation': source,
+                        'tools': expected, 'restartVerified': True, 'replayAddedEvents': 0,
+                        'fixtureOnly': True, 'paidModelCalls': 0, 'providerTokens': None, 'providerCostUsd': 0,
+                        'commands': commands}
+          except Exception as error:
+              result = {'passed': False, 'stateDirectory': str(state), 'error': str(error), 'commands': commands}
+          finally:
+              stop()
+              catalog.shutdown()
+              catalog.server_close()
+          (state / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
+          return {'result': result}

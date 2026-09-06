@@ -1,26 +1,26 @@
 import type { Event } from "tardie/core/log/event";
-import type { AgentBrowserCallWindow } from "@unbrowse/browser-runtime";
-import { prepareTrustedNetworkEntries } from "@unbrowse/browser-runtime/network-observation";
+import type { AgentBrowserCallWindow } from "@unbrowse/browser-harness/client";
+import { prepareTrustedNetworkEntries } from "@unbrowse/browser-harness/network-observation";
 import {
   compileObservedReadNetworkTools,
   type ImplicitBrowserSessionAdapter,
   inferBoundedHarAssociations,
-} from "@unbrowse/browser-runtime/network-compiler";
+} from "@unbrowse/browser-harness/network-compiler";
 import {
   assertNetworkSnapshotBackedByLog,
   networkFactObservedEventOf,
   planHarImport,
   validatedHarCaptureFactsOf,
-} from "@unbrowse/browser-runtime/network-facts";
+} from "@unbrowse/browser-harness/network-facts";
 import {
   browserNetworkDependencyEventOf,
   browserNetworkToolPreparedEventOf,
   browserRequestEvidenceIdOf,
-} from "@unbrowse/browser-runtime/trace";
-import { canonicalStringify, sha256 } from "@unbrowse/browser-runtime/har";
-import { responseSemanticsByRequest, type ResponseSemanticEvidence } from "../../../packages/browser-runtime/src/har-response-semantics.ts";
-import type { BrowserNetworkToolPrepared } from "@unbrowse/browser-runtime/trace";
-import type { NetworkEntry } from "@unbrowse/browser-runtime/network-listener";
+} from "@unbrowse/browser-harness/trace";
+import { canonicalStringify, sha256 } from "@unbrowse/browser-harness/har";
+import { responseSemanticsByRequest, type ResponseSemanticEvidence } from "@unbrowse/browser-harness/response-semantics";
+import type { BrowserNetworkToolPrepared } from "@unbrowse/browser-harness/trace";
+import type { NetworkEntry } from "@unbrowse/browser-harness/network-listener";
 
 export interface BrowserLearningPending {
   type: "AikoBrowserLearningPending";

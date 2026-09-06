@@ -12,6 +12,8 @@ export interface PrivateUnlockScope extends PrivateUnlockContext {
   domain: string; tenantId: string; profileId: string; runtimeId: string; connectionId: string;
   allowedDomains: string[];
 }
+/** Trusted lifecycle reason only; omission always means revocation. */
+export interface PrivateUnlockClear extends PrivateUnlockScope { reason?: "release" | "revoke" }
 export interface PrivateUnlockInstall extends PrivateUnlockScope {
   connectionGeneration: number; revision: number; expiresAt: number; cookies: VaultCookie[];
 }
@@ -27,7 +29,7 @@ export interface BrowserUnlockAuthOptions {
   /** Encrypted private VM seam. No runtime token/password included; VM uses SDK CDP cookie adapter. */
   install(material: PrivateUnlockInstall, signal: AbortSignal): Promise<PrivateUnlockInstallAck>;
   /** Must clear this scope or destroy its context. A failure keeps navigation blocked. */
-  clear(scope: PrivateUnlockScope, signal: AbortSignal): Promise<void>;
+  clear(scope: PrivateUnlockClear, signal: AbortSignal): Promise<void>;
   transport?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   timeoutMs?: number;
 }
@@ -64,10 +66,10 @@ export function createBrowserUnlockAuth(input: BrowserUnlockAuthOptions) {
   const renewals = new Map<string,BrowserUnlockReceipt>();
   let tail: Promise<unknown> = Promise.resolve();
   function serial<T>(run:()=>Promise<T>):Promise<T> {const next=tail.then(run,run);tail=next.then(()=>undefined,()=>undefined);return next;}
-  async function clearInstalled() {
+  async function clearInstalled(reason: "release" | "revoke" = "revoke") {
     let cleared = true;
     for (const [id,state] of installed) {
-      try { const signal=AbortSignal.timeout(3000);await race(()=>options.clear(structuredClone(state.scope),signal),signal);installed.delete(id); }
+      try { const signal=AbortSignal.timeout(3000);await race(()=>options.clear({...structuredClone(state.scope),reason:state.ready ? reason : "revoke"},signal),signal);installed.delete(id); }
       catch { state.ready=false;cleared=false; }
     }
     return cleared;
@@ -84,13 +86,16 @@ export function createBrowserUnlockAuth(input: BrowserUnlockAuthOptions) {
     const url = publicTarget(nav.url);check(url.protocol === "https:");
     const domain = connectorDomain(url.origin);
     const config = readConfig(), account = config && Object.hasOwn(config.accounts,options.owner) ? config.accounts[options.owner] : undefined;
-    if (!config || !account || !Object.hasOwn(account.connections,domain)) {
-      return await clearInstalled() ? {status:"not_applicable"} : unavailable();
+    if (!config || !account) return await clearInstalled() ? {status:"not_applicable"} : unavailable();
+    const retained = [...installed.values()].every(({scope})=>scope.tenantId===account.tenantId && scope.profileId===account.profileId && scope.runtimeId===account.runtimeId && scope.allowedDomains.every(d=>account.connections[d]===scope.connectionId));
+    if (!Object.hasOwn(account.connections,domain)) {
+      // Public navigation is retirement only while the previous assignment still exists.
+      return await clearInstalled(retained ? "release" : "revoke") ? {status:"not_applicable"} : unavailable();
     }
     const connectionId = account.connections[domain]!;
     // A task context carries one active connection, preventing stale jars from other accounts
     // being sent as subresource cookies without this navigation's fresh authorization check.
-    if ([...installed.keys()].some(id=>id!==connectionId)) check(await clearInstalled());
+    if ([...installed.keys()].some(id=>id!==connectionId)) check(await clearInstalled(retained ? "release" : "revoke"));
     // SDK IDs are actual Unlock UUIDs; permissive historical config IDs never reach a request.
     [account.tenantId,account.profileId,account.runtimeId,connectionId].forEach(id=>z.string().uuid().parse(id));
     const current = async () => {
@@ -108,7 +113,7 @@ export function createBrowserUnlockAuth(input: BrowserUnlockAuthOptions) {
       }
     };
     const search=await race(()=>options.engine.search(domain),signal);
-    if (search.status === "available") return await clearInstalled() ? {status:"not_applicable"} : unavailable();
+    if (search.status === "available") return await clearInstalled("release") ? {status:"not_applicable"} : unavailable();
     check(search.status === "absent" && search.fallbackAllowed === true);
     const prefix = `${config.origin}/v1/runtime/connections`;
     const allowed = new Map<string,string[]>([[prefix,["GET"]],[`${prefix}/${connectionId}/status`,["GET"]],[`${prefix}/${connectionId}/session`,["GET"]],[`${prefix}/${connectionId}/renew`,["POST"]]]);
@@ -191,6 +196,8 @@ export function createBrowserUnlockAuth(input: BrowserUnlockAuthOptions) {
   return {
     beforeNavigate:(nav:BrowserUnlockNavigation,signal?:AbortSignal)=>operation(nav,false,signal),
     requestRenewal:(nav:BrowserUnlockNavigation,signal?:AbortSignal)=>operation(nav,true,signal),
+    /** Host-only routine close/retirement. Never weakens failed/partial-install fences. */
+    release:(_signal?:AbortSignal)=>serial(async():Promise<BrowserUnlockReceipt>=>await clearInstalled("release")?{status:"not_applicable"}:unavailable()),
     clear:(_signal?:AbortSignal)=>serial(async():Promise<BrowserUnlockReceipt>=>await clearInstalled()?{status:"not_applicable"}:unavailable()),
   };
 }

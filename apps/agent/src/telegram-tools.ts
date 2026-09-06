@@ -1,3 +1,6 @@
+import { telegramCapabilities } from "./telegram-api-catalog.ts";
+import { MODEL_PROVIDERS, type ModelProvider } from "./model-routing.ts";
+import { createHash } from "node:crypto";
 import { Effect } from "effect";
 import { Self } from "tardie/core/runtime";
 import { EventLog } from "tardie/core/log";
@@ -41,11 +44,13 @@ export type TelegramReceipt = {
   final?: boolean;
   providerId?: string;
   providerIds?: string[];
+  draftId?: number;
   fileId?: string;
   attachments?: TelegramMediaDescriptor[];
   truncated?: boolean;
   reason?: string;
   reply?: string;
+  catalog?: ReturnType<typeof telegramCapabilities>;
   context?: Pick<
     TelegramInbound,
     | "messageId"
@@ -212,8 +217,9 @@ export function createTelegramTools(
           const self = yield* Self,
             log = yield* EventLog,
             events = (yield* log.read) as readonly LogEvent[];
-          const args = record(input),
-            turn = context.turn ?? "",
+          const rawArgs = record(input);
+          const args = rawArgs && Object.fromEntries(Object.entries(rawArgs).filter(([key, value]) => value !== null || required.includes(key)));
+          const turn = context.turn ?? "",
             current = events.find(
               (e) => e.type === "MessageReceived" && e.id === turn,
             );
@@ -237,6 +243,7 @@ export function createTelegramTools(
             );
           const id = JSON.stringify([turn, context.callId]),
             hash = yield* Effect.promise(() => digest({ name, input: args }));
+          const epoch = Number(events.findLast(e => e.type === "ToolCalled" && e.callId === context.callId && e.turn === turn)?.epoch ?? 0);
           const started = events.find(
               (e) => e.type === "AikoTelegramActionStarted" && e.id === id,
             ),
@@ -271,6 +278,7 @@ export function createTelegramTools(
               evt("AikoTelegramActionSettled", {
                 id,
                 turn,
+                epoch,
                 digest: hash,
                 result,
               }),
@@ -284,6 +292,7 @@ export function createTelegramTools(
               evt("AikoTelegramActionStarted", {
                 id,
                 turn,
+                epoch,
                 owner: options.owner,
                 action: name,
                 digest: hash,
@@ -292,12 +301,12 @@ export function createTelegramTools(
             ]);
           let prepared = args;
           if (options.compose && ["telegram_send", "telegram_voice", "telegram_screenshot", "telegram_progress"].includes(name)) {
-            const field = name === "telegram_send" ? (args.kind === "text" ? "text" : "caption") : name === "telegram_screenshot" ? "caption" : "text";
+            const field = name === "telegram_send" ? (args.kind === "text" ? "text" : args.kind === "poll" ? "question" : "caption") : name === "telegram_screenshot" ? "caption" : "text";
             if (typeof args[field] === "string" && args[field].trim()) {
               const composed = yield* Effect.promise(() => options.compose!(safe(args[field]), context.signal));
               if (composed.status !== "ready") {
                 const result = receipt(turn, name, "failed", "ThinkFeel could not produce a valid message. Nothing was sent; no unprocessed draft was used.", { reason: `thinkfeel_${composed.reason}`, final: false });
-                if (journal) yield* log.append([evt("AikoTelegramActionSettled", { id, turn, digest: hash, result })]);
+                if (journal) yield* log.append([evt("AikoTelegramActionSettled", { id, turn, epoch, digest: hash, result })]);
                 return result;
               }
               prepared = { ...args, [field]: composed.text };
@@ -323,6 +332,7 @@ export function createTelegramTools(
               evt("AikoTelegramActionSettled", {
                 id,
                 turn,
+                epoch,
                 digest: hash,
                 result,
               }),
@@ -459,14 +469,18 @@ export function createTelegramTools(
   };
   add(
     "telegram_send",
-    "Send a useful reply only to the current owner. Media fileId(s) must come from this thread; arbitrary URLs, paths and other users' files are prohibited. Albums need 2–10 matching/compatible items. Use final=true only when this is the complete answer; delivered/unknown final messages suppress duplicate plain-text delivery. Unknown outcomes must never be resent.",
+    "Send text, a location/venue, contact card or a native anonymous poll to the current owner when useful for the request. Use question/choices for a poll, coordinates for a location, and phoneNumber/firstName for a contact. Media fileId(s) must come from this thread; arbitrary URLs, paths and other users' files are prohibited. Albums need 2–10 matching/compatible items. Use final=true only when this is the complete answer; delivered/unknown final messages suppress duplicate plain-text delivery. Unknown outcomes must never be resent.",
     {
-      kind: { type: "string", enum: ["text", ...fileKinds, "album"] },
+      kind: { type: "string", enum: ["text", ...fileKinds, "album", "location", "venue", "contact", "poll"] },
       text: { type: "string" },
       fileId: { type: "string" },
       fileIds: { type: "array", items: { type: "string" } },
       caption: { type: "string" },
       replyTo: { type: "integer" },
+      latitude: { type: "number" }, longitude: { type: "number" },
+      title: { type: "string" }, address: { type: "string" },
+      phoneNumber: { type: "string" }, firstName: { type: "string" }, lastName: { type: "string" },
+      question: { type: "string" }, choices: { type: "array", items: { type: "string" } },
       buttons,
       final: { type: "boolean" },
     },
@@ -475,12 +489,17 @@ export function createTelegramTools(
       const known = attachments(log, options.owner, turn, true),
         file = (id: unknown) => known.find((item) => item.fileId === id);
       const common = {
-        replyTo: args.replyTo,
+        replyTo: args.replyTo ?? (log.find(e => e.type === "MessageReceived" && e.id === turn)?.telegram as TelegramInbound | undefined)?.messageId,
+        messageThreadId: (log.find(e => e.type === "MessageReceived" && e.id === turn)?.telegram as TelegramInbound | undefined)?.messageThreadId,
         buttons: args.buttons as TelegramButton[][] | undefined,
       };
       let response: TelegramRichResponse;
       if (args.kind === "text" && typeof args.text === "string")
         response = { ...common, kind: "text", text: safe(args.text) };
+      else if (args.kind === "location" || args.kind === "venue")
+        response = { ...common, kind: args.kind, latitude: args.latitude, longitude: args.longitude, title: args.title, address: args.address };
+      else if (args.kind === "contact") response = { ...common, kind: "contact", phoneNumber: args.phoneNumber, firstName: args.firstName, lastName: args.lastName };
+      else if (args.kind === "poll") response = { ...common, kind: "poll", question: args.question, choices: args.choices };
       else if (args.kind === "album" && Array.isArray(args.fileIds)) {
         const items = args.fileIds.map(file);
         if (
@@ -547,7 +566,7 @@ export function createTelegramTools(
               ? args.text
               : typeof args.caption === "string"
                 ? args.caption
-                : `[${args.kind} reply]`,
+                : args.kind === "poll" ? args.question : args.kind === "venue" ? `${args.title}: ${args.address}` : `[${args.kind} reply]`,
           ),
         },
       );
@@ -811,8 +830,10 @@ export function createTelegramTools(
       );
     },
   );
+  add("telegram_capabilities", "Search the reviewed official Telegram API method catalog and see which native tools are mounted. This is discovery, not an arbitrary API executor or permission grant.", { query: { type: "string" } }, [], async (args, _log, turn) =>
+    receipt(turn, "telegram_capabilities", "listed", "Telegram capability catalog; methods marked not_mounted cannot be executed through these tools.", { catalog: telegramCapabilities(typeof args.query === "string" ? safe(args.query).slice(0, 128) : "") }), false);
   const sendMessage = tools.find(entry => entry.spec.name === "telegram_send");
-  if (sendMessage) tools.push({ ...sendMessage, spec: { ...sendMessage.spec, name: "send_message", description: "Send the current owner's Telegram reply. Use kind=text and text for a normal message; media kinds use owned file IDs. Wording passes through the configured ThinkFeel persona before delivery. Set final=true for the complete answer. The destination is fixed by the host; never retry an unknown send." } });
+  if (sendMessage) tools.push({ ...sendMessage, spec: { ...sendMessage.spec, name: "send_message", description: `Send the current owner's Telegram reply. Use kind=text and text for a normal message; media kinds use owned file IDs. ${options.compose ? "Wording passes through the configured persona before delivery." : "Your wording is delivered directly after host validation and credential redaction."} Set final=true for the complete answer. The destination is fixed by the host; never retry an unknown send.` } });
   return tools;
 }
 function ownedMessage(
@@ -842,9 +863,12 @@ function ownedMessage(
 export function createTelegramVision(options: {
   apiKey: string;
   model: string;
+  provider?: ModelProvider;
   fetch?: TelegramFetch;
   redact?: (text: string) => string;
 }): TelegramVision {
+  const provider = options.provider ?? "codegraff";
+  if (!Object.hasOwn(MODEL_PROVIDERS, provider)) throw new Error("Invalid vision provider");
   return async ({ images, question, signal }) => {
     if (
       !options.apiKey ||
@@ -882,7 +906,7 @@ export function createTelegramVision(options: {
     }
     try {
       const response = await (options.fetch ?? fetch)(
-        "https://gateway.codegraff.com/v1/chat/completions",
+        `${MODEL_PROVIDERS[provider].baseUrl}/chat/completions`,
         {
           method: "POST",
           headers: {
@@ -901,6 +925,7 @@ export function createTelegramVision(options: {
             ],
             max_tokens: 2048,
             stream: false,
+            ...(provider === "cerebras" && options.model === "qwen-3.8-27b" ? {reasoning_effort:"none",reasoning_format:"parsed"} : {}),
           }),
           redirect: "manual",
           signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]),
@@ -943,8 +968,8 @@ export function createTelegramVision(options: {
 /** Mount before infer. Short native effects own start/stop; renewal is ephemeral and bounded. */
 export function createTelegramTyping(
   owner: string,
-  telegram: Pick<TelegramTransport, "typing">,
-  options: { signal?: AbortSignal; maxLifetimeMs?: number } = {},
+  telegram: Pick<TelegramTransport, "typing"> & Partial<Pick<TelegramTransport, "draft">>,
+  options: { signal?: AbortSignal; maxLifetimeMs?: number; waitForDelivery?: boolean } = {},
 ) {
   const activation = crypto.randomUUID(),
     running = new Map<string, () => Promise<void>>(),
@@ -960,11 +985,11 @@ export function createTelegramTyping(
       keyOf: (e) =>
         e.type === "AikoTelegramTypingStarted" ||
         e.type === "AikoTelegramTypingStopped"
-          ? `aiko-typing:${e.activation}:${e.turn}:${e.type}`
-          : undefined,
+          ? `aiko-typing:${e.activation}:${e.turn}:${e.epoch ?? 0}:${e.type}`
+          : e.type === "AikoTelegramDraftStarted" ? `aiko-typing:${e.activation}:${e.turn}:${e.epoch ?? 0}:draft:${e.activityKey}` : undefined,
     },
     initial: () =>
-      new Map<string, { done: boolean; started: boolean; stopped: boolean }>(),
+      new Map<string, { done: boolean; started: boolean; stopped: boolean; epoch: number; messageThreadId?: number; activity?: string; activityKey?: string; shown?: string }>(),
     step: (previous, raw) => {
       const e = raw as LogEvent,
         state = new Map(previous);
@@ -978,11 +1003,22 @@ export function createTelegramTyping(
           done: false,
           started: false,
           stopped: false,
+          epoch: 0,
+          messageThreadId: e.telegram?.messageThreadId,
         });
       const current = state.get(String(e.turn));
       if (current) {
-        if (terminals.has(e.type))
+        if (e.type === "TurnResumed") {
+          if (Number(e.epoch) > current.epoch) state.set(String(e.turn), { ...current, epoch: Number(e.epoch), done: false, started: false, stopped: false, activity: undefined, activityKey: undefined, shown: undefined });
+          return state;
+        }
+        if (Number(e.epoch ?? 0) !== current.epoch) return state;
+        if ((options.waitForDelivery ? e.type === "AikoDeliverySettled" : terminals.has(e.type)) ||
+          (e.type === "AikoTelegramActionSettled" && e.result?.owner === owner && e.result?.final && ["delivered", "unknown"].includes(e.result.status)))
           state.set(String(e.turn), { ...current, done: true });
+        if (e.type === "ToolCalled" && !current.done) state.set(String(e.turn), { ...current,
+          activityKey: String(e.callId), activity: /search|recall/.test(String(e.name)) ? "Searching…" : /browser/.test(String(e.name)) ? "Reading the page…" : /voice/.test(String(e.name)) ? "Preparing audio…" : /respond|send/.test(String(e.name)) ? "Preparing your reply…" : "Working on your request…" });
+        if (e.activation === activation && e.type === "AikoTelegramDraftStarted") state.set(String(e.turn), { ...current, shown: String(e.activityKey) });
         if (
           e.activation === activation &&
           e.type === "AikoTelegramTypingStarted"
@@ -1003,22 +1039,32 @@ export function createTelegramTyping(
         const type = value.done
           ? "AikoTelegramTypingStopped"
           : "AikoTelegramTypingStarted";
-        if (!value.done && value.started) return [];
+        const draftId = parseInt(createHash("sha256").update(`${owner}:${turn}:${value.epoch}`).digest("hex").slice(0, 7), 16) + 1;
+        if (!value.done && value.started) {
+          if (!telegram.draft || !value.activityKey || value.shown === value.activityKey) return [];
+          return [effect({ key: `aiko-typing:${activation}:${turn}:${value.epoch}:draft:${value.activityKey}`, input: value,
+            act: (input, signal) => Effect.promise(async () => {
+              const result = await telegram.draft!(owner, draftId, input.activity!, AbortSignal.any([signal, AbortSignal.timeout(3000)]), { canStop: true, messageThreadId: input.messageThreadId });
+              return [evt("AikoTelegramDraftStarted", { owner, turn, epoch: input.epoch, activation, draftId, messageThreadId: input.messageThreadId, activityKey: input.activityKey, status: result.status })];
+            }) })];
+        }
         return [
           effect({
-            key: `aiko-typing:${activation}:${turn}:${type}`,
+            key: `aiko-typing:${activation}:${turn}:${value.epoch}:${type}`,
             input: { turn, done: value.done },
             act: (input) =>
               Effect.promise(async () => {
                 if (input.done) {
                   await running.get(turn)?.();
                   running.delete(turn);
-                } else if (!running.has(turn)) {
+                } else {
+                  await running.get(turn)?.();
                   const controller = new AbortController(),
                     signal = options.signal
                       ? AbortSignal.any([options.signal, controller.signal])
                       : controller.signal,
                     stopTyping = telegram.typing(owner, signal);
+                  if (telegram.draft) await telegram.draft(owner, draftId, "", AbortSignal.any([signal, AbortSignal.timeout(3000)]), { canStop: true, messageThreadId: value.messageThreadId });
                   const stop = async () => {
                     controller.abort();
                     clearTimeout(timer);
@@ -1042,7 +1088,7 @@ export function createTelegramTyping(
                       { once: true },
                     );
                 }
-                return [evt(type, { turn, owner, activation })];
+                return [evt(type, { turn, owner, activation, epoch: value.epoch, draftId, messageThreadId: value.messageThreadId })];
               }),
           }),
         ];

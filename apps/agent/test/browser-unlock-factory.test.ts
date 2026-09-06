@@ -15,7 +15,7 @@ async function fixture() {
  const status={tenantId:tenant,profileId:profile,runtimeId:runtime,connectionId:connection,allowedDomains:["example.com"],verified:true,revision:4,expiresAt:Date.now()+60000,renewable:false};
  const meta={id:connection,name:"Example",identity:"owner@example.com",website:"https://example.com",domains:["example.com"],recipeId:"approved-recipe",maintenance:true,version:2,sourceId:null,sourceReference:null,hasPassword:true,deleted:false};
  let failClear=false,denyHttp=false;
- const mock=spyOn(globalThis,"fetch").mockImplementation(async(target,init)=>{
+ const mock=spyOn(globalThis,"fetch").mockImplementation(Object.assign(async(target:RequestInfo|URL,init?:RequestInit)=>{
   const url=new URL(String(target));expect(url.origin).toBe(config.origin);expect(init?.redirect).toBe("manual");
   expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer fixture-private-runtime-key");
   const endpoint=url.pathname.split("/").at(-1)!;order.push(`sdk:${endpoint}`);
@@ -25,7 +25,7 @@ async function fixture() {
   if(endpoint==="renew"){expect(init?.method).toBe("POST");expect(init?.body).toBe("{}");return Response.json({id:job},{status:202});}
   if(endpoint==="session")return Response.json({connectionId:connection,profileId:profile,runtimeId:runtime,revision:status.revision,expiresAt:status.expiresAt,allowedDomains:["example.com"],cookies:[{name:"sid",value:"fixture-private-session",domain:"example.com",path:"/",secure:true,httpOnly:true,sameSite:"Lax",hostOnly:true,expires:-1}]});
   throw new Error("Unexpected SDK fixture path");
- });restore=()=>mock.mockRestore();
+ },{preconnect:globalThis.fetch.preconnect}));restore=()=>mock.mockRestore();
  const driver:BrowserDriver={
   sessionContext:async()=>({...context}),
   installSession:async packet=>{order.push(`install:${packet.revision}`);packets.push(structuredClone(packet));const {cookies,expiresAt,connectionGeneration,...ack}=packet;return ack;},
@@ -92,4 +92,11 @@ test("generation change invalidates cached jar before private screenshot",async(
 test("Arcade failure never invokes SDK or native session installation",async()=>{
  const f=await fixture();f.setSearch({status:"unavailable",connectors:[],fallbackAllowed:false,message:"Catalog unavailable"});
  await expect(f.wrapped.execute(navigation)).rejects.toThrow("Unlock session");expect(f.order).toEqual([]);
+});
+
+test("routine wrapper close releases the private scope instead of revoking its unchanged session",async()=>{
+ const f=await fixture();const reasons:unknown[]=[];
+ f.driver.clearSession=async scope=>{reasons.push(scope.reason);};
+ await f.wrapped.execute(navigation);await f.wrapped.close();
+ expect(reasons).toEqual(["release"]);expect(f.order.at(-1)).toBe("close");
 });

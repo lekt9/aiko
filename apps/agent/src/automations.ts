@@ -1,3 +1,4 @@
+import { eventEpochOf } from "tardie/code/execution/turns";
 import { createHash } from "node:crypto";
 import { Effect } from "effect";
 import { component } from "tardie/core/component";
@@ -39,6 +40,7 @@ type State = {
   rules: Map<string, Entry>;
   pending: Map<string, Pending>;
   active: Set<string>;
+  epochs: Map<string, number>;
   telegram: boolean;
 };
 const hash = (value: string) =>
@@ -47,6 +49,7 @@ const initial = (): State => ({
   rules: new Map(),
   pending: new Map(),
   active: new Set(),
+  epochs: new Map(),
   telegram: false,
 });
 export const automationEventKey = (e: Event) =>
@@ -61,12 +64,18 @@ function step(state: State, e: Event): State {
     rules: new Map(state.rules),
     pending: new Map(state.pending),
     active: new Set(state.active),
+    epochs: new Map(state.epochs),
   };
   if (e.type === "MessageReceived") {
     s.active.add(String(e.id));
+    s.epochs.set(String(e.id), 0);
     if (e.source === "telegram") s.telegram = true;
   }
-  if (["TurnCompleted", "TurnFailed", "TurnCancelled"].includes(e.type))
+  if (e.type === "TurnResumed") {
+    s.epochs.set(String(e.turn), eventEpochOf(e));
+    s.active.add(String(e.turn));
+  }
+  if (["TurnCompleted", "TurnFailed", "TurnCancelled"].includes(e.type) && eventEpochOf(e) === (s.epochs.get(String(e.turn)) ?? 0))
     s.active.delete(String(e.turn));
   if (e.type === "AikoAutomationConfigured") {
     const rule = e.rule as Rule;

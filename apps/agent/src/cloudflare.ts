@@ -1,3 +1,13 @@
+import { approvalMenu } from "./telegram-mini-app.ts";
+import { agentKeys } from "tardie/log/events";
+import { cancellationKeys, methodCallKeys, methodResponseKeys, methodTimeoutKeys, methodIngressKeyOf } from "tardie/core/method";
+import { oauthBrowserRoute } from "./connector-oauth.ts";
+import { turnEpochOf, turnTerminalOf } from "tardie/code/execution/turns";
+import { validateActor } from "tardie/core/actor";
+import { withRequiredResponse } from "./channel-response.ts";
+import { nativeBrowserConnector } from "./native-browser-connector.ts";
+import { acceptSecretary, createSecretaryActor, secretaryApi, secretaryCommand, secretaryEventKey, withSecretaryHistory } from "./secretary.ts";
+import { secretaryTelegram } from "./secretary-telegram.ts";
 import { createModelRouting, parseModelRouting } from "./model-routing.ts";
 import { withRoleInference } from "./inference-routing.ts";
 import { connectorVault, parseConnectorVault } from "./connector-vault.ts";
@@ -9,8 +19,8 @@ import { connectorApi } from "./connector-api.ts";
 import { DurableObject } from "cloudflare:workers";
 import { createHash } from "node:crypto";
 import { Memory, cloudflareStorage } from "entity-learn/cloudflare";
-import { browserTraceKeys } from "@unbrowse/browser-runtime/trace";
-import { harKeys } from "@unbrowse/browser-runtime/network-facts";
+import { browserTraceKeys } from "@unbrowse/browser-harness/trace";
+import { harKeys } from "@unbrowse/browser-harness/network-facts";
 import { infer as modelInference } from "tardie/model";
 import { modelAdapters } from "tardie/model/adapter";
 import { openAICompatibleAdapter } from "tardie/model/openai";
@@ -35,7 +45,10 @@ import {
   backgroundEventKey,
 } from "./background.ts";
 import { threadBinding, backgroundThread } from "./account-binding.ts";
-import { memoryScope, openMemory, type MemoryBinding } from "./memory.ts";
+import { memoryScope, memoryTools, openMemory, type MemoryBinding } from "./memory.ts";
+import { Layer } from "effect";
+import { CodeHarness } from "./code-harness.ts";
+import { createCodeChildActor } from "./code-agents.ts";
 import { createCloudflareCapabilities } from "./cloudflare-capabilities.ts";
 import { createVoice, createThinkFeelComposer } from "./voice.ts";
 import {
@@ -61,6 +74,7 @@ import {
 } from "./security.ts";
 import { withSpokenHistory } from "./inference.ts";
 import { controlApi } from "./control-api.ts";
+import { requestMemoryEventKey } from "./request-memory-events.ts";
 import { planeManifest, planeMemoryRead } from "./plane.ts";
 import { validateLearningInput } from "./learning.ts";
 import { learningFromBrowserTrace } from "./unbrowse-learning.ts";
@@ -86,9 +100,12 @@ export interface AikoCloudflareEnv {
   AIKO_CONVERSATION_PROVIDER?: string;
   AIKO_CONVERSATION_MODEL?: string;
   ARCADE_API_KEY?: string;
+  AIKO_ARCADE_OAUTH_ENABLED?: string;
+  AIKO_CODE_MODE?: string;
   AIKO_CONNECTOR_VAULT_JSON?: string;
   AIKO_MODEL?: string;
   AIKO_VISION_MODEL?: string;
+  AIKO_VISION_PROVIDER?: "codegraff" | "cerebras";
   AIKO_BOT_TOKEN?: string;
   AIKO_WEBHOOK_SECRET?: string;
   AIKO_ALLOWED_USERS?: string;
@@ -98,6 +115,7 @@ export interface AikoCloudflareEnv {
   AIKO_PERSONA?: string;
   AIKO_MAX_ACCOUNTS?: string;
   AIKO_THINKFEEL_SENDS?: string;
+  AIKO_REPLY_STYLE?: string;
 }
 type Principal = {
   owner: string;
@@ -116,6 +134,8 @@ function configOf(env: AikoCloudflareEnv): AikoConfig {
   const mode = env.AIKO_MODE ?? "live";
   if (mode !== "demo" && mode !== "live")
     throw new Error("Invalid deployment mode");
+  const replyStyle = env.AIKO_REPLY_STYLE ?? "thinkfeel";
+  if (replyStyle !== "thinkfeel" && replyStyle !== "direct") throw new Error("Invalid reply style");
   const instanceId = env.AIKO_INSTANCE_ID ?? "demo";
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(instanceId))
     throw new Error("Invalid actor instance");
@@ -147,6 +167,8 @@ function configOf(env: AikoCloudflareEnv): AikoConfig {
     cerebrasKey: env.CEREBRAS_API_KEY,
     modelRouting: parseModelRouting({AIKO_MODEL: env.AIKO_MODEL, AIKO_RAG_PROVIDER: env.AIKO_RAG_PROVIDER, AIKO_RAG_MODEL: env.AIKO_RAG_MODEL, AIKO_BROWSER_PROVIDER: env.AIKO_BROWSER_PROVIDER, AIKO_BROWSER_MODEL: env.AIKO_BROWSER_MODEL, AIKO_CONVERSATION_PROVIDER: env.AIKO_CONVERSATION_PROVIDER, AIKO_CONVERSATION_MODEL: env.AIKO_CONVERSATION_MODEL}, {contextWindowTokens: env.AIKO_MODEL === "glm-5.3-flash" ? 1000000 : 32768, maxOutputTokens:4096}),
     arcadeKey: env.ARCADE_API_KEY,
+    arcadeOAuthEnabled: env.AIKO_ARCADE_OAUTH_ENABLED === "true",
+    codeMode: env.AIKO_CODE_MODE === "true",
     connectorVault: parseConnectorVault(env.AIKO_CONNECTOR_VAULT_JSON),
     port: 0,
     stateDir: "durable-object",
@@ -159,7 +181,8 @@ function configOf(env: AikoCloudflareEnv): AikoConfig {
     planeCredentials: parsePlaneCredentials(env.AIKO_PLANE_CREDENTIALS ?? "[]"),
     maxAccounts,
     persona: env.AIKO_PERSONA ?? "3c36e929-50ac-4971-919f-70e6fc6273b7",
-    voiceEnabled: env.AIKO_VOICE_ENABLED === "true",
+    voiceEnabled: replyStyle === "thinkfeel" && env.AIKO_VOICE_ENABLED === "true",
+    replyStyle,
     voiceKey: env.AIKO_VOICE_KEY,
     toolCallLimit: null,
     publicWeb: false,
@@ -309,7 +332,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       config.voiceKey ?? "",
     ]);
     const nativeStorage = cloudflareStorage(this.ctx.storage);
-    const requireThinkFeel = config.mode === "live";
+    const requireThinkFeel = config.mode === "live" && config.replyStyle !== "direct";
     const compose = requireThinkFeel ? createThinkFeelComposer({
       key: config.voiceKey, persona: config.persona, redact,
     }) : undefined;
@@ -321,8 +344,10 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       required: requireThinkFeel,
     });
     let host: CloudflareAccountHost;
+    const bindingOf = (thread: string) => threadBinding(thread) ??
+      (host?.rootThread(thread) === `user-${owner}` ? {owner,role:"child" as const} : undefined);
     const binding = (thread: string): MemoryBinding => {
-      if (threadBinding(thread)?.owner !== owner)
+      if (bindingOf(thread)?.owner !== owner)
         throw new Error("Foreign memory binding");
       return {
         owner,
@@ -338,10 +363,12 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         readPage: (after, limit) => host.readPage(thread, after, limit),
       };
     };
+    const updateApprovalMenu=approvalMenu({owner,token:config.botToken});
     const capabilities =
       config.mode === "live"
         ? createCloudflareCapabilities({
             owner,
+            onApprovalsChanged: (_owner,count) => updateApprovalMenu(count),
             env: { CODEGRAFF_API_KEY: config.modelKey! },
             storage: this.ctx.storage,
             memory: binding(`user-${owner}`),
@@ -354,22 +381,38 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
             },
           })
         : undefined;
+    const codeHarnesses = new Map<string, CodeHarness>();
+    const harnessFor = (thread: string) => {
+      if (!config.codeMode || !capabilities) return undefined;
+      let harness = codeHarnesses.get(thread);
+      if (!harness) {
+        if (bindingOf(thread)?.owner !== owner) throw new Error("Foreign code harness binding");
+        harness = new CodeHarness(owner,thread,(input,signal)=>capabilities.sandbox.codeSegment(input,signal),redact,workflowStore);
+        codeHarnesses.set(thread,harness);
+      }
+      return harness;
+    };
     const telegram = telegramOf(config, {
       redact,
       mediaProcessor: capabilities?.sandbox.processMedia,
     });
-    const connectors = new ConnectorEngine({ owner, secureBrowser: connectorVault(config.connectorVault, owner), env: { ARCADE_API_KEY: config.arcadeKey }, store: {
+    const connectors: ConnectorEngine = new ConnectorEngine({ owner, arcadeOAuthEnabled: config.arcadeOAuthEnabled === true, secureBrowser: connectorVault(config.connectorVault, owner) ?? (capabilities ? nativeBrowserConnector(owner, capabilities.sandbox.browserFactory()) : undefined), env: { ARCADE_API_KEY: config.arcadeKey }, store: {
       get: key => this.ctx.storage.get(key),
       set: (key, value) => this.ctx.storage.put(key, value),
       list: async prefix => [...(await this.ctx.storage.list({ prefix })).values()],
+    }, onEvent: async e => {
+      await host.commitRoot(host.self(`user-${owner}`),event("AikoHooksActivated",{id:"background-v1"}));
+      await host.commitRoot(host.self(`user-${owner}`),e);
+      await this.kick(host);
     }, readOwnedLogs: async boundOwner => (await host.read(`user-${boundOwner}`)).filter(e => e.type === "AikoApiObserved" && e.owner === boundOwner).map(e => ({ owner: boundOwner, id: String(e.id), text: `${e.method} ${e.url}` })) });
+    const workflowStore = createWorkflowStore({get:key=>this.ctx.storage.get(key),put:(key,value)=>this.ctx.storage.put(key,value),list:async prefix=>[...(await this.ctx.storage.list({prefix})).values()],update:async(key,change)=>{await this.ctx.storage.transaction(async txn=>{await txn.put(key,change(await txn.get(key)));});},claim:(key,value)=>this.ctx.storage.transaction(async txn=>{if(await txn.get(key)!==undefined)return false;await txn.put(key,value);return true;})});
     const workflows = new WorkflowController(owner,`user-${owner}`,{
-      store:createWorkflowStore({get:key=>this.ctx.storage.get(key),put:(key,value)=>this.ctx.storage.put(key,value),list:async prefix=>[...(await this.ctx.storage.list({prefix})).values()],update:async(key,change)=>{await this.ctx.storage.transaction(async txn=>{await txn.put(key,change(await txn.get(key)));});},claim:(key,value)=>this.ctx.storage.transaction(async txn=>{if(await txn.get(key)!==undefined)return false;await txn.put(key,value);return true;})}),
+      store:workflowStore,
       dispatcher:workflowDispatcher({owner,engine:connectors,redact,readEvents:()=>host.read(`user-${owner}`)}),guard:validateRouterInput,
     },redact);
     const routerBinding = { owner, engine: connectors, redact, readOwnedEvents: () => host.read(`user-${owner}`), listWorkflows:()=>workflows.engine.list() };
     const route = routerCaller(routerBinding, () => host);
-    const telegramTyping = telegram && createTelegramTyping(owner, telegram);
+    const telegramTyping = telegram && createTelegramTyping(owner, telegram, { waitForDelivery: true });
     const telegramTools = telegram
       ? createTelegramTools({
           owner,
@@ -383,8 +426,9 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                   capabilities.sandbox,
                 ),
                 inspectImages: createTelegramVision({
-                  apiKey: config.modelKey!,
-                  model: this.env.AIKO_VISION_MODEL ?? config.model!,
+                  provider: this.env.AIKO_VISION_PROVIDER ?? config.modelRouting!.roles.conversation.provider,
+                  apiKey: (this.env.AIKO_VISION_PROVIDER ?? config.modelRouting!.roles.conversation.provider) === "cerebras" ? config.cerebrasKey! : config.modelKey!,
+                  model: this.env.AIKO_VISION_MODEL ?? config.modelRouting!.roles.conversation.model,
                   redact,
                 }),
               }
@@ -398,6 +442,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       | ReturnType<typeof createReflectionActor>
     | ReturnType<typeof createToolRouterActor>
     | ReturnType<typeof createControlActor>
+    | ReturnType<typeof createSecretaryActor>
     >();
     const routing = config.mode === "live" && config.modelRouting ? createModelRouting({owner, config: config.modelRouting, env: {CODEGRAFF_API_KEY: config.modelKey, CEREBRAS_API_KEY: config.cerebrasKey, AIKO_ALLOW_PAID_INFERENCE: "true"},stream:{firstChunkMs:90000,idleMs:90000,totalMs:300000}}) : undefined;
     const model = withSpokenHistory(
@@ -426,16 +471,20 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       actorName: "aiko",
       actorInstance: config.instanceId!,
       ownsThread: (thread) => threadBinding(thread)?.owner === owner,
+      allowChild: (parent,child) => config.codeMode === true && parent === `user-${owner}` && /^ag\.[0-9]+:/.test(child) && child.length < 2048,
       nextWake: async () => {
         const times = [await this.sandboxDeadline(host, capabilities), automationNextWake(await host.read(`user-${owner}`))].filter((n): n is number => n !== undefined);
         return times.length ? Math.min(...times) : undefined;
       },
       keyOf: (e) =>
+      agentKeys.keyOf(e) ?? cancellationKeys.keyOf(e) ?? methodCallKeys.keyOf(e) ?? methodResponseKeys.keyOf(e) ?? methodTimeoutKeys.keyOf(e) ?? methodIngressKeyOf(e) ??
+        secretaryEventKey(e) ??
         automationEventKey(e) ??
         routerEventKey(e) ??
         backgroundEventKey(e) ??
         telegramEventKey(e) ??
         browserTraceKeys.keyOf(e) ??
+        requestMemoryEventKey(e) ??
         harKeys.keyOf(e) ??
         (e.type === "AikoControlReply"
           ? `aiko-control:${e.id}`
@@ -444,17 +493,21 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
             : undefined),
       canAppend: (_thread, events, read) => automationAppendAllowed(events, read),
       actorFor: (thread) => {
-        const bound = threadBinding(thread)!;
+        const bound = bindingOf(thread)!;
         let definition = actors.get(thread);
         if (!definition) {
           const memory = binding(thread);
           definition =
-            bound.role === "control"
+            bound.role === "child"
+              ? createCodeChildActor(harnessFor(thread)!,[...memoryTools(memory,{fixtures:false}),...(capabilities ? [capabilities.searchFor(memory)] : [])])
+              : bound.role === "secretary"
+              ? createSecretaryActor({ owner, redact, read: () => host.read(thread), telegram: config.botToken ? secretaryTelegram(config.botToken) : undefined })
+              : bound.role === "control"
               ? createControlActor({ owner, voice, send: telegram?.send, live: requireThinkFeel, redact, publish: rows => host.seed(`user-${owner}`, rows) })
               : bound.role === "router"
               ? createToolRouterActor(routerBinding)
               : bound.role === "indexer"
-              ? createIndexerActor(memory)
+              ? createIndexerActor(memory,(id,signal)=>connectors.initialContext(id,signal))
               : bound.role === "reflection"
                 ? createReflectionActor(memory)
                 : createAikoActor({
@@ -466,8 +519,10 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                     publicWeb: false,
                     send: telegram?.send,
                     background: true,
-                    toolRouter: { owner, thread, call: route, redact, readRouter: () => host.read(`router-${owner}`) },
-                    workflowTools: workflows.tools(),
+                    toolRouter: { owner, thread, redact, readRouter: () => host.read(`router-${owner}`) },
+                    workflow: workflows.component(),
+                    workflowTools: workflows.codeTools(),
+                    codeHarness: harnessFor(thread),
                     capabilityBuilder: { owner, thread, redact, checkArcade: async domain => (await connectors.search(domain)).fallbackAllowed },
                     connectors: { owner, thread, engine: connectors, deliverConnection: async (input, signal) => {
                       if (!telegram || input.owner !== owner) return { status: "rejected" as const };
@@ -489,13 +544,17 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                         }
                       : {}),
                   });
-          actors.set(thread, definition);
+          actors.set(thread, validateActor(definition));
         }
         return definition;
       },
-      layersFor: (thread) => threadBinding(thread)?.role === "foreground"
-        ? workflows.inference(capabilities ? capabilities.browser.inference(model,owner) : model)
-        : model,
+      layersFor: (thread) => {
+        const role=bindingOf(thread)?.role;
+        const base=role === "secretary" ? withSecretaryHistory(model) : role === "foreground"
+          ? withRequiredResponse(workflows.inference(capabilities ? capabilities.browser.inference(model,owner) : model),redact) : model;
+        const harness=role === "foreground" || role === "child" ? harnessFor(thread) : undefined;
+        return harness ? Layer.merge(harness.inference(base),harness.sandboxLayer()) : base;
+      },
     });
     return { host, config, binding, redact, capabilities, connectors, route };
   }
@@ -507,12 +566,14 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     );
     return next;
   }
-  private kick(host: CloudflareAccountHost) {
-    this.ctx.waitUntil(
-      host.recover().catch(() => {
-        this.failures++;
-      }),
-    );
+  private async kick(_host: CloudflareAccountHost) {
+    // Acknowledge ingress after arming a real alarm. The alarm handler awaits the
+    // native driver; an RPC return must not own a long-running inference lifetime.
+    const alarm = await this.ctx.storage.getAlarm();
+    await this.ctx.storage.setAlarm(Math.min(alarm ?? Infinity, Date.now() + 1));
+  }
+  async oauthConnection(owner:string,id:string,action:"launch"|"verify"|"status",flowId?:string) {
+    const {connectors}=await this.open(owner);return connectors.oauthBrowser(id,action,flowId);
   }
   private async sandboxDeadline(
     host: CloudflareAccountHost,
@@ -552,6 +613,11 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       const { host, config, redact } = await this.open(owner);
       if (!validOwner(config, owner))
         throw new Error("Account is not authorized");
+      if (inbound?.secretary) {
+        const status = await acceptSecretary(host, owner, redactTelegramInbound(inbound, redact));
+        await this.kick(host);
+        return status;
+      }
       const thread = `user-${owner}`;
       const log = await host.read(thread);
       const prior = log.find(
@@ -586,6 +652,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
           config.mode === "live",
           undefined,
           {
+            stoppedDraftId: normalized?.stoppedDraftId, messageThreadId: normalized?.messageThreadId,
+            secretary: text => secretaryCommand(host, owner, text, redact),
             connectors: (await this.open(owner)).connectors,
             separateLane: true,
             connectorsUrl: "https://aiko-agent.lewis-6d8.workers.dev/connect",
@@ -594,7 +662,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
             voice: config.mode === "live",
           },
         );
-        this.kick(host);
+        await this.kick(host);
         return status;
       }
       await host.commitRoot(
@@ -619,7 +687,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
             : {}),
         }),
       );
-      this.kick(host);
+      await this.kick(host);
       return "accepted";
     });
   }
@@ -650,7 +718,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
   }
   async alarm() {
     if (!this.owner) return;
-    const { host, capabilities } = await this.open(this.owner);
+    const { host, capabilities, connectors } = await this.open(this.owner);
+    await connectors.flushEvents();
     const at = Date.now();
     const tick = automationWakeEvent(await host.read(`user-${this.owner}`), at);
     if (tick) await host.commitRoot(host.self(`user-${this.owner}`), tick);
@@ -691,7 +760,9 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     const { host, config, binding, redact, capabilities, connectors, route } =
       await this.open(owner);
     const url = new URL(request.url);
-    if (/^\/(?:api|v1)\/connectors(?:\/|$)/.test(url.pathname)) return connectorApi(request, connectors, route);
+    if (/^\/(?:api|v1)\/secretary(?:\/|$)/.test(url.pathname))
+      return this.serialize(() => secretaryApi(request, owner, host, redact));
+    if (/^\/(?:api|v1)\/connectors(?:\/|$)/.test(url.pathname)) return connectorApi(request, connectors, route, {origin:new URL(request.url).origin,key:config.operatorToken});
     if (
       url.pathname === "/api/control/sandbox/reconcile" &&
       request.method === "POST"
@@ -745,7 +816,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         );
         await this.ctx.storage.delete("codegraff:sandbox");
         await this.ctx.storage.sync();
-        this.kick(host);
+        await this.kick(host);
         return json({ status: "reconciled", allocation: "not_started" });
       });
     }
@@ -944,7 +1015,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
             { parent: source, depth: 1, placement: "colocated" },
           ),
         );
-        this.kick(host);
+        await this.kick(host);
         return json({ status: "accepted", id }, 202);
       });
     }
@@ -963,6 +1034,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         fixtures: config.mode === "demo",
         telegram: !!config.botToken,
         toolCallLimit: null,
+        codeMode: config.codeMode === true && !!capabilities,
         noProgressStop: false,
         publicWeb: !!capabilities,
         browser: capabilities ? "persistent Codegraff sandbox" : "disabled",
@@ -974,6 +1046,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         },
         sandbox: (await capabilities?.sandbox.status()) ?? null,
       });
+    if (path === "/api/approvals" && request.method === "GET")
+      return json({pending: capabilities?.browser.status(owner).pending ?? []});
     if (path === "/api/browser" && request.method === "GET")
       return json(
         capabilities?.browser.status(owner) ?? {
@@ -982,7 +1056,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
           observations: [],
         },
       );
-    if (path === "/api/browser/approval" && request.method === "POST") {
+    if (["/api/browser/approval", "/api/approvals"].includes(path) && request.method === "POST") {
       let body;
       try {
         body = JSON.parse(await boundedText(new Response(request.body), 512));
@@ -1103,25 +1177,19 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         !log.some((e) => e.type === "MessageReceived" && e.id === body.id)
       )
         return json({ error: "not_found" }, 404);
-      if (
-        log.some(
-          (e) =>
-            ["TurnCompleted", "TurnCancelled", "TurnFailed"].includes(e.type) &&
-            e.turn === body.id,
-        )
-      )
+      if (turnTerminalOf(log, body.id))
         return json({ error: "already_terminal" }, 409);
       await host.commitRoot(
         host.self(thread),
         cancellationRequested({
-          invocation: { method: "message", id: body.id, epoch: 0 },
-          request: `cancel:${body.id}`,
+          invocation: { method: "message", id: body.id, epoch: turnEpochOf(log, body.id) },
+          request: `cancel:${body.id}:${turnEpochOf(log, body.id)}`,
           cause: "requested",
           reason: "Cancelled by the owner",
           at: Date.now(),
         }),
       );
-      this.kick(host);
+      await this.kick(host);
       return json({ status: "cancelling" }, 202);
     }
     return json({ error: "not_found" }, 404);
@@ -1161,6 +1229,8 @@ export default {
           },
         );
       const config = configOf(env);
+      if (url.pathname.startsWith("/connect/oauth/") && !config.arcadeOAuthEnabled) return new Response("App OAuth connections are temporarily unavailable.", {status:404,headers:{"cache-control":"no-store"}});
+      if (url.pathname.startsWith("/connect/oauth/")) return oauthBrowserRoute(request,config.operatorToken,(owner,id,action,flowId)=>env.AIKO_ACCOUNTS.getByName(owner).oauthConnection(owner,id,action,flowId));
       if (
         ["/health", "/ready"].includes(url.pathname) &&
         request.method === "GET"
@@ -1171,6 +1241,9 @@ export default {
           status: "ready",
           storage: "durable-object",
           harness: "tardie@0.22.0",
+          models: { ...Object.fromEntries(Object.entries(config.modelRouting!.roles).map(([role, route]) => [role, {provider:route.provider,model:route.model}])),
+            vision: {provider:env.AIKO_VISION_PROVIDER ?? config.modelRouting!.roles.conversation.provider,model:env.AIKO_VISION_MODEL ?? config.modelRouting!.roles.conversation.model} },
+          replyStyle: config.replyStyle,
           capabilities: {
             inference: config.mode === "live",
             memory: true,

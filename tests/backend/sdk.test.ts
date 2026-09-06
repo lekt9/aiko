@@ -9,6 +9,7 @@ import {
   type VaultAgent,
 } from "../../packages/sdk/src/agent.js";
 import { createVaultClient } from "../../packages/sdk/src/vault.js";
+import { createBrowserLoginCommit } from "../../packages/sdk/src/owner.js";
 import { createCdpCookieAdapter } from "../../packages/sdk/src/cdp.js";
 import { EncryptedFileTokenStore } from "../../packages/sdk/src/oauth.js";
 import { UnlockError } from "../../packages/sdk/src/transport.js";
@@ -51,6 +52,99 @@ function bridgeFixture() {
   return { binding, client, browser, bridge, rotate: () => revision++ };
 }
 describe("production SDK boundaries", () => {
+  it("exports the bound browser jar into the native owner commit, returning only a verified receipt", async () => {
+    const binding = {
+      connectionId: randomUUID(),
+      profileId: randomUUID(),
+      runtimeId: randomUUID(),
+      domains: ["service.test"],
+      identity: "alice",
+      version: 3,
+    };
+    const completeBrowserLogin = vi.fn(async () => ({
+      version: 4,
+      revision: 1,
+      expiresAt: Date.now() + 60000,
+    }));
+    const browser = {
+      exportCookies: vi.fn(async () => [cookie()]),
+      replaceCookies: vi.fn(),
+    };
+    const commit = createBrowserLoginCommit(
+      { completeBrowserLogin },
+      browser,
+      binding,
+    );
+    binding.domains.push("evil.test");
+    binding.version = 99;
+    const receipt = await commit({
+      username: "alice",
+      password: "SYNTHETIC-BROWSER-PASSWORD",
+    });
+    expect(browser.exportCookies).toHaveBeenCalledWith(["service.test"]);
+    expect(completeBrowserLogin).toHaveBeenCalledWith(
+      binding.connectionId,
+      {
+        profileId: binding.profileId,
+        runtimeId: binding.runtimeId,
+        identity: "alice",
+        version: 3,
+        credential: { password: "SYNTHETIC-BROWSER-PASSWORD" },
+        cookies: [cookie()],
+      },
+      undefined,
+    );
+    expect(Object.keys(receipt).sort()).toEqual([
+      "expiresAt",
+      "revision",
+      "version",
+    ]);
+    await expect(
+      commit({ username: "alice", password: "SYNTHETIC-BROWSER-PASSWORD" }),
+    ).rejects.toMatchObject({ code: "BINDING_MISMATCH" });
+    expect(completeBrowserLogin).toHaveBeenCalledTimes(1);
+  });
+  it("rejects swapped identities or cookie domains and never retries an uncertain credential commit", async () => {
+    const binding = {
+      connectionId: randomUUID(),
+      profileId: randomUUID(),
+      runtimeId: randomUUID(),
+      domains: ["service.test"],
+      identity: "alice",
+      version: 1,
+    };
+    const completeBrowserLogin = vi.fn(async () => {
+      throw Error("SYNTHETIC-SENSITIVE-PROVIDER-ERROR");
+    });
+    const browser = {
+      exportCookies: vi.fn(async () => [cookie("secret", "evil.test")]),
+      replaceCookies: vi.fn(),
+    };
+    const commit = createBrowserLoginCommit(
+      { completeBrowserLogin },
+      browser,
+      binding,
+    );
+    await expect(
+      commit({ username: "bob", password: "bad" }),
+    ).rejects.toMatchObject({ code: "BINDING_MISMATCH" });
+    expect(browser.exportCookies).not.toHaveBeenCalled();
+    await expect(
+      commit({ username: "alice", password: "bad" }),
+    ).rejects.toMatchObject({ code: "BINDING_MISMATCH" });
+    expect(completeBrowserLogin).not.toHaveBeenCalled();
+    browser.exportCookies.mockResolvedValue([cookie()]);
+    await expect(
+      commit({ username: "alice", password: "bad" }),
+    ).rejects.toMatchObject({
+      code: "UNAVAILABLE",
+      message: "The private browser login needs recovery.",
+    });
+    await expect(
+      commit({ username: "alice", password: "bad" }),
+    ).rejects.toMatchObject({ code: "BINDING_MISMATCH" });
+    expect(completeBrowserLogin).toHaveBeenCalledTimes(1);
+  });
   it("hydrates once and delegates original tools exactly once without changing their results", async () => {
     const f = bridgeFixture(),
       click = vi.fn(async (value: string) => ({ text: "Clicked " + value })),

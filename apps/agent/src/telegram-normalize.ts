@@ -1,16 +1,20 @@
+import { secretaryPayload, type SecretaryUpdate } from "./secretary-telegram.ts";
 import {
   telegramMessageMedia,
   type TelegramMediaDescriptor,
 } from "./telegram-media.ts";
 
 export type TelegramInbound = {
+  secretary?: SecretaryUpdate;
   update: number;
   user: string;
   text: string;
   at: number;
   messageId?: number;
+  messageThreadId?: number;
+  stoppedDraftId?: number;
   sentAt?: number;
-  kind?: "message" | "callback" | "reaction";
+  kind?: "message" | "callback" | "reaction" | "generation_stopped";
   media?: TelegramMediaDescriptor[];
   caption?: string;
   mediaGroupId?: string;
@@ -31,7 +35,12 @@ export type TelegramInboundPolicy = {
 export const TELEGRAM_ALLOWED_UPDATES = [
   "message",
   "callback_query",
+  "stopped_message_generation",
   "message_reaction",
+  "business_connection",
+  "business_message",
+  "edited_business_message",
+  "deleted_business_messages",
 ] as const;
 const object = (value: unknown): Record<string, any> | undefined =>
   value && typeof value === "object" && !Array.isArray(value)
@@ -63,6 +72,26 @@ function privateUser(chat: any, sender: any, policy: TelegramInboundPolicy) {
   return policy.public || policy.allowedUsers.has(user) ? user : undefined;
 }
 
+/** User-shared native cards become bounded text; never persist arbitrary provider fields or contact vCards. */
+function nativeCardText(message: Record<string, any>): string | undefined {
+  const location = object(message.venue?.location ?? message.location);
+  if (location && typeof location.latitude === "number" && typeof location.longitude === "number" &&
+    Number.isFinite(location.latitude) && Math.abs(location.latitude) <= 90 && Number.isFinite(location.longitude) && Math.abs(location.longitude) <= 180) {
+    const venue = object(message.venue), title = shortText(venue?.title, 256), address = shortText(venue?.address, 1024);
+    return `[Shared ${venue ? "venue" : "location"}: ${location.latitude}, ${location.longitude}${title ? `; ${title}` : ""}${address ? `; ${address}` : ""}]`;
+  }
+  const contact = object(message.contact);
+  if (contact) {
+    const phone = shortText(contact.phone_number, 64), first = shortText(contact.first_name, 256), last = shortText(contact.last_name, 256);
+    if (phone && /^[+\d ()-]{1,64}$/.test(phone) && first) return `[Shared contact: ${first}${last ? ` ${last}` : ""}; ${phone}]`;
+  }
+  const poll = object(message.poll);
+  if (poll && shortText(poll.question, 300) && Array.isArray(poll.options) && poll.options.length >= 1 && poll.options.length <= 12 &&
+    poll.options.every((option: unknown) => typeof object(option)?.text === "string" && object(option)!.text.length <= 100)) {
+    return `[Shared poll: ${poll.question}${poll.is_closed === true ? " (closed)" : ""}]\n${poll.options.map((option: {text:string}, index: number) => `${index + 1}. ${option.text}`).join("\n")}`;
+  }
+}
+
 /** Call only after webhook-secret verification, or for authenticated getUpdates results. */
 export function normalizeTelegramUpdate(
   input: unknown,
@@ -76,6 +105,15 @@ export function normalizeTelegramUpdate(
   )
     return { status: 400 };
   const at = policy.receivedAt ?? Date.now();
+  const stopped = object(update.stopped_message_generation);
+  if (stopped) {
+    const user = privateUser(stopped.chat, { id: stopped.chat?.id, is_bot: false }, policy);
+    if (!user || !Number.isSafeInteger(stopped.draft_id) || stopped.draft_id === 0 ||
+      (stopped.message_thread_id !== undefined && !positive(stopped.message_thread_id))) return { status: 200 };
+    return { status: 200, inbound: { update: update.update_id, user, text: "/cancel", at,
+      kind: "generation_stopped", stoppedDraftId: stopped.draft_id,
+      ...(stopped.message_thread_id ? { messageThreadId: stopped.message_thread_id } : {}) } };
+  }
   const callback = object(update.callback_query);
   if (callback) {
     const user = privateUser(callback.message?.chat, callback.from, policy),
@@ -103,6 +141,7 @@ export function normalizeTelegramUpdate(
         at,
         kind: "callback",
         messageId: callback.message.message_id,
+        ...(positive(callback.message.message_thread_id) ? { messageThreadId: callback.message.message_thread_id } : {}),
         callback: { id, data, messageId: callback.message.message_id },
       },
     };
@@ -152,7 +191,7 @@ export function normalizeTelegramUpdate(
     ? originalText
     : caption?.trim()
       ? caption
-      : media
+      : nativeCardText(message) ?? media
           .map((item) => "[" + item.kind.replace("_", " ") + " attachment]")
           .join("\n");
   if (!text) return { status: 200 };
@@ -163,6 +202,7 @@ export function normalizeTelegramUpdate(
     at,
     kind: "message",
     messageId: message.message_id,
+    ...(positive(message.message_thread_id) ? { messageThreadId: message.message_thread_id } : {}),
     sentAt: message.date * 1000,
     ...(media.length ? { media } : {}),
   };
@@ -192,8 +232,11 @@ export function normalizeTelegramUpdate(
 
 /** Durable polling keeps only verified normalized fields, never the original provider body. */
 export function serializeTelegramInbound(inbound: TelegramInbound): string {
+  if (inbound.secretary) return JSON.stringify({ update_id: inbound.update, ...secretaryPayload(inbound.secretary) });
   const from = { id: Number(inbound.user), is_bot: false },
     chat = { id: Number(inbound.user), type: "private" };
+  if (inbound.stoppedDraftId !== undefined) return JSON.stringify({ update_id: inbound.update,
+    stopped_message_generation: { chat, draft_id: inbound.stoppedDraftId, message_thread_id: inbound.messageThreadId } });
   if (inbound.callback)
     return JSON.stringify({
       update_id: inbound.update,
@@ -201,7 +244,7 @@ export function serializeTelegramInbound(inbound: TelegramInbound): string {
         id: inbound.callback.id,
         data: inbound.callback.data,
         from,
-        message: { message_id: inbound.callback.messageId, chat },
+        message: { message_id: inbound.callback.messageId, message_thread_id: inbound.messageThreadId, chat },
       },
     });
   if (inbound.reaction)
@@ -254,6 +297,7 @@ export function serializeTelegramInbound(inbound: TelegramInbound): string {
     update_id: inbound.update,
     message: {
       message_id: inbound.messageId ?? inbound.update,
+      message_thread_id: inbound.messageThreadId,
       date: Math.floor((inbound.sentAt ?? inbound.at) / 1000),
       from,
       chat,
@@ -305,6 +349,7 @@ export function redactTelegramInbound(
   return {
     ...inbound,
     text: redact(inbound.text),
+    ...(inbound.secretary ? { secretary: "message" in inbound.secretary ? { ...inbound.secretary, message: { ...inbound.secretary.message, text: redact(inbound.secretary.message.text), name: redact(inbound.secretary.message.name) } } : inbound.secretary } : {}),
     ...(inbound.caption !== undefined
       ? { caption: redact(inbound.caption) }
       : {}),

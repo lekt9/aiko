@@ -457,7 +457,7 @@ function workerForAttestation() {
             );
             builder.onResolve(
               {
-                filter: /^@unbrowse\/browser-runtime\/(?:trace|network-facts)$/,
+                filter: /^@unbrowse\/browser-harness\/(?:trace|network-facts)$/,
               },
               () => ({ path: "trace", namespace: "attestation-trap" }),
             );
@@ -657,4 +657,30 @@ test("Worker attestation fails closed with sanitized output for absent or malfor
     expect(body).not.toContain("proof");
     expect(f.namespaceAccesses).toBe(0);
   }
+});
+
+test("Secretary Mode uses the Cloudflare native host for persistent permissions and account-bound delivery", async () => {
+  const { Infer } = await import("tardie");
+  const { acceptSecretary, createSecretaryActor, secretaryApi, secretaryEventKey, withSecretaryHistory } = await import("../src/secretary.ts");
+  const connection = { id: "business", owner: "123", ownerChat: "123", enabled: true, canReply: true, canRead: false };
+  const deliveries: string[] = [];
+  const data = storage();
+  let host: Awaited<ReturnType<typeof createCloudflareAccountHost>>;
+  const model = Layer.succeed(Infer, { resolve: () => ({ model: { provider: "fixture", model_id: "secretary" } }), react: () => Effect.succeed({ kind: "complete" as const, output: "sure, tell me more" }) });
+  const open = () => createCloudflareAccountHost({ storage: data, actorName: "aiko", actorInstance: "demo", ownsThread: t => threadBinding(t)?.owner === "123", keyOf: secretaryEventKey,
+    actorFor: () => createSecretaryActor({ owner: "123", redact: s => s, read: () => host.read("secretary-123"), telegram: { resolve: async () => connection, receive: async () => undefined, send: async (c, m, text) => { deliveries.push(`${c.owner}:${m.chat}:${text}`); return { status: "delivered", providerId: "1" }; }, markRead: async () => {} } }),
+    layersFor: () => withSecretaryHistory(model),
+  });
+  host = await open();
+  const message = { connectionId: "business", chat: "456", chatType: "private", name: "Contact", messageId: 1, sender: "456", text: "hi", date: Math.floor(Date.now() / 1000), viaBot: false, unsupported: false };
+  await acceptSecretary(host, "123", { user: "123", update: 1, text: "", at: Date.now(), secretary: { kind: "message", connection, message } });
+  expect((await secretaryApi(new Request("http://localhost/api/secretary/contact", { method: "POST", body: JSON.stringify({ connectionId: "business", chat: "456", enabled: true }) }), "123", host, s => s)).status).toBe(200);
+  await host.drive();
+  expect(deliveries).toHaveLength(0);
+  host = await open();
+  await acceptSecretary(host, "123", { user: "123", update: 2, text: "", at: Date.now(), secretary: { kind: "message", connection, message: { ...message, messageId: 2 } } });
+  await host.drive();
+  expect(deliveries).toEqual(["123:456:sure, tell me more"]);
+  expect((await host.read("secretary-123")).some(e => e.type === "AikoSecretarySettled" && e.status === "delivered")).toBe(true);
+  expect(await host.read("user-123")).toHaveLength(0);
 });

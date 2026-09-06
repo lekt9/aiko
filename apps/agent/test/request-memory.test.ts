@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { browserMemoryGraph } from "../src/browser-memory-graph.ts";
 import { nodeStorage } from "entity-learn";
 import { Effect } from "effect";
 import { Self } from "tardie/core/runtime";
@@ -6,8 +7,8 @@ import type { Event } from "tardie/core/event";
 import { BrowserLearning } from "../src/browser-learning.ts";
 import { ownedNetworkDefinitions } from "../src/capability-builder-network.ts";
 import { RequestMemory, createRequestMemoryTools, responseShape, type RequestMemoryBinding, type RequestEmbeddingProvider } from "../src/request-memory.ts";
-import type { HarnessTransportResponse } from "../../../packages/browser-runtime/src/harness-runtime.ts";
-import { validateNetworkToolDefinition } from "../../../packages/browser-runtime/src/network-tool-catalog.ts";
+import type { HarnessTransportResponse } from "@unbrowse/browser-harness/harness-runtime";
+import { validateNetworkToolDefinition } from "@unbrowse/browser-harness/network-tool-catalog";
 const cleanup: (()=>void)[]=[];
 afterEach(()=>{cleanup.splice(0).forEach(f=>f());});
 // Explicit deterministic TEST adapter; production must inject a semantic model.
@@ -39,6 +40,40 @@ test("pointer index survives reopen, uses embeddings and never persists response
  expect(JSON.stringify(reopened.memory.exportArchive())).not.toContain("fresh-id");
  expect(responseShape({items:[{name:"secret",count:200}]})).toContainEqual({path:"$.items[].name",type:"string"});
 });
+test("request search scans beyond the old 100-pointer recall window, with model, suppression and output bounds",async()=>{
+ const f=await fixture();let embeds=0;
+ const m=new RequestMemory({...f.binding,embedding:{...embedding,embed:async texts=>{embeds++;return texts.map(()=>[1,0,0])}}});
+ const saved=await m.index(f.selected.toolDigest,["weather"]);
+ const pointer=m.memory.get(saved.pointerId)!.observation;
+ // Synthetic older pointer: recency-only pointer enumeration used to drop this best match.
+ const old=m.memory.remember({subject:"old-pointer",title:"Old weather",type:"request-pointer",payload:pointer.payload,observedAt:1},{key:"old",producer:{kind:"tool",reference:"fixture"}});
+ m.memory.forget(pointer.subject,pointer.id,"forget-original");
+ for(let i=0;i<140;i++)m.memory.remember({subject:"later-"+i,title:"Later",type:"request-pointer",observedAt:1000+i,payload:{...(pointer.payload as any),embedding:[0,1,0]}},{key:"later-"+i,producer:{kind:"tool",reference:"fixture"}});
+ expect(m.memory.recall({type:"request-pointer",limit:100,maxNodes:100,maxBytes:262144}).items.some(h=>h.observation.id===old.id)).toBe(false);
+ const before=embeds, found=await m.search("weather");
+ expect(embeds).toBe(before+1);expect(found.items[0]!.pointerId).toBe(old.id);expect(found.scanned).toBe(141);expect(found.reasons).toContain("result_budget");
+ expect(f.requests).toHaveLength(0);
+ m.memory.forget(old.subject,old.id,"forget-old");expect((await m.search("weather")).items.some(h=>h.pointerId===old.id)).toBe(false);
+});
+
+test("browser graph joins real native dependency evidence to local pointer receipts without replay, response values or vectors",async()=>{
+ const f=await fixture("123",true);const indexed=await f.memory.index(f.selected.toolDigest,["catalog"]);
+ const events=[...f.events,{type:"AikoRequestMemoryIndexed",toolDigest:f.selected.toolDigest,pointerId:indexed.pointerId,model:indexed.model,at:123},
+  {type:"AikoRequestMemoryIndexUnavailable",toolDigest:f.selected.toolDigest,at:124}];
+ const rows=events.map((event,i)=>({seq:i+1,event}));
+ const before=f.memory.memory.exportArchive(), graph=browserMemoryGraph(rows);
+ expect(graph.nodes.filter(n=>n.kind==="request")).toHaveLength(2);
+ expect(graph.nodes.some(n=>n.id==="browser-pointer:"+indexed.pointerId)).toBe(true);
+ expect(graph.edges.some(e=>e.relation==="depends_on")).toBe(true);expect(graph.edges.some(e=>e.relation==="index_receipt_for")).toBe(true);
+ expect(graph.nodes.some(n=>n.kind==="index-error")).toBe(true);expect(graph.pointerAvailability).toBe("not-checked");
+ expect(f.requests).toHaveLength(0);expect(f.memory.memory.exportArchive()).toEqual(before);
+ expect(JSON.stringify(graph)).not.toMatch(/observed-id|private observed value|"embedding"|"query"|"headers"/);
+ const incomplete=browserMemoryGraph(rows.slice(-2));
+ expect(incomplete.reasons).toContain("receipt_evidence_outside_window");expect(incomplete.nodes.some(n=>n.kind==="request")).toBe(false);
+ expect(browserMemoryGraph([{seq:1,event:{type:"ToolReturned",result:events} as any}]).nodes).toEqual([]);
+ expect(()=>browserMemoryGraph(Array.from({length:1025},(_,i)=>({seq:i,event:{type:"Noop"}})))).toThrow();
+});
+
 test("native exact dependency DAG rehydrates fresh upstream values before downstream request",async()=>{
  const f=await fixture("123",true);
  expect(f.selected.definition.steps.length).toBe(2);
@@ -58,7 +93,9 @@ test("foreign owners, missing evidence, poisoned input and mismatched embedding 
  await expect(f.memory.hydrate(saved.pointerId,{password:"secret"})).rejects.toThrow();
  const changed=new RequestMemory({...f.binding,embedding:{...embedding,model:"other-model"}});
  expect((await changed.search("weather")).items).toEqual([]);
- f.events.splice(0);await expect(f.memory.hydrate(saved.pointerId)).rejects.toThrow();expect(f.requests).toHaveLength(0);
+ f.events.splice(0);
+ expect(await f.memory.search("weather")).toMatchObject({items:[],coverage:"partial",reasons:["evidence_unavailable"]});
+ await expect(f.memory.hydrate(saved.pointerId)).rejects.toThrow();expect(f.requests).toHaveLength(0);
 });
 test("native DAG validator rejects cycles, missing prerequisites and mismatched exact bindings",async()=>{
  const f=await fixture("123",true);const d=f.selected.definition;

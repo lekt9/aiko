@@ -384,11 +384,11 @@ test("forgotten source evidence and cited derivations disappear without being re
   expect(memorySnapshot(binding).leaves).toHaveLength(0);
 });
 
-test("snapshots hash sorted content with a truthful 256-head bound", async () => {
+test.each([256, 257, 513])("snapshots page %i native heads without losing completeness", async (count) => {
   const binding = await fixture();
   const memory = openMemory(binding);
   try {
-    for (let index = 0; index < 257; index++)
+    for (let index = 0; index < count; index++)
       memory.remember(
         {
           subject: `entity/${index}`,
@@ -405,8 +405,8 @@ test("snapshots hash sorted content with a truthful 256-head bound", async () =>
     memory.close();
   }
   const snapshot = memorySnapshot(binding);
-  expect(snapshot.complete).toBe(false);
-  expect(snapshot.leaves).toHaveLength(256);
+  expect(snapshot.complete).toBe(true);
+  expect(snapshot.leaves).toHaveLength(count);
   expect(snapshot.leaves.map((leaf) => leaf.subject)).toEqual(
     snapshot.leaves.map((leaf) => leaf.subject).sort(),
   );

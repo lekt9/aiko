@@ -1,5 +1,5 @@
-import { canonicalStringify, sha256 } from "@unbrowse/browser-runtime/har";
-import type { HarnessJsonValue } from "../../../packages/browser-runtime/src/harness-runtime.ts";
+import { canonicalStringify, sha256 } from "@unbrowse/browser-harness/har";
+import type { HarnessJsonValue } from "@unbrowse/browser-harness/harness-runtime";
 import { validateNoSecrets } from "entity-learn/cloudflare";
 import { validateRouterInput } from "./connector-router-host.ts";
 
@@ -22,11 +22,22 @@ export interface WorkflowRecord {
   owner: string; definition: WorkflowDefinition; digest: string; reusable: boolean;
   provenance?: { runId: string };
 }
+/** Code artifacts share the owner workflow store; source is immutable at a given id. */
+export interface CodeWorkflowRecord {
+  version: 1; owner: string; id: string; description: string; code: string; digest: string;
+  inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown>;
+  dependencies: { name: string; schemaDigest: string }[];
+  reusable: boolean;
+  provenance?: { thread: string; execId: string; harness: "aiko-code/1" };
+}
 /** Trusted durable storage. Every operation is owner scoped; never persist execution inputs or outputs.
  * putDefinition must atomically reject conflicting digests; claimRun is atomic insert-if-absent.
  * finishRun must replace only the corresponding running record, without resetting terminal receipts.
  */
 export interface WorkflowStore {
+  getCode?(owner: string, id: string): Promise<CodeWorkflowRecord | undefined>;
+  putCode?(owner: string, record: CodeWorkflowRecord): Promise<void>;
+  listCode?(owner: string): Promise<CodeWorkflowRecord[]>;
   getDefinition(owner: string, id: string): Promise<WorkflowRecord | undefined>;
   putDefinition(owner: string, record: WorkflowRecord): Promise<void>;
   listDefinitions(owner: string): Promise<WorkflowRecord[]>;
@@ -172,6 +183,16 @@ export class ToolWorkflows {
     const reusable = { ...record, reusable: true, provenance: { runId } };
     await this.options.store.putDefinition(record.owner, structuredClone(reusable));
     return reusable;
+  }
+  /** Reconcile an interrupted native tool from its existing durable receipt, never by rerunning it. */
+  async receipt(runId: string): Promise<WorkflowReceipt | undefined> {
+    if (!validId(runId)) throw new Error("Invalid workflow run ID");
+    const prior = await this.options.store.getRun(this.options.owner, runId);
+    if (!prior) return undefined;
+    const record = await this.describe(prior.workflowId);
+    if (!record || prior.owner !== this.options.owner || prior.runId !== runId || prior.digest !== record.digest)
+      throw new Error("Workflow receipt mismatch");
+    return { ...structuredClone(prior), status: prior.status === "running" ? "unknown" : prior.status };
   }
   async run(request: { workflowId: string; runId: string; input: Record<string, WorkflowJson>; signal?: AbortSignal }): Promise<WorkflowReceipt> {
     const { owner, store, dispatcher } = this.options;

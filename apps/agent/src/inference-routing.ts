@@ -11,7 +11,12 @@ export function inferenceRole(request: InferRequest): InferenceRole {
   );
   for (const e of current.toReversed()) {
     if (e.type !== "ToolCalled" || !returned.has(e.callId)) continue;
-    const name = String(e.name);
+    let name = String(e.name);
+    if (name === "execute" || name === "code_workflow_run") {
+      const execId=name === "execute" ? String(e.callId) : `workflow:${e.callId}`;
+      const receipt=current.findLast(row=>row.type==="AikoCodeToolSettled"&&String(row.callId).startsWith(`${execId}.`));
+      if(receipt) name=String(receipt.tool);
+    }
     if (name.startsWith("request_memory_") || name.startsWith("workflow_")) return "rag";
     if (name.startsWith("agent_browser_")) return "browser";
     return "conversation";

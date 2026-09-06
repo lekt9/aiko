@@ -1,0 +1,36 @@
+{
+  "schema": "unlock/entity-learn-source/v1",
+  "repository": "https://github.com/lekt9/entity-learn-private",
+  "commit": "44ca591bc45835d5cd8e9c599f7e60f685d2eed9",
+  "libTree": "f23efe3460560959f4081e1dde43d80a0987d2ae",
+  "version": "0.2.0",
+  "integration": {
+    "tardie": "0.22.0",
+    "effect": "4.0.0-rc.110"
+  },
+  "files": {
+    "lib/bootstrap.ts": "6fe971f774773818692b92533eaf7e00a990a40a94063419b07a035d052a6668",
+    "lib/cli.ts": "fcf3b28fdedf66af7c721a2575455284d606d4b5fc22e2565b45f7579603147d",
+    "lib/cloudflare.ts": "74834e572d0b3fa656ce7fe43191b1aef202506802b547c89ed9d055d613382d",
+    "lib/codec.ts": "ae78c6cdb995871c8fe01b83723e320d1892d8d4829cd0f8b3cf107989ad5512",
+    "lib/embeddings.ts": "d3ad533150bfeb43d409e96a9248b928fb83f0eb3b1c330d9cf1dde4400084ce",
+    "lib/entity-learn.ts": "6ffa61ca88e6989c9815d0c35f53385a4e8391f5dcb924e6f35f8379f9d588a9",
+    "lib/graph.ts": "00a6c68c2c5def2b0ffdeacc82be22e5d9ea94d0dba128c9e490cc977ca2d422",
+    "lib/imports.ts": "6ed49dc090ac34ab6ec61efa17692382de39a104dc4d118048047776640e4ad2",
+    "lib/index.ts": "c0aade57a40f5436c6b97c44c1f4199794494e4e59f8054e059d1aec8f1b2ace",
+    "lib/journal.ts": "9c9a0e04a40d7563f8592c529d0b2c9aeadd3f96187d9fa8738dbacbf3d2a43b",
+    "lib/knowledge-html.ts": "ede84fae4c21f9d5a679a704039f0a22f45f19c845c26b0c129985da6b30e998",
+    "lib/knowledge.ts": "0fcd7de9fffffac738dc0893e8863462e438d188026a712b25d8fbe93c610435",
+    "lib/memory-core.ts": "67a7a16e12e91a7cdf4b0a10854fa286c8503f7c4a3a9e801217c263335d39cf",
+    "lib/memory.ts": "3ad9e87a279e73f8f088736f8a9a60f704a443f579bb52539f1c39db099d3062",
+    "lib/recall.ts": "707543acd2d36f64c267f7435ef421e8679a47aff3ee8b3f51cd08abffd4298b",
+    "lib/semantic.ts": "404a7c92ca22993c1e93d013855489a472973a25bada25d45fd00f5d1f37d301",
+    "lib/sources-node.ts": "eb1049db371a7e93095bd78a98d198805ea0a8796b83566e8149e10b80ea4351",
+    "lib/sources.ts": "8c0d834b77093a1420862b489659ee2764be5bdc10c5d311441ce1391d12ecc6",
+    "lib/storage-node.ts": "7d1acbbb291584784803291f059c3c9f4f03e48c162c31e4fb566fd061e0c646",
+    "lib/storage.ts": "6567670329a948dbc712a696d01f42e3a29da13c4e44b7b3808e14d71bcf8641",
+    "lib/tardigrade-logs.ts": "30746c03cb4c7c651e396b48e369295814152c968542461d7bc5bee605510d2e",
+    "lib/tardigrade.ts": "2715e5f09363a9ea66632e26dfa1e3add69db22373ec9b66fd371c78494594d2",
+    "lib/types.ts": "fa528188c5ace2cfbd144f12e4c7b5cd416bc9040240ef9a8fb20209e12417c9"
+  }
+}

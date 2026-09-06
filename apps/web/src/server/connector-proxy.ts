@@ -1,5 +1,7 @@
 const actions = new Set([
   "connect",
+  "apps/connect",
+  "native",
   "complete",
   "disconnect",
   "discover",
@@ -13,18 +15,31 @@ export async function handleConnectorRequest(
   request: Request,
 ): Promise<Response> {
   const url = new URL(request.url);
-  const action = url.pathname.slice("/api/connectors".length);
+  const approvals = url.pathname === "/api/approvals";
+  const secretary =
+    url.pathname === "/api/secretary" ||
+    url.pathname.startsWith("/api/secretary/");
+  const action = url.pathname.slice(
+    (approvals ? "/api/approvals" : secretary ? "/api/secretary" : "/api/connectors").length,
+  );
   const allowed =
     request.method === "GET"
-      ? action === "" || action === "/connections"
-      : request.method === "POST" && actions.has(action.slice(1));
+      ? action === "" || (!secretary && ["/connections", "/apps"].includes(action))
+      : request.method === "POST" &&
+        (approvals ? action === "" : secretary
+          ? ["/contact", "/history"].includes(action)
+          : actions.has(action.slice(1)));
   const json = (error: string, status: number) =>
     Response.json(
       { error },
       { status, headers: { "cache-control": "no-store" } },
     );
   if (!allowed) return json("connector_route_unavailable", 404);
-  const auth = request.headers.get("authorization") ?? (request.headers.has("x-telegram-init-data") ? `tma ${request.headers.get("x-telegram-init-data")}` : "");
+  const auth =
+    request.headers.get("authorization") ??
+    (request.headers.has("x-telegram-init-data")
+      ? `tma ${request.headers.get("x-telegram-init-data")}`
+      : "");
   if (!auth.startsWith("tma ") && !auth.startsWith("Bearer "))
     return json("authentication_required", 401);
   const configured = process.env.AIKO_CONNECTOR_ORIGIN;
@@ -55,7 +70,7 @@ export async function handleConnectorRequest(
           .startsWith("application/json")
       )
         return json("json_required", 415);
-      // Connector requests contain identifiers, never passwords or imported credentials.
+      // Private login bodies are forwarded without logging or persistence.
       const reader = request.body?.getReader();
       const chunks: Uint8Array[] = [];
       let bytes = 0;
@@ -64,7 +79,9 @@ export async function handleConnectorRequest(
           const chunk = await reader.read();
           if (chunk.done) break;
           bytes += chunk.value.byteLength;
-          if (bytes > 16_384) {
+          if (
+            bytes > (secretary && action === "/history" ? 1_000_000 : 16_384)
+          ) {
             await reader.cancel();
             return json("request_too_large", 413);
           }

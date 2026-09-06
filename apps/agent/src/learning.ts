@@ -349,20 +349,19 @@ function rawLogEpisode(
   );
 }
 
-/** Bounded native heads, not copied storage or an invented entity extractor. */
+/** Page native current heads so corpus growth never silently truncates the change root. */
 export function memorySnapshot(binding: Binding): MemorySnapshot {
   const memory = openMemory(binding);
   try {
     const before = memory.journal.scopeVersion(memory.scope);
-    // Independent kind scans prevent raw conversation events from displacing semantic entities.
-    // Episodes have a separate context-scan budget because the native library cannot filter by producer.
-    const groups = ["entity", "fact", "skill"].map((kind) =>
-      memory.journal.candidates(memory.scope, { kind, cap: 257 }),
-    );
-    const episodes = memory.journal.candidates(memory.scope, {
-      kind: "episode",
-      cap: 4097,
-    });
+    const heads: Observation[] = [];
+    let after: string | undefined;
+    for (;;) {
+      const page = memory.journal.page(memory.scope, { after, limit: 256 });
+      heads.push(...page);
+      if (page.length < 256) break;
+      after = page[page.length - 1]!.id;
+    }
     const sourceCache = new Map<string, Source | undefined>();
     const sourceFor = (observation: Observation) => {
       const id = observation.producer.sourceId;
@@ -371,7 +370,7 @@ export function memorySnapshot(binding: Binding): MemorySnapshot {
         sourceCache.set(id, memory.journal.source(memory.scope, id));
       return sourceCache.get(id);
     };
-    const candidates = [...groups.flat(), ...episodes.slice(0, 4096)]
+    const candidates = heads
       .filter(
         (observation) => !rawLogEpisode(observation, sourceFor(observation)),
       )
@@ -394,7 +393,6 @@ export function memorySnapshot(binding: Binding): MemorySnapshot {
       ];
     });
     const leaves = admitted
-      .slice(0, 256)
       .sort((a, b) =>
         a.subject < b.subject ? -1 : a.subject > b.subject ? 1 : 0,
       );
@@ -418,9 +416,6 @@ export function memorySnapshot(binding: Binding): MemorySnapshot {
       root: level[0],
       leaves,
       complete:
-        groups.every((group) => group.length <= 256) &&
-        episodes.length <= 4096 &&
-        admitted.length <= 256 &&
         before === memory.journal.scopeVersion(memory.scope),
     };
   } finally {

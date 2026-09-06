@@ -169,3 +169,19 @@ describe("native Telegram connector controls", () => {
     expect(reply).toContain("could not be completed");
   });
 });
+
+test("native draft Stop cancels only its bound turn and ignores foreign, stale and mismatched topics", async () => {
+  for (const variant of ["valid", "foreign", "stale", "topic"] as const) {
+    const log:AikoEvent[]=[{type:"MessageReceived",id:"one",at:1},{type:"MessageReceived",id:"two",at:2},
+      {type:"AikoTelegramTypingStarted",owner:variant==="foreign"?"456":"123",turn:"one",epoch:0,draftId:9,messageThreadId:7,at:3}];
+    if (variant==="stale") log.push({type:"TurnFailed",turn:"one",epoch:0,at:4},{type:"TurnResumed",turn:"one",epoch:1,at:5});
+    const appended:AikoEvent[]=[];
+    const host={read:async()=>log,seed:async()=>{},self:()=>"aiko/test/user-123",commitRoot:async(_target:unknown,e:AikoEvent)=>{appended.push(e)}} as unknown as Parameters<typeof telegramControl>[0];
+    await telegramControl(host,"123","stop","/cancel",true,true,undefined,{stoppedDraftId:9,messageThreadId:variant==="topic"?8:7});
+    const cancelled=appended.filter(e=>e.type==="CancellationRequested");
+    if(variant==="valid") {
+      expect(cancelled).toHaveLength(1);
+      expect(cancelled[0].invocation).toMatchObject({method:"message",id:"one",epoch:0});
+    } else expect(cancelled).toHaveLength(0);
+  }
+});

@@ -80,6 +80,22 @@ function downloads(
   };
 }
 describe("verified Telegram multimodal normalization", () => {
+  test("native location, venue, contact and poll cards reach the actor without raw provider fields", () => {
+    for (const [card, expected] of [
+      [{location:{latitude:1.3,longitude:103.8}}, "Shared location: 1.3, 103.8"],
+      [{venue:{location:{latitude:1.3,longitude:103.8},title:"Library",address:"Main Street"}}, "Shared venue: 1.3, 103.8; Library; Main Street"],
+      [{contact:{phone_number:"+123456789",first_name:"Sam",vcard:"private-vcard-omitted"}}, "Shared contact: Sam; +123456789"],
+      [{poll:{question:"Lunch?",options:[{text:"Soup"},{text:"Salad"}]}}, "Shared poll: Lunch?"],
+    ] as const) {
+      const inbound = normalize(update(card));
+      expect(inbound.text).toContain(expected);
+      const persisted = serializeTelegramInbound(inbound);
+      expect(persisted).not.toContain("private-vcard-omitted");
+      expect(normalize(JSON.parse(persisted))).toEqual(inbound);
+    }
+    expect(normalize(update({location:{latitude:100,longitude:20}}))).toBeUndefined();
+    expect(normalize(update({contact:{first_name:"Sam",phone_number:"invalid",vcard:"private"}}))).toBeUndefined();
+  });
   test("every supported kind preserves descriptors through durable polling serialization", () => {
     for (const kind of [
       "photo",
@@ -497,7 +513,7 @@ describe("rich outbound adapters", () => {
     ).toBe("rejected");
     expect(calls).toHaveLength(before);
   });
-  test("Mini App buttons use native web_app and only the exact host-approved URL", async () => {
+  test("Mini App buttons allow only the approved entry point and a connection selector", async () => {
     const miniAppUrl = "https://aiko.example/connect";
     const calls: any[] = [];
     const tg = createTelegramOutbound({
@@ -515,7 +531,13 @@ describe("rich outbound adapters", () => {
     expect(calls[0].reply_markup.inline_keyboard).toEqual([
       [{ text: "Connect apps", web_app: { url: miniAppUrl } }],
     ]);
+    const selected = miniAppUrl + "?connection=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    expect((await send({ text: "Sign in", webAppUrl: selected })).status).toBe("delivered");
+    expect(calls[1].reply_markup.inline_keyboard[0][0]).toEqual({ text: "Sign in", web_app: { url: selected } });
     for (const button of [
+      ...["&redirect=https://other.example", "&connection=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "#secret"].map(suffix => ({text:"Sign in",webAppUrl:selected+suffix})),
+      {text:"Sign in",webAppUrl:miniAppUrl+"?connection=secret"},
+      {text:"Sign in",webAppUrl:"https://aiko.example/other?connection=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"},
       { text: "Connect", webAppUrl: "https://other.example/connect" },
       { text: "Connect", webAppUrl: miniAppUrl + "?redirect=https://other.example" },
       { text: "Connect", webAppUrl: miniAppUrl, url: miniAppUrl },
@@ -530,7 +552,7 @@ describe("rich outbound adapters", () => {
       [],
       { text: "Connect" },
     ]) expect((await send(button)).status).toBe("rejected");
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     const unconfigured = createTelegramOutbound({ ...options, fetch: async () => {
       throw new Error("must not send");
     } });
@@ -799,4 +821,36 @@ test("durable polling forwards complete media and callbacks without text-only re
     await poller.close();
     await rm(stateDir, { recursive: true, force: true });
   }
+});
+
+test("long text uses one rich message and provider errors have safe actionable receipts", async () => {
+  const calls: {method:string; body:any}[]=[];
+  const tg = createTelegramOutbound({token:"123:fixture",allowedUsers:new Set(["123"]),fetch:async(url,init)=>{
+    calls.push({method:String(url).split("/").at(-1)!,body:JSON.parse(String(init?.body))});
+    return Response.json({ok:true,result:{message_id:99}});
+  }});
+  const text="Read <this> & keep the full answer. ".repeat(160);
+  expect(await tg.sendRich("123",{kind:"text",text,replyTo:42,messageThreadId:7},new AbortController().signal)).toMatchObject({status:"delivered",providerId:"99"});
+  expect(calls).toEqual([{method:"sendRichMessage",body:{chat_id:"123",message_thread_id:7,reply_parameters:{message_id:42,allow_sending_without_reply:true},rich_message:{blocks:[{type:"paragraph",text}]}}}]);
+  const limited=createTelegramOutbound({token:"123:fixture",allowedUsers:new Set(["123"]),fetch:async()=>Response.json({ok:false,description:"private details",parameters:{retry_after:9}},{status:429})});
+  expect(await limited.sendRich("123",{kind:"text",text:"hello"},new AbortController().signal)).toEqual({status:"rejected",reason:"rate_limited",retryAfter:9});
+});
+
+test("native coordinates, venue, contact and poll dispatch through their exact primitives", async () => {
+  const methods:string[]=[];
+  const tg=createTelegramOutbound({token:"123:fixture",allowedUsers:new Set(["123"]),fetch:async(url)=>{methods.push(String(url).split("/").at(-1)!);return Response.json({ok:true,result:{message_id:1}})}});
+  for(const message of [{kind:"location",latitude:1.2,longitude:103.8},{kind:"venue",latitude:1.2,longitude:103.8,title:"Library",address:"Main Street"},{kind:"contact",phoneNumber:"+123456789",firstName:"Alex"},{kind:"poll",question:"Which day?",choices:["Monday","Tuesday"]}] as const)
+    expect((await tg.sendRich("123",message as any,new AbortController().signal)).status).toBe("delivered");
+  expect(methods).toEqual(["sendLocation","sendVenue","sendContact","sendPoll"]);
+  expect((await tg.sendRich("123",{kind:"location",latitude:91,longitude:0},new AbortController().signal)).status).toBe("rejected");
+  expect(methods).toHaveLength(4);
+});
+
+test("native Stop and topic context survive durable normalization without accepting foreign chats", () => {
+  const policy={allowedUsers:new Set(["123"]),receivedAt:1000};
+  const update={update_id:18,stopped_message_generation:{chat:{id:123,type:"private"},draft_id:71,message_thread_id:7}};
+  const inbound=normalizeTelegramUpdate(update,policy).inbound!;
+  expect(inbound).toMatchObject({user:"123",text:"/cancel",stoppedDraftId:71,messageThreadId:7,kind:"generation_stopped"});
+  expect(normalizeTelegramUpdate(JSON.parse(serializeTelegramInbound(inbound)),policy).inbound).toEqual(inbound);
+  expect(normalizeTelegramUpdate({...update,stopped_message_generation:{...update.stopped_message_generation,chat:{id:-123,type:"group"}}},policy).inbound).toBeUndefined();
 });

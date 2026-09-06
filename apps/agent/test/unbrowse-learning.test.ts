@@ -4,11 +4,11 @@ import {
   browserNetworkToolPreparedEventOf,
   browserToolCallEventOf,
   browserTraceNdjsonLineOf,
-} from "@unbrowse/browser-runtime/trace";
+} from "@unbrowse/browser-harness/trace";
 import {
   networkToolDigest,
   validateNetworkToolDefinition,
-} from "../../../packages/browser-runtime/src/network-tool-catalog.ts";
+} from "@unbrowse/browser-harness/network-tool-catalog";
 import {
   learningFromBrowserTrace,
   learningFromPendingBrowserTrace,
@@ -17,7 +17,7 @@ import {
   BrowserLearning,
   type BrowserLearningPending,
 } from "../src/browser-learning.ts";
-import { canonicalStringify, sha256 } from "@unbrowse/browser-runtime/har";
+import { canonicalStringify, sha256 } from "@unbrowse/browser-harness/har";
 import {
   indexLearning,
   memorySnapshot,

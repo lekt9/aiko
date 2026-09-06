@@ -1,4 +1,8 @@
+import { turnEpochOf, turnTerminalOf } from "tardie/code/execution/turns";
 import { randomUUID } from "node:crypto";
+import { memoryGraph } from "entity-learn/cloudflare";
+import { browserMemoryGraph, browserGraphEvent } from "./browser-memory-graph.ts";
+import type { Event } from "tardie/core/event";
 import type { BunHost } from "tardie/bun/host";
 import type { AikoConfig } from "./config.ts";
 import { backgroundThread, threadBinding } from "./account-binding.ts";
@@ -113,6 +117,44 @@ export async function controlApi(c: Context): Promise<Response> {
   }
   const account = url.searchParams.get("account") ?? principal.owner;
   if (!allowed(account)) return json({ error: "forbidden" }, 403);
+  if (url.pathname === "/api/control/memory-graph") {
+    const after = url.searchParams.get("after") ?? undefined;
+    const browserAfterText = url.searchParams.get("browserAfter") ?? "0";
+    const browserAfter = Number(browserAfterText);
+    if ([...url.searchParams.keys()].some(key => !["account", "after", "browserAfter"].includes(key)) ||
+      (after !== undefined && !/^obs_[a-f0-9]{64}$/.test(after)) || !/^\d+$/.test(browserAfterText) || !Number.isSafeInteger(browserAfter))
+      return json({ error: "invalid_query" }, 400);
+    let knowledge: unknown, browser: unknown;
+    try {
+      const memory = openMemory(c.memoryBindingFor(account));
+      try { knowledge = { status: "available", ...memoryGraph(memory, { after, limit: 32 }) }; }
+      finally { memory.close(); }
+    } catch { knowledge = { status: "unavailable", coverage: "partial", reasons: ["memory_read_failed"] }; }
+    try {
+      const rows: { seq: number; event: Event }[] = [];
+      const reasons = new Set<string>(browserAfter ? ["page_window"] : []);
+      let cursor = browserAfter, scanned = 0, bytes = 2, more = false;
+      if (registered.includes(`user-${account}`)) do {
+        const limit = Math.min(128, 1024 - scanned);
+        const page = await host.readPage(`user-${account}`, cursor, limit + 1);
+        more = page.length > limit;
+        for (const row of page.slice(0, limit)) {
+          scanned++; cursor = row.seq;
+          if (!browserGraphEvent(row.event)) continue;
+          const size = new TextEncoder().encode(JSON.stringify(row)).length + 1;
+          if (bytes + size > 4 * 1024 * 1024) { reasons.add("event_byte_budget"); continue; }
+          rows.push(row); bytes += size;
+        }
+      } while (more && scanned < 1024);
+      if (more) reasons.add("event_window");
+      const graph = browserMemoryGraph(rows);
+      graph.reasons = [...new Set([...graph.reasons, ...reasons])];
+      graph.coverage = graph.reasons.length ? "partial" : "complete";
+      browser = { status: "available", ...graph, scanned, after: browserAfter, through: cursor, nextAfter: more ? cursor : null };
+    } catch { browser = { status: "unavailable", coverage: "partial", reasons: ["browser_log_read_failed"] }; }
+    // Current credential redaction also covers older labels. No source recipes, bodies, inputs or vectors are exposed.
+    return json(JSON.parse(c.redact(JSON.stringify({ account, knowledge, browser, readOnly: true, consistency: "independent-snapshots" }))));
+  }
   if (url.pathname === "/api/control/memory") {
     const binding = c.memoryBindingFor(account);
     const memory = openMemory(binding);
@@ -164,7 +206,7 @@ export async function controlApi(c: Context): Promise<Response> {
           ? latestMessage
           : log.findLast((e) =>
               role === "indexer"
-                ? ["AikoHookReceived", "AikoIndexRequested"].includes(e.type)
+                ? ["AikoHookReceived", "AikoIndexRequested", "AikoConnectionIndexRequested"].includes(e.type)
                 : e.type === "AikoReflectionRequested",
             );
       const latestTurn =
@@ -174,7 +216,7 @@ export async function controlApi(c: Context): Promise<Response> {
       const error = log.findLast(
         (e) =>
           (e.type === "AikoBackgroundFailed" && e.id === latestJob?.id) ||
-          (e.type === "TurnFailed" && e.turn === latestTurn),
+          (e.type === "TurnFailed" && e === turnTerminalOf(log, String(latestTurn))),
       );
       const unknown = log.some(
         (e) =>
@@ -189,8 +231,8 @@ export async function controlApi(c: Context): Promise<Response> {
         reflected = new Set(),
         dispatched = new Set();
       for (const e of log) {
-        if (["TurnCompleted", "TurnFailed", "TurnCancelled"].includes(e.type))
-          turns.add(e.turn);
+        if (e.type === "MessageReceived" && turnTerminalOf(log, String(e.id)))
+          turns.add(e.id);
         if (
           [
             "AikoKnowledgeChanged",
@@ -205,7 +247,7 @@ export async function controlApi(c: Context): Promise<Response> {
       const pending = log.some(
         (e) =>
           (e === latestMessage && e.id === latestTurn && !turns.has(e.id)) ||
-          (["AikoHookReceived", "AikoIndexRequested"].includes(e.type) &&
+          (["AikoHookReceived", "AikoIndexRequested", "AikoConnectionIndexRequested"].includes(e.type) &&
             !(role === "foreground" ? dispatched : indexed).has(e.id)) ||
           (e.type === "AikoReflectionRequested" && !reflected.has(e.id)),
       );

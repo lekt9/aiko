@@ -259,32 +259,42 @@ export class Vault {
     password: string,
     version: number,
   ) {
-    const value = z.string().min(1).max(16384).parse(password);
-    return this.db.transaction(async (sql) => {
-      const c = await this.connection(sql, tenant, connectionId, true);
-      if (c.source_id) throw new VaultError("FORBIDDEN", 403);
-      if (c.version !== version) throw new VaultError("CONFLICT", 409);
-      const secret = await this.cipher.seal(
-        context(tenant, "credential", connectionId),
-        { password: value },
-      );
-      await sql.query(
-        "UPDATE connections SET secret=$3,version=version+1 WHERE tenant=$1 AND id=$2",
-        [tenant, connectionId, JSON.stringify(secret)],
-      );
-      await sql.query(
-        "UPDATE jobs SET state='cancelled',claim=NULL WHERE tenant=$1 AND connection=$2 AND state IN ('queued','running')",
-        [tenant, connectionId],
-      );
-      await this.audit(
+    return this.db.transaction((sql) =>
+      this.setPasswordInTransaction(
         sql,
         tenant,
-        "owner",
-        "credential.updated",
         connectionId,
-      );
-      return { ok: true as const };
-    });
+        password,
+        version,
+      ),
+    );
+  }
+  /** Trusted owner operations only. Allows a verified session and credential to commit together. */
+  async setPasswordInTransaction(
+    sql: Sql,
+    tenant: string,
+    connectionId: string,
+    password: string,
+    version: number,
+  ) {
+    const value = z.string().min(1).max(16384).parse(password);
+    const c = await this.connection(sql, tenant, connectionId, true);
+    if (c.source_id) throw new VaultError("FORBIDDEN", 403);
+    if (c.version !== version) throw new VaultError("CONFLICT", 409);
+    const secret = await this.cipher.seal(
+      context(tenant, "credential", connectionId),
+      { password: value },
+    );
+    await sql.query(
+      "UPDATE connections SET secret=$3,version=version+1 WHERE tenant=$1 AND id=$2",
+      [tenant, connectionId, JSON.stringify(secret)],
+    );
+    await sql.query(
+      "UPDATE jobs SET state='cancelled',claim=NULL WHERE tenant=$1 AND connection=$2 AND state IN ('queued','running')",
+      [tenant, connectionId],
+    );
+    await this.audit(sql, tenant, "owner", "credential.updated", connectionId);
+    return { ok: true as const };
   }
   async reveal(tenant: string, connectionId: string) {
     return this.db.transaction(async (sql) => {

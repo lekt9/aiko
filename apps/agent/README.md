@@ -1,6 +1,6 @@
 # Aiko by Unbrowse — live account runtime
 
-One foreground conversation per account now has private native learning and reflection actors behind it. Open the operator panel at **http://127.0.0.1:4242/control** to inspect threads, event causality, Merkle changes, decisions, memory and delivery. See [background actors and hooks](../../docs/aiko-background.md) for the SDK/Unbrowse hook contracts, isolation, recovery and rollout evidence.
+One foreground conversation per account now has private native learning and reflection actors behind it. Open the operator panel at **http://127.0.0.1:4242/control** to inspect threads, event causality, Merkle changes, decisions, memory and delivery. The **Node graph** tab now inspects scoped knowledge and browser request/index receipts; see [graph inspection](../../docs/aiko-memory-graph.md). See [background actors and hooks](../../docs/aiko-background.md) for the SDK/Unbrowse hook contracts, isolation, recovery and rollout evidence.
 
 A Telegram-first personal-agent foundation using **native Tardie 0.22.0**, with a transport-neutral account plane and SDK. Telegram polling is configured locally; real app/custody access remains unmounted. No Smithers or Cell runtime orchestration is used.
 

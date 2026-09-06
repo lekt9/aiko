@@ -1,8 +1,9 @@
-import { canonicalStringify, sha256 } from "@unbrowse/browser-runtime/har";
+import { canonicalStringify, sha256 } from "@unbrowse/browser-harness/har";
 import { ownedNetworkDefinitions } from "./capability-builder-network.ts";
 import { createHash } from "node:crypto";
 import { Effect, Schema } from "effect";
 import { actor } from "tardie";
+import { handles } from "tardie/core/actor";
 import { actorMethod } from "tardie/core/method";
 import { component } from "tardie/core/component";
 import { effect } from "tardie/core/effect";
@@ -113,7 +114,7 @@ async function snapshot(binding: ToolRouterBinding) {
   for (const tool of catalog) {
     if (!safeString(tool.id, 512) || !safeString(tool.toolName, 512) || !object(tool.inputSchema) || !object(tool.requirements) || !tool.toolkit?.name || ids.has(tool.id)) throw new Error("Malformed catalog");
     ids.add(tool.id);
-    const connection = connections.find(c => c.connectorId === tool.id && c.provider === "arcade" && c.status === "connected");
+    const connection = connections.find(c => (c.connectorId === tool.id || c.toolIds?.includes(tool.id)) && c.provider === "arcade" && c.status === "connected");
     const candidate: Candidate = { id: tool.id, name: tool.toolName, description: tool.description, parent: tool.toolkit.name, provider: "arcade", domains: tool.domains, inputSchema: tool.inputSchema, requirements: tool.requirements, connected: !!connection, ...(connection ? { connectionId: connection.id } : {}) };
     // Never rewrite exact schemas or silently omit poisoned metadata from the catalog version.
     if (redact(JSON.stringify(candidate)) !== JSON.stringify(candidate)) throw new Error("Unsafe catalog metadata");
@@ -211,7 +212,7 @@ async function respond(binding: ToolRouterBinding, method: RouterMethod, input: 
 }
 export function routerEventKey(e: Event) {
   if (e.type === "ResponseReceived" && typeof e.from === "string" && /^aiko:[^:]+:router-[A-Za-z0-9_-]+$/.test(e.from) && typeof e.call === "string" && ["discover", "describe", "route", "status"].includes(String(e.method))) return `aiko-router:response:${e.from}:${e.method}:${e.call}`;
-  if (!["AikoRouterRequested", "AikoRouterDecisionRecorded"].includes(e.type) || typeof e.owner !== "string" || typeof e.id !== "string") return undefined;
+  if (!["AikoRouterRequested", "AikoRouterDecisionRecorded", "AikoRouterCancelled", "AikoRouterOpened"].includes(e.type) || typeof e.owner !== "string" || typeof e.id !== "string") return undefined;
   return `aiko-router:${e.owner}:${e.type}:${e.id}`;
 }
 const invocationKey = (method: string, id: string, epoch: number) => `${method}:${id}:${epoch}`;
@@ -219,18 +220,19 @@ const invocationKey = (method: string, id: string, epoch: number) => `${method}:
 export function createToolRouterActor(binding: ToolRouterBinding) {
   routerThread(binding.owner);
   const methods = createToolRouterMethods(binding.owner);
-  return actor({ name: "aiko", methods, components: [component({
+  const handler = component({
     name: "aiko.tool-router", keys: { prefixes: ["aiko-router:"], keyOf: routerEventKey },
     initial: () => ({ pending: new Map<string, E>(), done: new Set<string>() }),
     step: (state, e) => {
       if (e.owner !== binding.owner) return state;
       const next = { pending: new Map(state.pending), done: new Set(state.done) };
       if (e.type === "AikoRouterRequested" && !next.pending.has(String(e.id))) next.pending.set(String(e.id), e);
-      if (e.type === "AikoRouterDecisionRecorded") next.done.add(String(e.id));
+      if (["AikoRouterDecisionRecorded", "AikoRouterCancelled"].includes(e.type)) next.done.add(String(e.id));
       return next;
     },
     output: state => ({ view: undefined, transitions: [...state.pending.values()].filter(e => !state.done.has(String(e.id))).slice(0, 1).map(request => effect({
       key: `aiko-router:${binding.owner}:AikoRouterDecisionRecorded:${request.id}`, input: request,
+      invocation: (request.call as { invocation: import("tardie/core/method").ActorInvocation }).invocation,
       act: input => Effect.gen(function* () {
         const self = yield* Self;
         const log = yield* EventLog;
@@ -241,7 +243,9 @@ export function createToolRouterActor(binding: ToolRouterBinding) {
         return [{ type: "AikoRouterDecisionRecorded", owner: binding.owner, id: input.id, operation: input.operation, result, at: Date.now() }];
       }),
     })) }),
-  })] });
+  });
+  const bound = Object.values(methods).reduce((c, method) => handles(method, c), handler);
+  return actor({ name: "aiko", methods, components: [bound] });
 }
 
 /** Shared native method declarations let the foreground route without importing engine authority. */
@@ -251,16 +255,32 @@ export function createToolRouterMethods(owner: string) {
   const inputs = { discover: routeSchema, route: routeSchema, describe: Schema.Struct({ toolIds: Schema.Array(Schema.String) }), status: Schema.Struct({ decisionId: Schema.optional(Schema.String) }) };
   const method = (name: RouterMethod) => actorMethod({
     input: inputs[name], output: Schema.Unknown,
-    event: call => ({ type: "AikoRouterRequested", owner: owner, id: invocationKey(name, call.invocation.id, call.invocation.epoch), operation: name, input: call.input, call: { invocation: call.invocation }, at: call.at }),
+    event: call => ({ type: "AikoRouterRequested", owner: owner, id: invocationKey(name, call.invocation.id, call.invocation.epoch), operation: name, input: call.input, call: { invocation: call.invocation, ...(call.parent ? { parent: call.parent } : {}), ...(call.deadlineAt === undefined ? {} : { deadlineAt: call.deadlineAt }) }, at: call.at }),
+    cancellation: { event: (cancel, at) => ({
+      type: "AikoRouterCancelled", owner, operation: name,
+      id: invocationKey(name, cancel.invocation.id, cancel.invocation.epoch),
+      invocation: cancel.invocation, cause: cancel.cause,
+      ...(cancel.reason ? { reason: cancel.reason } : {}),
+      ...(cancel.deadlineAt === undefined ? {} : { deadlineAt: cancel.deadlineAt }), at,
+    }) },
     projection: {
       initial: () => new Map<string, E>(),
       step: (prior: Map<string, E>, e: Event) => {
-        if (e.owner !== owner || !["AikoRouterRequested", "AikoRouterDecisionRecorded"].includes(e.type) || e.operation !== name) return prior;
-        const next = new Map(prior); next.set(String(e.id), e); return next;
+        if (e.owner !== owner || !["AikoRouterRequested", "AikoRouterDecisionRecorded", "AikoRouterCancelled"].includes(e.type) || e.operation !== name) return prior;
+        const previous = prior.get(String(e.id));
+        if (previous && previous.type !== "AikoRouterRequested") return prior;
+        const next = new Map(prior); next.set(String(e.id), { ...e, ...(previous?.call ? { call: previous.call } : {}) }); return next;
       },
-      output: (state: Map<string, E>) => ({ currentEpoch: () => 0, invocationState: (invocation: { id: string; epoch: number }) => {
+      output: (state: Map<string, E>) => ({ currentEpoch: id => Math.max(0, ...[...state.values()].flatMap(e => {
+        const invocation = (e.call as any)?.invocation ?? e.invocation;
+        return invocation?.id === id ? [Number(invocation.epoch)] : [];
+      })), invocationState: (invocation: { id: string; epoch: number }) => {
         const event = state.get(invocationKey(name, invocation.id, invocation.epoch));
-        return !event ? undefined : event.type === "AikoRouterDecisionRecorded" ? { status: "completed" as const, output: event.result } : { status: "pending" as const };
+        return !event ? undefined : event.type === "AikoRouterCancelled" ? {
+          status: "cancelled" as const, cause: event.cause === "deadline" ? "deadline" as const : "requested" as const,
+          ...(typeof event.reason === "string" ? { reason: event.reason } : {}),
+          ...(typeof event.deadlineAt === "number" ? { deadlineAt: event.deadlineAt } : {}),
+        } : event.type === "AikoRouterDecisionRecorded" ? { status: "completed" as const, output: event.result } : { status: "pending" as const };
       } }),
     },
   });

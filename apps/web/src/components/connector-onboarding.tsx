@@ -1,22 +1,93 @@
+import { NativeLoginPanel } from "./native-login-panel";
+import { MiniAppScreen } from "./mini-app-screen";
+import { SecretaryPanel } from "./secretary-panel";
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Search, ShieldCheck } from "lucide-react";
+import {
+  ArrowUpRight,
+  Search,
+  ShieldCheck,
+  Plus,
+  Check,
+  Globe,
+  RefreshCw,
+  LoaderCircle,
+  X,
+} from "lucide-react";
 import { AIKO_TELEGRAM_URL } from "../lib/telegram";
 import {
   connectorRequest,
+  loginConnectionId,
   safeAuthorizationUrl,
+  websiteDomain,
   type Connector,
   type ConnectorSearch,
   type ConnectorConnection,
   type ConnectorConnect,
 } from "../lib/connectors";
 
+type PendingApproval = {id:string;name:string;args:unknown;snapshot:string;expires:number};
+type DrawerApp = { name: string; domain: string; connector?: Connector };
+const suggestedApps: DrawerApp[] = [
+  { name: "LinkedIn", domain: "linkedin.com" },
+  { name: "Gmail", domain: "gmail.com" },
+  { name: "Instagram", domain: "instagram.com" },
+  { name: "Notion", domain: "notion.so" },
+  { name: "Slack", domain: "slack.com" },
+  { name: "Outlook", domain: "outlook.com" },
+  { name: "Spotify", domain: "spotify.com" },
+  { name: "GitHub", domain: "github.com" },
+];
+function AppTileIcon({ name }: { name: string }) {
+  const color =
+    [...name].reduce((sum, letter) => sum + letter.charCodeAt(0), 0) % 6;
+  return (
+    <span className={`drawer-app-icon app-tone-${color}`} aria-hidden="true">
+      {name.slice(0, 2).toUpperCase()}
+    </span>
+  );
+}
+function connectionName(connection: ConnectorConnection) {
+  const domain = connection.connectorId.replace(/^arcade:|^browser:/, "");
+  return (
+    connection.appName ??
+    suggestedApps.find((app) => app.domain === domain)?.name ??
+    domain
+  );
+}
+
 export function ConnectorOnboarding() {
+  const launchConnection = useRef(loginConnectionId(window.location.search));
+  const launchOpened = useRef(false);
+  const [telegramMiniApp, setTelegramMiniApp] = useState(() =>
+    Boolean(
+      (window as Window & { Telegram?: { WebApp?: { initData?: string } } })
+        .Telegram?.WebApp?.initData,
+    ),
+  );
   const credential = useRef("");
   const credentialInput = useRef<HTMLInputElement>(null);
   const telegramEnabled = useRef(true);
   const accountRequests = useRef<AbortController | null>(null);
+  const [approvals, setApprovals] = useState<PendingApproval[]>([]);
+  const [approvalError, setApprovalError] = useState("");
+  const [deciding, setDeciding] = useState(false);
+  const [approvalLoading, setApprovalLoading] = useState(true);
   const [signedIn, setSignedIn] = useState(false);
+  const [accountVersion, setAccountVersion] = useState(0);
   const [signedOut, setSignedOut] = useState(false);
+  const [nativeConnection, setNativeConnection] = useState<string>();
+  const [nativeDomain, setNativeDomain] = useState<string>();
+  const [filter, setFilter] = useState<"all" | "connected">("all");
+  const [addWebsite, setAddWebsite] = useState(false);
+  const [website, setWebsite] = useState("");
+  const [selectedConnection, setSelectedConnection] =
+    useState<ConnectorConnection>();
+  const [openingApp, setOpeningApp] = useState<DrawerApp>();
+  const opening = useRef(false);
+  const [websiteError, setWebsiteError] = useState("");
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [nativeInline, setNativeInline] = useState(false);
+  const [oauthEnabled, setOauthEnabled] = useState(false);
   const [query, setQuery] = useState("");
   const [result, setResult] = useState<ConnectorSearch>();
   const [searching, setSearching] = useState(false);
@@ -36,6 +107,57 @@ export function ConnectorOnboarding() {
     [],
   );
 
+  async function signInTelegram() {
+    const initData = (
+      window as Window & { Telegram?: { WebApp?: { initData?: string } } }
+    ).Telegram?.WebApp?.initData;
+    if (!initData) {
+      setError(
+        "Open Aiko’s app from its Telegram chat menu to use your Telegram account.",
+      );
+      return;
+    }
+    setTelegramMiniApp(true);
+    clearAccount();
+    telegramEnabled.current = true;
+    setPending(true);
+    try {
+      await refresh();
+      setSignedIn(true);
+      setSignedOut(false);
+      setNotice("");
+    } catch (failure) {
+      clearAccount();
+      reportError(failure);
+    } finally {
+      setPending(false);
+    }
+  }
+  useEffect(() => {
+    const nativeSignIn = () => {
+      if (!telegramEnabled.current || credential.current) return;
+      if (
+        (window as Window & { Telegram?: { WebApp?: { initData?: string } } })
+          .Telegram?.WebApp?.initData
+      )
+        void signInTelegram();
+    };
+    if (document.readyState === "complete") nativeSignIn();
+    else window.addEventListener("load", nativeSignIn, { once: true });
+    return () => window.removeEventListener("load", nativeSignIn);
+  }, []);
+
+  function openAuthorization(event: React.MouseEvent<HTMLAnchorElement>) {
+    const app = (
+      window as Window & {
+        Telegram?: { WebApp?: { openLink?: (url: string) => void } };
+      }
+    ).Telegram?.WebApp;
+    if (app?.openLink) {
+      event.preventDefault();
+      app.openLink(event.currentTarget.href);
+    }
+  }
   function reportError(failure: unknown) {
     if ((failure as Error).name !== "AbortError")
       setError((failure as Error).message);
@@ -57,6 +179,31 @@ export function ConnectorOnboarding() {
     combined.throwIfAborted();
     return response;
   }
+  useEffect(() => {
+    if (!signedIn) return;
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const refreshQueue = async () => {
+      try {
+        const queue = await request<{pending:PendingApproval[]}>("/approvals", undefined, abort.signal);
+        if (!abort.signal.aborted) {setApprovals(queue.pending); setApprovalLoading(false); setApprovalError("");}
+      } catch {
+        if (!abort.signal.aborted) setApprovalError("Could not refresh approvals. Retrying…");
+      } finally { if (!abort.signal.aborted) timer=setTimeout(refreshQueue, 3000); }
+    };
+    void refreshQueue();
+    return () => {abort.abort();clearTimeout(timer);};
+  }, [signedIn, accountVersion]);
+  async function decideApproval(id:string, approve:boolean) {
+    if(deciding) return;
+    setDeciding(true);setApprovalError("");
+    try {
+      await request("/approvals", {id,approve});
+      const queue=await request<{pending:PendingApproval[]}>("/approvals");
+      setApprovals(queue.pending);
+    } catch(failure) { setApprovalError(failure instanceof Error ? failure.message : "Could not confirm the decision. Refresh and try again."); }
+    finally {setDeciding(false);}
+  }
   function clearAccount() {
     credential.current = "";
     if (credentialInput.current) credentialInput.current.value = "";
@@ -64,12 +211,22 @@ export function ConnectorOnboarding() {
     accountRequests.current?.abort();
     accountRequests.current = null;
     version.current++;
+    setAccountVersion((value) => value + 1);
     telegramEnabled.current = false;
     setSignedIn(false);
+    setApprovals([]);
+    setApprovalError("");
+    setApprovalLoading(true);
     setSignedOut(true);
     setSearching(false);
+    setNativeConnection(undefined);
+    setSelectedConnection(undefined);
+    setOpeningApp(undefined);
+    setAddWebsite(false);
+    setAssistantOpen(false);
     setConnections(undefined);
     setResult(undefined);
+    setOauthEnabled(false);
     setAuthorization(undefined);
     setNotice("");
     setError("");
@@ -91,7 +248,7 @@ export function ConnectorOnboarding() {
       setSignedIn(true);
       setSignedOut(false);
       setNotice(
-        "Signed in for this tab. Your credential clears on sign-out, disconnect or reload.",
+        "Signed in for this tab. Your credential clears on sign-out or reload.",
       );
     } catch (failure) {
       clearAccount();
@@ -108,16 +265,40 @@ export function ConnectorOnboarding() {
     const current = ++version.current;
     setSearching(true);
     setResult(undefined);
+    setOauthEnabled(false);
     setError("");
     setNotice("");
     setAuthorization(undefined);
     try {
-      const found = await request<ConnectorSearch>(
-        `?query=${encodeURIComponent(query.trim())}`,
+      const found = await request<{
+        apps: Array<{
+          id: string;
+          name: string;
+          toolIds: string[];
+          domains: string[];
+        }>;
+        nativeAvailable: boolean;
+        nativeInline: boolean;
+        oauthEnabled?: boolean;
+      }>(
+        `/apps?query=${encodeURIComponent(query.trim())}`,
         undefined,
         controller.signal,
       );
-      if (current === version.current) setResult(found);
+      if (current === version.current) setNativeInline(found.nativeInline);
+      if (current === version.current) setOauthEnabled(found.oauthEnabled === true);
+      if (current === version.current)
+        setResult({
+          status: found.apps.length ? "available" : "absent",
+          fallbackAllowed: found.nativeAvailable,
+          message: "",
+          connectors: (found.oauthEnabled === true ? found.apps : []).map((app) => ({
+            ...app,
+            provider: "arcade",
+            toolName: "",
+            description: `${app.toolIds.length} supported actions · Secure OAuth sign-in`,
+          })),
+        });
     } catch (failure) {
       if (current === version.current && !controller.signal.aborted)
         reportError(failure);
@@ -125,6 +306,57 @@ export function ConnectorOnboarding() {
       if (current === version.current) setSearching(false);
     }
   }
+  useEffect(() => {
+    if (!signedIn) return;
+    const timer = window.setTimeout(() => void find(), 250);
+    return () => window.clearTimeout(timer);
+  }, [signedIn, query]);
+  useEffect(() => {
+    const id = launchConnection.current;
+    // Wait for server-validated identity and this account's current capabilities.
+    if (!id || launchOpened.current || !signedIn || !connections || !result || pending) return;
+    launchOpened.current = true;
+    const connection = connections.find(item => item.id === id);
+    if (!connection) {
+      setError("This sign-in is no longer available for your account. Add the app to start again.");
+      return;
+    }
+    if (connection.provider === "browser" && connection.status === "pending" && nativeInline) {
+      setNativeDomain(connection.connectorId.replace(/^browser:/, ""));
+      setSelectedConnection(undefined);
+      setNativeConnection(connection.id);
+    } else {
+      setSelectedConnection(connection);
+    }
+  }, [signedIn, connections, result, pending, nativeInline]);
+  useEffect(() => {
+    if (
+      !signedIn ||
+      !oauthEnabled ||
+      nativeConnection ||
+      !connections?.some(
+        (c) => c.status === "pending" && c.provider === "arcade",
+      )
+    )
+      return;
+    let active = true;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible" || pending) return;
+      void Promise.all(
+        connections
+          .filter((c) => c.status === "pending" && c.provider === "arcade")
+          .map((c) => request("/complete", { connectionId: c.id })),
+      )
+        .then(() => {
+          if (active) return refresh();
+        })
+        .catch(reportError);
+    }, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [signedIn, connections, pending, nativeConnection, oauthEnabled]);
   async function refresh() {
     const result = await request<{
       connections: ConnectorConnection[];
@@ -137,8 +369,8 @@ export function ConnectorOnboarding() {
     setAuthorization(undefined);
     setNotice("");
     try {
-      const response = await request<ConnectorConnect>("/connect", {
-        connectorId: connector.id,
+      const response = await request<ConnectorConnect>("/apps/connect", {
+        appId: connector.id,
       });
       const url = safeAuthorizationUrl(response.authorizationUrl);
       if (response.authorizationUrl && !url)
@@ -146,6 +378,7 @@ export function ConnectorOnboarding() {
           "The authorization link is invalid. Try connecting again.",
         );
       setAuthorization(url);
+      await refresh();
       setNotice(
         url
           ? "Continue in the secure authorization page, then refresh your connections."
@@ -161,45 +394,99 @@ export function ConnectorOnboarding() {
       setPending(false);
     }
   }
-  async function requestWebsite(browser = false) {
-    if (result?.status !== "absent" || !result.fallbackAllowed) return;
+  async function openApp(app: DrawerApp) {
+    if (opening.current || pending || !signedIn) return;
+    opening.current = true;
+    setOpeningApp(app);
     setPending(true);
     setError("");
     setAuthorization(undefined);
     setNotice("");
     try {
-      const response = await request<{
-        status: string;
-        authorizationUrl?: string;
-        search?: ConnectorSearch;
-      }>(browser ? "/browser" : "/discover", { domain: query.trim() });
-      if (!browser && ["arcade", "unavailable"].includes(response.status)) {
-        setResult(response.search);
-        setNotice(
-          response.status === "arcade"
-            ? "An Arcade provider is now available. Use its first-party authorization to connect."
-            : "The catalog could not be checked. Discovery is paused; retry the search.",
+      // Resolve current capabilities on selection, never infer availability from a suggestion.
+      const found = app.connector
+        ? undefined
+        : await request<{
+            apps: Array<{ id: string; name: string; domains: string[] }>;
+            nativeAvailable: boolean;
+            nativeInline: boolean;
+          }>(`/apps?query=${encodeURIComponent(app.domain)}`);
+      const match = found?.apps.find((candidate) =>
+        candidate.domains.some((domain) => domain === app.domain),
+      );
+      if (app.connector || match) {
+        await connect(
+          app.connector ?? {
+            ...match!,
+            provider: "arcade",
+            toolName: "",
+            description: "",
+          },
         );
         return;
       }
-      const url = safeAuthorizationUrl(response.authorizationUrl);
-      if (browser && !url)
+      if (!found?.nativeAvailable)
         throw new Error(
-          "Secure browser sign-in is not available for this website yet.",
+          "Password sign-in is not available for this app right now. Try another app or check again later.",
+        );
+      setNativeInline(found.nativeInline);
+      const response = await request<{
+        id?: string;
+        status: string;
+        authorizationUrl?: string;
+      }>("/browser", { domain: app.domain });
+      if (found.nativeInline && response.id) {
+        setNativeDomain(app.domain);
+        setNativeConnection(response.id);
+        await refresh();
+        return;
+      }
+      const url = safeAuthorizationUrl(response.authorizationUrl);
+      if (!url)
+        throw new Error(
+          "Password sign-in is not available for this website yet.",
         );
       setAuthorization(url);
-      setNotice(
-        browser
-          ? "Continue in the secure browser. Enter any password there, never in chat."
-          : response.status === "discovered"
-            ? "A candidate connector was found. It needs review before it can run."
-            : "Discovery requested. This website is not connected; more evidence or a connector build may be needed.",
-      );
+      setNotice("Continue to the private sign-in page to finish connecting.");
+      await refresh();
     } catch (failure) {
       reportError(failure);
     } finally {
+      opening.current = false;
+      setOpeningApp(undefined);
       setPending(false);
     }
+  }
+  function submitWebsite() {
+    const domain = websiteDomain(website);
+    if (!domain) {
+      setWebsiteError(
+        "Enter a website address, like notion.so. Use its HTTPS address, without login details.",
+      );
+      return;
+    }
+    setWebsiteError("");
+    setAddWebsite(false);
+    void openApp({ name: domain, domain });
+  }
+  function closeNativeLogin() {
+    const connectionId = nativeConnection;
+    setNativeConnection(undefined);
+    void refresh()
+      .catch(reportError)
+      .finally(() => {
+        requestAnimationFrame(() => {
+          // The suggestion is replaced by a connection tile while sign-in runs.
+          const tile = Array.from(
+            document.querySelectorAll<HTMLButtonElement>(
+              "[data-connection-id]",
+            ),
+          ).find((element) => element.dataset.connectionId === connectionId);
+          (
+            tile ?? document.querySelector<HTMLButtonElement>(".drawer-add")
+          )?.focus();
+        });
+      });
   }
   async function checkAuthorization(connectionId: string) {
     setPending(true);
@@ -222,14 +509,8 @@ export function ConnectorOnboarding() {
     try {
       if (connectionId) {
         await request("/disconnect", { connectionId });
-        if (credential.current) {
-          clearAccount();
-          setNotice(
-            "Aiko access disconnected. Your account credential was cleared from this tab. Sign in again to view connections.",
-          );
-          return;
-        }
         setAuthorization(undefined);
+        setSelectedConnection(undefined);
       }
       await refresh();
       if (connectionId)
@@ -242,282 +523,558 @@ export function ConnectorOnboarding() {
       setPending(false);
     }
   }
+  const activeConnections =
+    connections?.filter((c) => c.status !== "disconnected" && (c.provider !== "arcade" || oauthEnabled || c.status === "connected")) ?? [];
+  const connectedCount = activeConnections.filter(
+    (c) => c.status === "connected",
+  ).length;
+  const matchesQuery = (name: string, domain = "") =>
+    `${name} ${domain}`.toLowerCase().includes(query.trim().toLowerCase());
+  const visibleConnections = activeConnections.filter((c) =>
+    matchesQuery(connectionName(c), c.connectorId),
+  );
+  const catalogApps: DrawerApp[] = (result?.connectors ?? []).map(
+    (connector) => ({
+      name: connector.name,
+      domain: connector.domains[0] ?? "",
+      connector,
+    }),
+  );
+  const apps = [
+    ...catalogApps,
+    ...suggestedApps.filter(
+      (app) =>
+        !catalogApps.some(
+          (c) =>
+            c.domain === app.domain ||
+            c.name.toLowerCase() === app.name.toLowerCase(),
+        ),
+    ),
+  ].filter(
+    (app) =>
+      matchesQuery(app.name, app.domain) &&
+      !activeConnections.some(
+        (c) =>
+          c.connectorId === `browser:${app.domain}` ||
+          c.connectorId === app.connector?.id ||
+          (c.appName ?? "").toLowerCase() === app.name.toLowerCase(),
+      ),
+  );
+  const selected = activeConnections.find(
+    (c) => c.id === selectedConnection?.id,
+  );
+  const resumeUrl = safeAuthorizationUrl(selected?.authorizationUrl);
+  if (signedIn && (approvals.length > 0 || approvalLoading)) return (
+    <section className="approval-screen" aria-labelledby="approval-title">
+      <h2 id="approval-title">{approvalLoading ? "Checking approvals…" : `Approvals (${approvals.length})`}</h2>
+      <p>Review what Aiko wants to do. Your apps return when the queue is clear.</p>
+      {approvalError && <p role="alert" className="credential-error">{approvalError}</p>}
+      {approvals.map(item => <article className="approval-card" key={item.id}>
+        <h3>{item.name.replace(/_/g, " ")}</h3>
+        <p>Expires {new Date(item.expires).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</p>
+        <pre aria-label="Requested action">{JSON.stringify(item.args,null,2)}</pre>
+        <details><summary>Review page context</summary><pre>{item.snapshot}</pre></details>
+        <div className="connector-actions">
+          <button className="button" disabled={deciding} onClick={() => void decideApproval(item.id,false)}>Reject</button>
+          <button className="button primary" disabled={deciding} onClick={() => void decideApproval(item.id,true)}>Approve</button>
+        </div>
+      </article>)}
+    </section>
+  );
   return (
-    <section className="connector-onboarding" aria-labelledby="connector-title">
+    <section
+      className="connector-onboarding app-drawer"
+      aria-labelledby="connector-title"
+    >
       <div className="connector-heading">
         <div>
-          <p className="aiko-eyebrow">YOUR APPS. YOUR SAY.</p>
-          <h2 id="connector-title">What would you like Aiko to connect?</h2>
+          <h2 id="connector-title">Your apps</h2>
+          <p>Everything you connect, in one place.</p>
         </div>
-        <ShieldCheck size={26} aria-hidden="true" />
+        <button
+          type="button"
+          className="drawer-add icon-button"
+          aria-label="Add a website"
+          disabled={!signedIn || pending}
+          onClick={() => {
+            setWebsite("");
+            setWebsiteError("");
+            setAddWebsite(true);
+          }}
+        >
+          <Plus size={24} aria-hidden="true" />
+        </button>
       </div>
-      <p>
-        Search for an app or any website. Available providers use first-party
-        authorization through Arcade where supported. Other websites may need
-        discovery or a connector built first.
-      </p>
-      <div className="connector-account" aria-label="Account sign-in">
-        <div className="app-section-heading">
+      {!signedIn && (
+        <div className="connector-account" aria-label="Account sign-in">
           <h3>
-            {signedIn
-              ? "Account connected for this tab"
-              : "Use your Aiko account"}
+            {pending ? "Opening your apps…" : "Your apps, connected to Aiko"}
           </h3>
+          <p className="aiko-fineprint">
+            Open from Telegram to connect your apps privately.
+          </p>
           <button
             type="button"
-            className="text-button"
+            className="button"
             disabled={pending}
-            onClick={() => {
-              clearAccount();
-              setNotice(
-                "Signed out of this tab. Your account credential and connection details were cleared.",
-              );
-            }}
+            onClick={() => void signInTelegram()}
           >
-            Sign out
+            {pending ? "Signing in…" : "Use my Telegram account"}
           </button>
-        </div>
-        {!signedIn && (
-          <form
-            className="connector-credential-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void signIn();
-            }}
-          >
-            <label htmlFor="aiko-account-credential">
-              Aiko account credential (optional outside Telegram)
-            </label>
-            <div className="connector-search">
-              <input
-                id="aiko-account-credential"
-                ref={credentialInput}
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                autoCapitalize="none"
-                maxLength={4096}
-                disabled={pending}
-                aria-describedby="credential-help"
-              />
-              <button className="button" disabled={pending}>
-                {pending ? "Signing in…" : "Sign in to Aiko"}
-              </button>
-            </div>
-            <p id="credential-help" className="aiko-fineprint">
-              Use the account credential issued by your Aiko operator, not a
-              website password or provider API key. It stays in this tab’s
-              memory and clears on sign-out, disconnect or reload. Never send it
-              in chat.
+          {!telegramMiniApp && (
+            <details className="account-alternative">
+              <summary>Use an account credential instead</summary>
+              <form
+                className="connector-credential-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void signIn();
+                }}
+              >
+                <label htmlFor="aiko-account-credential">
+                  Account credential
+                </label>
+                <div className="connector-search">
+                  <input
+                    id="aiko-account-credential"
+                    ref={credentialInput}
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    autoCapitalize="none"
+                    maxLength={4096}
+                    disabled={pending}
+                    aria-describedby="credential-help"
+                  />
+                  <button className="button" disabled={pending}>
+                    {pending ? "Signing in…" : "Sign in to Aiko"}
+                  </button>
+                </div>
+                <p id="credential-help" className="aiko-fineprint">
+                  Use the credential issued by your Aiko operator, not a website
+                  password. It clears on sign-out or reload. Never send it in
+                  chat.
+                </p>
+              </form>
+            </details>
+          )}
+          {signedOut && (
+            <p className="aiko-fineprint">
+              Reopen from Telegram, or sign in above.
             </p>
-          </form>
-        )}
-        {signedOut && !signedIn && (
-          <p className="aiko-fineprint">
-            Signed out. Enter an account credential, or reopen the app from
-            Telegram to use Telegram sign-in.
-          </p>
+          )}
+        </div>
+      )}
+      <div className="drawer-search">
+        <Search size={20} aria-hidden="true" />
+        <input
+          type="search"
+          aria-label="Search apps or websites"
+          placeholder="Search apps or websites"
+          maxLength={200}
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            search.current?.abort();
+            version.current++;
+            setResult(undefined);
+    setOauthEnabled(false);
+            setSearching(false);
+          }}
+        />
+        {query && (
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Clear search"
+            onClick={() => setQuery("")}
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
         )}
       </div>
-      <form
-        className="connector-search"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void find();
-        }}
-      >
-        <label className="login-search app-search">
-          <Search size={19} aria-hidden="true" />
-          <input
-            type="search"
-            disabled={pending}
-            aria-label="Search any app or website"
-            placeholder="App name or website, e.g. github.com"
-            maxLength={200}
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              search.current?.abort();
-              version.current++;
-              setSearching(false);
-              setResult(undefined);
-              setAuthorization(undefined);
-              setNotice("");
-              setError("");
-            }}
-          />
-        </label>
+      <div className="drawer-toolbar">
+        <div className="drawer-filters" role="group" aria-label="Filter apps">
+          <button
+            type="button"
+            aria-pressed={filter === "all"}
+            onClick={() => setFilter("all")}
+          >
+            All apps
+          </button>
+          <button
+            type="button"
+            aria-pressed={filter === "connected"}
+            onClick={() => setFilter("connected")}
+          >
+            Connected <span>{connectedCount}</span>
+          </button>
+        </div>
         <button
-          className="button primary"
-          disabled={searching || pending || !query.trim()}
+          type="button"
+          className="icon-button"
+          disabled={!signedIn || pending}
+          aria-label="Refresh connections"
+          onClick={() => void manage()}
         >
-          {searching ? "Searching…" : "Find app"}
+          <RefreshCw size={18} aria-hidden="true" />
         </button>
-      </form>
-      <p className="aiko-fineprint">
-        Never send passwords or API keys in chat. Browser sign-in is offered
-        only after a provider is confirmed absent from the catalog.
-      </p>
+      </div>
       {error && (
         <div role="alert" className="connector-feedback">
           <p>{error}</p>
-          <a href={AIKO_TELEGRAM_URL} className="text-button">
-            Open Aiko in Telegram <ArrowUpRight size={15} />
-          </a>
+          {!signedIn && (
+            <a href={AIKO_TELEGRAM_URL} className="text-button">
+              Open Aiko in Telegram <ArrowUpRight size={15} />
+            </a>
+          )}
         </div>
       )}
-      <div aria-live="polite" aria-busy={searching}>
-        {result && (
-          <>
-            {!result.connectors.length && (
-              <div className="connector-feedback">
-                <h3>
-                  {result.status === "absent" && result.fallbackAllowed
-                    ? "Needs discovery or a connector built"
-                    : "No confirmed match yet"}
-                </h3>
-                <p>
-                  {result.status === "absent" && result.fallbackAllowed
-                    ? "This website is not in the checked catalog. Request discovery below. Access is not connected yet."
-                    : "Catalog absence has not been confirmed. Try another name or retry later; browser sign-in is not available yet."}
-                </p>
-              </div>
-            )}
-            {result.status === "absent" && result.fallbackAllowed && (
-              <div className="connector-actions">
-                <button
-                  className="button"
-                  disabled={pending}
-                  onClick={() => void requestWebsite()}
-                >
-                  Request website discovery
-                </button>
-                <button
-                  className="button"
-                  disabled={pending}
-                  onClick={() => void requestWebsite(true)}
-                >
-                  Start secure browser sign-in
-                </button>
-                <p className="aiko-fineprint">
-                  Sign-in needs a configured secure browser. It does not make an
-                  unbuilt integration available.
-                </p>
-              </div>
-            )}
-            <div className="connector-results">
-              {result.connectors.map((connector) => (
-                <article className="connector-result" key={connector.id}>
-                  <div>
-                    <span
-                      className={`connector-state ${result.status === "available" ? "is-available" : ""}`}
-                    >
-                      {result.status === "available"
-                        ? "Available"
-                        : "Availability unconfirmed"}
+      {notice && (
+        <p role="status" className="connector-feedback">
+          {notice}
+        </p>
+      )}
+      {authorization && (
+        <a
+          href={authorization}
+          onClick={openAuthorization}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="button primary drawer-authorization"
+        >
+          Continue sign-in <ArrowUpRight size={17} aria-hidden="true" />
+        </a>
+      )}
+      {openingApp && (
+        <p className="credential-progress drawer-progress" role="status">
+          <LoaderCircle size={18} className="app-spinner" aria-hidden="true" />
+          Preparing {openingApp.name}…
+        </p>
+      )}
+      {!!visibleConnections.length && (
+        <section className="drawer-section" aria-label="Your connections">
+          <div className="drawer-section-heading">
+            <h3>
+              {filter === "all"
+                ? "Your connections"
+                : "Connected & in progress"}
+            </h3>
+            <span>{visibleConnections.length}</span>
+          </div>
+          <div className="drawer-grid">
+            {visibleConnections.map((connection) => (
+              <button
+                type="button"
+                key={connection.id}
+                data-connection-id={connection.id}
+                className="drawer-tile"
+                disabled={pending}
+                onClick={() => setSelectedConnection(connection)}
+                aria-label={`${connectionName(connection)} — ${connection.status === "connected" ? "connected" : connection.status === "pending" ? "finish sign-in" : "needs attention"}. Manage connection`}
+              >
+                <span className="drawer-icon-wrap">
+                  <AppTileIcon name={connectionName(connection)} />
+                  {connection.status === "connected" && (
+                    <span className="drawer-connected-badge">
+                      <Check size={12} aria-hidden="true" />
                     </span>
-                    <h3>{connector.name}</h3>
-                    {connector.description && <p>{connector.description}</p>}
-                    <small>
-                      {result.status === "available"
-                        ? "Review and authorize access to continue."
-                        : "Not connected. Availability still needs verification."}
-                    </small>
-                  </div>
-                  <button
-                    className="button"
-                    disabled={pending || result.status !== "available"}
-                    onClick={() => void connect(connector)}
-                  >
-                    {result.status === "available"
-                      ? `Connect ${connector.name}`
-                      : "Request discovery"}
-                  </button>
-                </article>
-              ))}
-            </div>
-          </>
-        )}
-        {notice && (
-          <p className="connector-feedback" role="status">
-            {notice}
+                  )}
+                </span>
+                <span className="drawer-tile-name">
+                  {connectionName(connection)}
+                </span>
+                <span
+                  className={`drawer-tile-status ${connection.status === "connected" ? "is-connected" : ""}`}
+                >
+                  {connection.status === "connected"
+                    ? "Connected"
+                    : connection.status === "pending"
+                      ? "Finish sign-in"
+                      : "Needs attention"}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+      {filter === "connected" && !visibleConnections.length && (
+        <div className="drawer-empty">
+          <span className="credential-symbol">
+            <ShieldCheck size={26} aria-hidden="true" />
+          </span>
+          <h3>
+            {query ? "No matching connections" : "Your apps will live here"}
+          </h3>
+          <p>
+            {query
+              ? "Try another app name or clear your search."
+              : "Pick an app, add your login, and let Aiko help."}
           </p>
-        )}
-        {authorization && (
-          <a
-            href={authorization}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="button primary"
-          >
-            Continue securely <ArrowUpRight size={17} />
-          </a>
-        )}
-      </div>
-      <div className="connector-connections">
-        <div className="app-section-heading">
-          <h3>Your connections</h3>
           <button
-            className="text-button"
-            disabled={pending}
-            onClick={() => void manage()}
+            className="button"
+            onClick={() => {
+              setQuery("");
+              setFilter("all");
+            }}
           >
-            {pending ? "Checking…" : "Refresh connections"}
+            Browse apps
           </button>
         </div>
-        {connections === undefined ? (
-          <p>
-            Sign in above or open from Telegram to view your account’s
-            connections.
-          </p>
-        ) : connections.length === 0 ? (
-          <p>No connected apps yet. Search above to get started.</p>
-        ) : (
-          connections.map((connection) => (
-            <div className="connector-result" key={connection.id}>
-              <div>
-                <strong>{connection.connectorId}</strong>
-                <p>{connection.status}</p>
+      )}
+      {filter === "all" && (
+        <section className="drawer-section" aria-label="Add apps">
+          <div className="drawer-section-heading">
+            <h3>
+              {query
+                ? "Search results"
+                : activeConnections.length
+                  ? "Add more apps"
+                  : "Start with an app"}
+            </h3>
+            {searching && (
+              <span role="status">
+                <LoaderCircle
+                  size={16}
+                  className="app-spinner"
+                  aria-label="Searching"
+                />
+              </span>
+            )}
+          </div>
+          <div className="drawer-grid">
+            {apps.map((app) => (
+              <button
+                type="button"
+                key={app.connector?.id ?? app.domain}
+                className="drawer-tile"
+                disabled={!signedIn || pending}
+                onClick={() => void openApp(app)}
+                aria-label={`Connect ${app.name}`}
+              >
+                <AppTileIcon name={app.name} />
+                <span className="drawer-tile-name">{app.name}</span>
+                <span className="drawer-tile-status">
+                  {app.connector ? "Authorize" : "Add login"}
+                </span>
+              </button>
+            ))}
+            <button
+              type="button"
+              className="drawer-tile drawer-custom"
+              disabled={!signedIn || pending}
+              onClick={() => {
+                setWebsite(query.includes(".") ? query : "");
+                setWebsiteError("");
+                setAddWebsite(true);
+              }}
+            >
+              <span className="drawer-app-icon">
+                <Plus size={26} aria-hidden="true" />
+              </span>
+              <span className="drawer-tile-name">Add website</span>
+              <span className="drawer-tile-status">Your choice</span>
+            </button>
+          </div>
+          {!apps.length && (
+            <p className="aiko-fineprint">
+              {searching
+                ? "Checking available apps…"
+                : "Not listed? Add its website address to check sign-in options."}
+            </p>
+          )}
+        </section>
+      )}
+      <p className="drawer-trust">
+        <ShieldCheck size={15} aria-hidden="true" />
+        You choose the apps. You can disconnect anytime.
+      </p>
+      {signedIn && (
+        <details
+          className="drawer-assistant"
+          onToggle={(event) => setAssistantOpen(event.currentTarget.open)}
+        >
+          <summary>Telegram assistant settings</summary>
+          {assistantOpen && (
+            <SecretaryPanel key={accountVersion} request={request} />
+          )}
+        </details>
+      )}
+      {signedIn && !telegramMiniApp && (
+        <button
+          className="text-button drawer-signout"
+          disabled={pending}
+          onClick={() => {
+            clearAccount();
+            setNotice(
+              "Signed out. Your account details were cleared from this tab.",
+            );
+          }}
+        >
+          Sign out of Aiko
+        </button>
+      )}
+      {addWebsite && (
+        <MiniAppScreen
+          title="Add a website"
+          close={() => setAddWebsite(false)}
+        >
+          <div className="credential-identity">
+            <span className="credential-symbol">
+              <Globe size={26} aria-hidden="true" />
+            </span>
+            <div>
+              <h3>Any website starts here</h3>
+              <p>We’ll check its sign-in options.</p>
+            </div>
+          </div>
+          <form
+            className="website-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitWebsite();
+            }}
+          >
+            <div className="credential-fields">
+              <div className="credential-field">
+                <label htmlFor="website-domain">Website address</label>
+                <input
+                  id="website-domain"
+                  name="website"
+                  type="text"
+                  inputMode="url"
+                  autoComplete="url"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  placeholder="example.com"
+                  required
+                  maxLength={253}
+                  value={website}
+                  onChange={(event) => {
+                    setWebsite(event.target.value);
+                    setWebsiteError("");
+                  }}
+                  aria-invalid={!!websiteError}
+                  aria-describedby={websiteError ? "website-error" : undefined}
+                />
               </div>
-              {connection.status === "pending" &&
-                safeAuthorizationUrl(connection.authorizationUrl) && (
-                  <a
-                    className="button"
-                    href={safeAuthorizationUrl(connection.authorizationUrl)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={`Resume authorization for ${connection.connectorId}`}
-                  >
-                    Resume authorization
-                  </a>
-                )}
-              {connection.status === "pending" &&
-                !safeAuthorizationUrl(connection.authorizationUrl) && (
-                  <p className="aiko-fineprint">
-                    Authorization link expired or unavailable. Check status, or
-                    search for the app to connect again.
-                  </p>
-                )}
-              {connection.status === "pending" && (
+            </div>
+            {websiteError && (
+              <p className="credential-error" role="alert" id="website-error">
+                {websiteError}
+              </p>
+            )}
+            <button
+              type="submit"
+              className="button primary credential-submit"
+              disabled={pending}
+            >
+              Continue
+            </button>
+          </form>
+          <p className="aiko-fineprint">
+            Only enter a website you trust. Add your login on the next screen,
+            never in chat.
+          </p>
+        </MiniAppScreen>
+      )}
+      {selected && !nativeConnection && (
+        <MiniAppScreen
+          title="App details"
+          close={() => {
+            if (!pending) setSelectedConnection(undefined);
+          }}
+        >
+          <div className="credential-identity">
+            <AppTileIcon name={connectionName(selected)} />
+            <div>
+              <h3>{connectionName(selected)}</h3>
+              <p>
+                {selected.status === "connected"
+                  ? "Connected to Aiko"
+                  : selected.status === "pending"
+                    ? "Finish connecting this app"
+                    : "This connection needs attention"}
+              </p>
+            </div>
+          </div>
+          {error && (
+            <p className="credential-error" role="alert">
+              {error}
+            </p>
+          )}
+          {selected.status === "connected" && (
+            <p className="aiko-fineprint">
+              Aiko can use this connection for your requests. Disconnect to stop
+              Aiko’s access; you can also revoke authorization in the app’s own
+              settings.
+            </p>
+          )}
+          {selected.status === "pending" && (
+            <div className="connector-actions">
+              {selected.provider === "browser" && nativeInline ? (
+                <button
+                  className="button primary"
+                  disabled={pending}
+                  onClick={() => {
+                    setNativeDomain(
+                      selected.connectorId.replace(/^browser:/, ""),
+                    );
+                    setNativeConnection(selected.id);
+                    setSelectedConnection(undefined);
+                  }}
+                >
+                  Continue sign-in
+                </button>
+              ) : resumeUrl ? (
+                <a
+                  className="button primary"
+                  href={resumeUrl}
+                  onClick={openAuthorization}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Continue sign-in <ArrowUpRight size={16} />
+                </a>
+              ) : (
+                <p className="aiko-fineprint">
+                  This sign-in link is unavailable. Disconnect, then add the app
+                  again.
+                </p>
+              )}
+              {selected.provider !== "browser" && (
                 <button
                   className="button"
                   disabled={pending}
-                  onClick={() => void checkAuthorization(connection.id)}
+                  onClick={() => void checkAuthorization(selected.id)}
                 >
-                  Check authorization
+                  Check status
                 </button>
               )}
-              <button
-                className="button"
-                disabled={pending || connection.status === "disconnected"}
-                onClick={() => void manage(connection.id)}
-              >
-                Disconnect {connection.connectorId}
-              </button>
             </div>
-          ))
-        )}
-      </div>
+          )}
+          <button
+            className="button drawer-disconnect"
+            disabled={pending}
+            onClick={() => void manage(selected.id)}
+          >
+            {pending
+              ? "Updating…"
+              : selected.status === "pending"
+                ? "Cancel connection"
+                : "Disconnect app"}
+          </button>
+        </MiniAppScreen>
+      )}
+      {nativeConnection && (
+        <NativeLoginPanel
+          key={nativeConnection}
+          domain={nativeDomain}
+          connectionId={nativeConnection}
+          request={request}
+          onClose={closeNativeLogin}
+        />
+      )}
     </section>
   );
 }

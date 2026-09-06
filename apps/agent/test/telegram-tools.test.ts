@@ -550,6 +550,20 @@ describe("native Telegram capability tools", () => {
   });
 });
 describe("fixed one-call vision adapter", () => {
+  test("Cerebras vision uses its own pinned endpoint and key with no Codegraff fallback", async () => {
+    const calls: string[] = [];
+    const vision = createTelegramVision({provider:"cerebras",apiKey:"cerebras-vision-fixture",model:"qwen-3.8-27b",fetch:async (url, init) => {
+      calls.push(String(url));
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer cerebras-vision-fixture");
+      expect(JSON.parse(String(init?.body))).toMatchObject({model:"qwen-3.8-27b",reasoning_effort:"none",stream:false});
+      return Response.json({choices:[{message:{content:"A blue square."}}]});
+    }});
+    expect(await vision({owner:"123",question:"Describe",signal:signal(),images:[{mimeType:"image/png",data:new Uint8Array([1]),sourceFileId:"owned"}]})).toBe("A blue square.");
+    expect(calls).toEqual(["https://api.cerebras.ai/v1/chat/completions"]);
+    const unavailable = createTelegramVision({provider:"cerebras",apiKey:"cerebras-vision-fixture",model:"qwen-3.8-27b",fetch:async url => {calls.push(String(url));return new Response("unavailable",{status:503});}});
+    await expect(unavailable({owner:"123",question:"Describe",signal:signal(),images:[{mimeType:"image/png",data:new Uint8Array([1]),sourceFileId:"owned"}]})).rejects.toThrow("vision_unavailable");
+    expect(calls).toEqual(["https://api.cerebras.ai/v1/chat/completions","https://api.cerebras.ai/v1/chat/completions"]);
+  });
   test("uses actual multimodal input and no second model/tool loop", async () => {
     let calls = 0,
       body: any;
@@ -754,4 +768,49 @@ test("typing lifecycle closes on failure, cancellation and explicit host shutdow
     await typing.close();
     expect(stopped).toBe(1);
   }
+});
+
+test("strict-provider null optional arguments do not reject a normal final reply", async () => {
+  const f = fixture(true, async text => ({status:"ready",text,persona:"fixture"}));
+  expect(await f.run("send_message", {kind:"text",text:"Hello",replyTo:null,buttons:null,caption:null,fileId:null,fileIds:null,final:true})).toMatchObject({status:"delivered",final:true});
+  expect(f.calls).toHaveLength(1);
+});
+
+test("native drafts keep typing through composition and fence delivery by resume epoch and owner", async () => {
+  let starts = 0, stops = 0;
+  const drafts: {id: number; text: string; context: unknown}[] = [];
+  const typing = createTelegramTyping("123", {
+    typing: () => { starts++; return async () => { stops++; }; },
+    draft: async (_owner, id, text, _signal, context) => {
+      drafts.push({id, text, context}); return {status:"delivered"};
+    },
+  }, {waitForDelivery:true});
+  cleanup.push(typing.close);
+  const machine = typing.component.machine;
+  let state = machine.step(machine.initial(), {...incoming(), telegram:{messageThreadId:44}});
+  const settle = async () => {
+    const transition = machine.output(state).transitions[0];
+    if (transition?.kind !== "effect") throw Error("Expected typing effect");
+    const events = await Effect.runPromise(transition.act(transition.input, signal()) as Effect.Effect<readonly AikoEvent[]>);
+    for (const e of events) state = machine.step(state, e);
+  };
+  await settle();
+  expect(drafts[0]).toMatchObject({text:"",context:{canStop:true,messageThreadId:44}});
+  state = machine.step(state, event("TurnCompleted", {turn:"turn-1",epoch:0}));
+  expect(machine.output(state).transitions).toHaveLength(0);
+  expect(stops).toBe(0);
+  state = machine.step(state, event("TurnResumed", {turn:"turn-1",epoch:1}));
+  await settle();
+  expect(starts).toBe(2);
+  expect(stops).toBe(1);
+  expect(drafts[1]!.id).not.toBe(drafts[0]!.id);
+  state = machine.step(state, event("AikoDeliverySettled", {turn:"turn-1",epoch:0,result:{status:"delivered"}}));
+  state = machine.step(state, event("AikoTelegramActionSettled", {turn:"turn-1",epoch:1,result:{owner:"456",final:true,status:"delivered"}}));
+  expect(machine.output(state).transitions).toHaveLength(0);
+  state = machine.step(state, event("ToolCalled", {turn:"turn-1",epoch:1,callId:"search",name:"memory_recall"}));
+  await settle();
+  expect(drafts.at(-1)).toMatchObject({id:drafts[1]!.id,text:"Searching…"});
+  state = machine.step(state, event("AikoDeliverySettled", {turn:"turn-1",epoch:1,result:{status:"delivered"}}));
+  await settle();
+  expect(stops).toBe(2);
 });

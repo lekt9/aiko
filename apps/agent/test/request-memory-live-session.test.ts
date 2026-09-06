@@ -1,14 +1,14 @@
 /** Real Chromium + actual local MiniLM; local HTTPS fixture only. Explicit session capability opt-in. */
 import { expect, test } from "bun:test";
 import { replayBrowserRequest } from "../src/browser-driver.ts";
-import type { HarnessTransportRequest } from "../../../packages/browser-runtime/src/harness-runtime.ts";
+import type { HarnessTransportRequest } from "@unbrowse/browser-harness/harness-runtime";
 const endpoint = process.env.AIKO_REPLAY_TEST_CDP;
 const request = (url: string): HarnessTransportRequest => ({stepId:"items",attempt:1,method:"GET",url,headers:{},redirect:"manual"});
 (endpoint && process.env.AIKO_REPLAY_TEST_EMBEDDING ? test : test.skip)(
   "live observation auto-indexes locally then semantically searches and rehydrates fresh browser data",
   async () => {
     const { CdpNetworkListener } =
-      await import("@unbrowse/browser-runtime/network-listener");
+      await import("@unbrowse/browser-harness/network-listener");
     const { BrowserLearning } = await import("../src/browser-learning.ts");
     const { RequestMemory } = await import("../src/request-memory.ts");
     const { createRequestEmbedding } =

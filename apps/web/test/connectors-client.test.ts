@@ -1,6 +1,47 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { connectorRequest } from "../src/lib/connectors";
+import { connectorRequest, websiteDomain, loginConnectionId } from "../src/lib/connectors";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { NativeLoginPanel } from "../src/components/native-login-panel";
 afterEach(() => vi.unstubAllGlobals());
+it("login fields render immediately without remote form metadata or password-manager instructions", () => {
+  const request = vi.fn();
+  const markup = renderToStaticMarkup(
+    createElement(NativeLoginPanel, {
+      connectionId: "fixture",
+      domain: "example.com",
+      request,
+      onClose: () => {},
+    }),
+  );
+  expect(markup).toContain('name="username"');
+  expect(markup).toContain('name="password"');
+  expect(markup).not.toContain("Use a password manager");
+  expect(markup).not.toContain("Could not confirm sign-in");
+  expect(markup).not.toContain("disabled=");
+  expect(request).not.toHaveBeenCalled();
+});
+describe("app drawer website entry", () => {
+  it.each([
+    ["notion.so", "notion.so"],
+    ["  HTTPS://GitHub.com/login  ", "github.com"],
+    ["mail.example.com/path?tab=login", "mail.example.com"],
+  ])("normalizes an explicit address: %s", (input, expected) => {
+    expect(websiteDomain(input)).toBe(expected);
+  });
+  it.each([
+    "",
+    "LinkedIn",
+    "not a website.com",
+    "http://example.com",
+    "javascript:alert(1)",
+    "https://user:secret@example.com",
+    "user@example.com",
+    "https://example.com:444",
+  ])("rejects guessed or unsafe addresses: %s", (input) => {
+    expect(websiteDomain(input)).toBeUndefined();
+  });
+});
 function setup() {
   vi.stubGlobal("window", {
     Telegram: { WebApp: { initData: "fixture-signed-data" } },
@@ -61,4 +102,12 @@ describe("connector account authentication", () => {
       "private-upstream-secret",
     );
   });
+});
+
+const loginId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+it("Mini App launch selects only a single connection ID", () => {
+  expect(loginConnectionId(`?connection=${loginId}`)).toBe(loginId);
+  for (const query of ["", "?connection=secret", `?connection=${loginId}&connection=${loginId}`, "?connection=https://other.example"]) {
+    expect(loginConnectionId(query)).toBeUndefined();
+  }
 });

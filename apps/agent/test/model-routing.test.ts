@@ -79,13 +79,29 @@ test("paid opt-in and valid provider/model/secret references are required", () =
 test("Cerebras wire adaptation preserves local schemas and property names, keeps output ceiling", async () => {
  let sent: any;
  const { router } = await fixture(async (_, init) => { sent = JSON.parse(String(init?.body)); return streamReply(); });
- const parameters = { type: "object", properties: { pattern: { type: "string", minLength: 3, pattern: "^[a-z]+$" }, nested: { type: "array", items: { type: "string", maxLength: 8 } } }, required: ["pattern"], additionalProperties: false };
+ const parameters = { type: "object", properties: { pattern: { type: "string", minLength: 3, pattern: "^[a-z]+$" }, nested: { type: "array", minItems: 1, maxItems: 4, items: { type: "string", maxLength: 8 } } }, required: ["pattern"], additionalProperties: false };
  const original = structuredClone(parameters);
  await (await router.transport("browser")(endpointFor("browser"), requestFor("browser", { tools: [{ type: "function", function: { name: "read_page", parameters } }] }))).text();
  expect(parameters).toEqual(original);
  expect(sent.tools[0].function.parameters.properties.pattern).toEqual({ type: "string" });
  expect(sent.tools[0].function.parameters.properties.nested.items).toEqual({ type: "string" });
+ expect(sent.tools[0].function.parameters.properties.nested).not.toHaveProperty("minItems");
+ expect(sent.tools[0].function.parameters.properties.nested).not.toHaveProperty("maxItems");
  expect(sent.tools[0].function.strict).toBe(true); expect(sent.reasoning_effort).toBe("high"); expect(sent.max_tokens).toBe(1024);
+});
+
+test("Cerebras uses uniform non-strict tools for open connector inputs without closing their original schemas", async () => {
+ let sent: any;
+ const {router} = await fixture(async (_,init)=>{sent=JSON.parse(String(init?.body));return streamReply();});
+ const open = {type:"object",properties:{arguments:{type:"object"}},required:["arguments"],additionalProperties:false};
+ const closed = {type:"object",properties:{text:{type:"string",maxLength:12000}},required:["text"],additionalProperties:false};
+ const tools = [open,closed].map((parameters,index)=>({type:"function",function:{name:index===0?"connector_execute":"respond",parameters}}));
+ const original = structuredClone(tools);
+ await (await router.transport("browser")(endpointFor("browser"),requestFor("browser",{tools}))).text();
+ expect(sent.tools.map((tool:any)=>tool.function.strict)).toEqual([false,false]);
+ expect(sent.tools[0].function.parameters).toEqual(open);
+ expect(sent.tools[1].function.parameters).toEqual(closed);
+ expect(tools).toEqual(original);
 });
 
 test("redirects/provider failures are charged once, not retried and never sent to another provider", async () => {

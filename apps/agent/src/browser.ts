@@ -11,7 +11,7 @@ import {
   agentBrowserAgentToolCallOf,
   AgentBrowserClientError,
   type AgentBrowserAgentAction,
-} from "@unbrowse/browser-runtime";
+} from "@unbrowse/browser-harness/client";
 import { publicTarget } from "./browser-proxy.ts";
 import type { BrowserDriver, BrowserDriverFactory } from "./browser-driver.ts";
 
@@ -83,6 +83,7 @@ export class BrowserController {
       factory: BrowserDriverFactory;
       redact: (text: string) => string;
       approvalTimeoutMs?: number;
+      onApprovalsChanged?: (owner: string, count: number) => Promise<void>;
       /** Public browsing autonomy. Sensitive account actions still require explicit user authority. */
       requireInteractionApproval?: boolean;
       durableProfile?: boolean;
@@ -90,6 +91,42 @@ export class BrowserController {
       allowModelAnswers?: boolean;
     },
   ) {}
+  /** Same input gate as direct inference, used by the owner-bound code package. */
+  private prepareCodeCall(owner: string, thread: string, turn: string, name: string, args: unknown) {
+    const encoded = JSON.stringify(args);
+    if (!encoded || Buffer.byteLength(encoded) > 16384 || this.options.redact(encoded) !== encoded)
+      throw new Error("Invalid or sensitive browser arguments");
+    let action: AgentBrowserAgentAction | undefined;
+    if (name.startsWith("request_memory_")) validateRouterInput(args);
+    else {
+      action = agentBrowserAgentToolCallOf(name, args, this.options.domains).action;
+      if (action.action === "navigate") publicTarget(action.url);
+    }
+    const ref = randomUUID();
+    this.requests.set(ref, {owner, thread, turn, name, args, action, expires: Date.now() + 900000});
+    this.prune();
+    return {request: ref};
+  }
+  codeTools(owner: string, thread: string): NativeTool<Self | EventLog>[] {
+    return this.tools(owner, thread).map(native => ({
+      spec: native.spec,
+      run: (args, context) => Effect.gen({self:this}, function* () {
+        const self = yield* Self;
+        if (self.actor !== "aiko" || self.thread !== thread || !context.turn)
+          return {status:"blocked", reason:"owner_binding_mismatch"};
+        let prepared: {request: string};
+        try { prepared = this.prepareCodeCall(owner, thread, context.turn, native.spec.name, args); }
+        catch { return {status:"blocked", reason:"invalid_or_sensitive_arguments"}; }
+        try {
+          const result = yield* native.run(prepared, context);
+          const receipt = result as BrowserReceipt;
+          const observation = receipt?.owner === owner && receipt.observation ? this.observations.get(receipt.observation) : undefined;
+          return observation?.owner === owner && observation.expires > Date.now()
+            ? {...receipt, untrustedPageContent: this.options.redact(observation.content)} : result;
+        } finally { this.requests.delete(prepared.request); }
+      }),
+    }));
+  }
   private prune() {
     const now = Date.now();
     for (const [id, item] of this.requests)
@@ -124,12 +161,18 @@ export class BrowserController {
         .map(({ owner: _, ...value }) => value),
     };
   }
+  private approvalChanged(owner: string) {
+    const count=[...this.approvals.values()].filter(item => item.owner===owner && item.expires>Date.now()).length;
+    const job=Promise.resolve().then(()=>this.options.onApprovalsChanged?.(owner,count)).catch(()=>{});
+    this.jobs.add(job); void job.finally(()=>this.jobs.delete(job));
+  }
   decide(owner: string, id: string, approve: boolean) {
     const pending = this.approvals.get(id);
     if (!pending || pending.owner !== owner || pending.expires < Date.now())
       return false;
     this.approvals.delete(id);
     pending.decide(approve);
+    this.approvalChanged(owner);
     return true;
   }
   private async preview(driver: BrowserDriver) {
@@ -162,6 +205,7 @@ export class BrowserController {
     });
     const pending = { owner, id, name, args, snapshot, expires, decide };
     this.approvals.set(id, pending);
+    this.approvalChanged(owner);
     const cancel = () => decide(false);
     const timer = setTimeout(cancel, expires - Date.now());
     signal.addEventListener("abort", cancel, { once: true });
@@ -189,7 +233,7 @@ export class BrowserController {
     } finally {
       clearTimeout(timer);
       signal.removeEventListener("abort", cancel);
-      this.approvals.delete(id);
+      if (this.approvals.delete(id)) this.approvalChanged(owner);
     }
   }
   /** Browser arguments/results are materialized only at the model transport seam.
@@ -536,7 +580,8 @@ export class BrowserController {
                   return result;
                 } catch (error) {
                   const readOnly = started && this.options.allowModelAnswers && request.action &&
-                    (/^get_/.test(request.action.action) || ["snapshot", "title", "url", "tab_list", "is_visible", "is_enabled", "is_checked"].includes(request.action.action));
+                    (/^get_/.test(request.action.action) || ["snapshot", "title", "url", "tab_list", "is_visible", "is_enabled", "is_checked"].includes(request.action.action) ||
+                     (request.action.action === "wait" && "selector" in request.action && errorCode(error) === "element_not_found"));
                   // A failed read/selector has no uncertain mutation to replay. Keep the page for a narrower read.
                   if (!readOnly || context.signal.aborted) await this.closeSession(owner).catch(() => {});
                   const result = receipt(

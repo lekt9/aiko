@@ -1,3 +1,10 @@
+import { agentKeys } from "tardie/log/events";
+import { cancellationKeys, methodCallKeys, methodResponseKeys, methodTimeoutKeys, methodIngressKeyOf } from "tardie/core/method";
+import { turnEpochOf, turnTerminalOf } from "tardie/code/execution/turns";
+import { validateActor } from "tardie/core/actor";
+import { withRequiredResponse } from "./channel-response.ts";
+import { acceptSecretary, createSecretaryActor, secretaryApi, secretaryCommand, secretaryEventKey, secretaryThread, withSecretaryHistory } from "./secretary.ts";
+import { secretaryTelegram } from "./secretary-telegram.ts";
 import { createModelRouting } from "./model-routing.ts";
 import { withRoleInference } from "./inference-routing.ts";
 import { connectorVault } from "./connector-vault.ts";
@@ -12,8 +19,8 @@ import { withUnlockBrowser } from "./browser-unlock-factory.ts";
 import { connectorApi } from "./connector-api.ts";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { browserTraceKeys } from "@unbrowse/browser-runtime/trace";
-import { harKeys } from "@unbrowse/browser-runtime/network-facts";
+import { browserTraceKeys } from "@unbrowse/browser-harness/trace";
+import { harKeys } from "@unbrowse/browser-harness/network-facts";
 import {
   accountDirectory,
   accountThreadDatabase,
@@ -29,6 +36,7 @@ import {
 import { validateLearningInput } from "./learning.ts";
 import { learningFromBrowserTrace } from "./unbrowse-learning.ts";
 import { controlApi } from "./control-api.ts";
+import { requestMemoryEventKey } from "./request-memory-events.ts";
 import { CONTROL_HTML } from "./control.ts";
 import { envelopeOf } from "tardie/core/communication/envelope";
 import { linkOf } from "tardie/core/communication/link";
@@ -36,6 +44,8 @@ import { parseThreadAddress } from "tardie/core/communication/endpoint";
 import { credentialDigest } from "./plane-auth.ts";
 import { planeManifest, planeMemoryRead } from "./plane.ts";
 import { ModelBudget } from "./model-budget.ts";
+import { EmbeddingBudget } from "./embedding-budget.ts";
+import { nodeStorage, openRouterEmbeddings } from "entity-learn";
 import type { PublicPage } from "./public-web.ts";
 import { Database } from "bun:sqlite";
 import { createBunHost, type BunHost } from "tardie/bun/host";
@@ -91,7 +101,9 @@ export async function createService(
     voiceFetch?: HttpFetch;
     telegramFetch?: HttpFetch;
     modelFetch?: HttpFetch;
+    embeddingFetch?: HttpFetch;
     connectorFetch?: HttpFetch;
+    connectorBrowser?: (owner:string) => import("./connectors-browser.ts").SecureBrowserAdapter;
     browserFactory?: BrowserDriverFactory;
     telegramStatus?: () => object;
     // Explicit owner-bound media capability injection. The local server never provisions a VM implicitly.
@@ -106,6 +118,7 @@ export async function createService(
 ) {
   const redact = redactor([
     config.modelKey ?? "",
+    config.memoryEmbedding?.apiKey ?? "",
       config.cerebrasKey ?? "",
     config.arcadeKey ?? "",
       ...Object.values(config.connectorVault?.accounts ?? {}).map(a => a.token),
@@ -114,7 +127,7 @@ export async function createService(
     config.botToken ?? "",
     config.webhookSecret ?? "",
   ]);
-  const requireThinkFeel = config.mode === "live";
+  const requireThinkFeel = config.mode === "live" && config.replyStyle !== "direct";
   const compose = requireThinkFeel ? createThinkFeelComposer({
     key: config.voiceKey, persona: config.persona, redact, fetch: overrides.voiceFetch,
   }) : undefined;
@@ -123,7 +136,7 @@ export async function createService(
     required: requireThinkFeel,
     key: config.voiceKey,
     persona: config.persona,
-    enabled: config.voiceEnabled,
+    enabled: config.replyStyle !== "direct" && config.voiceEnabled,
     fetch: overrides.voiceFetch,
   });
   const connectorStore = new FileConnectorStore(join(config.stateDir, "connectors"));
@@ -131,7 +144,8 @@ export async function createService(
   const connectorsFor = (owner: string) => {
     let engine = connectorEngines.get(owner);
     if (!engine) {
-      engine = new ConnectorEngine({ owner, secureBrowser: connectorVault(config.connectorVault, owner), store: connectorStore, env: { ARCADE_API_KEY: config.arcadeKey }, fetch: overrides.connectorFetch,
+      engine = new ConnectorEngine({ owner, arcadeOAuthEnabled: config.arcadeOAuthEnabled === true, secureBrowser: overrides.connectorBrowser?.(owner) ?? connectorVault(config.connectorVault, owner), store: connectorStore, env: { ARCADE_API_KEY: config.arcadeKey }, fetch: overrides.connectorFetch,
+        onEvent:async e=>{await host.commitRoot(host.self(`user-${owner}`),event("AikoHooksActivated",{id:"background-v1"}));await host.commitRoot(host.self(`user-${owner}`),e);wake(owner);},
         readOwnedLogs: async (boundOwner) => (await host.read(`user-${boundOwner}`)).filter(e => e.type === "AikoApiObserved" && e.owner === boundOwner).map(e => ({ owner: boundOwner, id: String(e.id), text: `${e.method} ${e.url}` })),
       });
       connectorEngines.set(owner, engine);
@@ -175,6 +189,7 @@ export async function createService(
     | ReturnType<typeof createReflectionActor>
     | ReturnType<typeof createToolRouterActor>
     | ReturnType<typeof createControlActor>
+    | ReturnType<typeof createSecretaryActor>
   >();
   const telegramLifecycles = new Map<
     string,
@@ -203,15 +218,25 @@ export async function createService(
     throw new Error("Aiko state directory is already in use");
   }
   let modelBudget: ModelBudget | undefined;
+  let embeddingBudget: EmbeddingBudget | undefined;
   try {
     modelBudget =
       config.mode === "live"
         ? new ModelBudget(config.stateDir, config.modelLimits)
         : undefined;
+    if (config.mode === "live" && config.memoryEmbedding) {
+      const storage = nodeStorage(privateDatabaseFile(join(config.stateDir, "embedding-budget.sqlite")));
+      try { embeddingBudget = new EmbeddingBudget(storage, config.memoryEmbedding.maxUsdPerDay); }
+      catch (error) { storage.close(); throw error; }
+    }
   } catch (error) {
-    lock.close();
+    embeddingBudget?.close(); modelBudget?.close(); lock.close();
     throw error;
   }
+  const embeddingFor = (owner: string) => embeddingBudget && config.memoryEmbedding?.owners.includes(owner)
+    ? openRouterEmbeddings({ apiKey: () => config.memoryEmbedding!.apiKey, revision: config.memoryEmbedding.revision,
+        admission: embeddingBudget.forOwner(owner), fetch: overrides.embeddingFetch })
+    : undefined;
   const host: BunHost = await createBunHost({
     database: join(config.stateDir, "actor.sqlite"),
     threadDatabase: (thread) => accountThreadDatabase(config.stateDir, thread),
@@ -219,7 +244,10 @@ export async function createService(
     actorInstance: config.instanceId ?? config.mode,
     workspaceSql: false,
     keyOf: (e) =>
+      agentKeys.keyOf(e) ?? cancellationKeys.keyOf(e) ?? methodCallKeys.keyOf(e) ?? methodResponseKeys.keyOf(e) ?? methodTimeoutKeys.keyOf(e) ?? methodIngressKeyOf(e) ??
+      secretaryEventKey(e) ??
       browserTraceKeys.keyOf(e) ??
+      requestMemoryEventKey(e) ??
       harKeys.keyOf(e) ??
       telegramEventKey(e) ??
       routerEventKey(e) ??
@@ -258,6 +286,7 @@ export async function createService(
         const telegramTyping =
           ownedTelegram && media
             ? createTelegramTyping(owner, ownedTelegram, {
+                waitForDelivery: true,
                 signal: telegramShutdown.signal,
               })
             : undefined;
@@ -266,17 +295,21 @@ export async function createService(
           stateDir: accountDirectory(config.stateDir, owner),
           owner,
           thread,
+          // Foreground explicit tools only: followers/reflections never trigger bulk cloud embedding.
+          ...(role === "foreground" ? { embedding: embeddingFor(owner) } : {}),
           redact,
           readPage: (after: number, limit: number) =>
             host.readPage(thread, after, limit),
         };
         instance =
-          role === "control"
+          role === "secretary"
+            ? createSecretaryActor({ owner, redact, read: () => host.read(thread), telegram: config.botToken ? secretaryTelegram(config.botToken, overrides.telegramFetch) : undefined })
+            : role === "control"
             ? createControlActor({ owner, voice, send: telegram?.send, live: requireThinkFeel, redact, publish: rows => host.seed(`user-${owner}`, rows) })
             : role === "router"
             ? createToolRouterActor(routerBinding(owner))
             : role === "indexer"
-            ? createIndexerActor(memory)
+            ? createIndexerActor(memory,(id,signal)=>connectorsFor(owner).initialContext(id,signal))
             : role === "reflection"
               ? createReflectionActor(memory)
               : createAikoActor({
@@ -291,8 +324,8 @@ export async function createService(
                   send: telegram?.send,
                   memory,
                   background: true,
-                  workflowTools: workflowsFor(owner).tools(),
-                  toolRouter: { owner, thread, call: routeFor(owner), redact, readRouter: () => host.read(`router-${owner}`) },
+                  workflow: workflowsFor(owner).component(),
+                  toolRouter: { owner, thread, redact, readRouter: () => host.read(`router-${owner}`) },
                   capabilityBuilder: { owner, thread, redact, checkArcade: async domain => (await connectorsFor(owner).search(domain)).fallbackAllowed },
                   connectors: { owner, thread, engine: connectorsFor(owner), deliverConnection: async (input, signal) => {
                     if (!ownedTelegram || input.owner !== owner) return { status: "rejected" as const };
@@ -315,7 +348,7 @@ export async function createService(
                     : {}),
                   ...(telegramTyping ? { telegramTyping } : {}),
                 });
-        actors.set(thread, instance);
+        actors.set(thread, validateActor(instance));
       }
       return instance;
     },
@@ -351,11 +384,13 @@ export async function createService(
                 modelAdapters(openAICompatibleAdapter),
               )),
       );
+      if(address.role === "secretary") return withSecretaryHistory(model);
       if(address.role!=="foreground")return model;
-      return workflowsFor(address.owner).inference(browser ? browser.inference(model,address.owner) : model);
+      return withRequiredResponse(workflowsFor(address.owner).inference(browser ? browser.inference(model,address.owner) : model),redact);
     },
   }).catch((error) => {
     workflowDb?.close();
+    embeddingBudget?.close();
     modelBudget?.close();
     lock.close();
     throw error;
@@ -379,6 +414,7 @@ export async function createService(
   } catch (error) {
     await host.close();
     workflowDb?.close();
+    embeddingBudget?.close();
     modelBudget?.close();
     lock.close();
     throw error;
@@ -440,15 +476,7 @@ export async function createService(
       )
         return "limited";
       if (
-        messages.filter(
-          (e) =>
-            !log.some(
-              (t) =>
-                ["TurnCompleted", "TurnCancelled", "TurnFailed"].includes(
-                  t.type,
-                ) && t.turn === e.id,
-            ),
-        ).length >= 2
+        messages.filter(e => !turnTerminalOf(log, String(e.id))        ).length >= 2
       )
         return "busy";
       await host.commitRoot(
@@ -495,6 +523,14 @@ export async function createService(
   };
   const acceptInbound = async (inbound: TelegramInbound) => {
     const { user, update, text } = inbound;
+    if (inbound.secretary) return serialize(async () => {
+      if (!validOwner(user)) throw new Error("Unauthorized account");
+      const accounts = new Set((await host.threads()).map(t => threadBinding(t)?.owner).filter(Boolean));
+      if (!accounts.has(user) && accounts.size >= (config.maxAccounts ?? 100)) return "limited" as const;
+      const status = await acceptSecretary(host, user, redactTelegramInbound(inbound, redact));
+      void host.wake(secretaryThread(user)).catch(() => { failures++; });
+      return status;
+    });
     if (inbound.callback && telegram)
       await telegram.answerCallback(
         user,
@@ -524,7 +560,7 @@ export async function createService(
         config.mode === "live",
         config.publicWeb ?? config.mode === "live",
         modelBudget?.status(user),
-        { separateLane: true, media: !!overrides.telegramMedia, voice: false, connectors: connectorsFor(user), connectorsUrl: "https://aiko-agent.lewis-6d8.workers.dev/connect" },
+        { stoppedDraftId: inbound.stoppedDraftId, messageThreadId: inbound.messageThreadId, secretary: text => secretaryCommand(host, user, text, redact), separateLane: true, media: !!overrides.telegramMedia, voice: false, connectors: connectorsFor(user), connectorsUrl: "https://aiko-agent.lewis-6d8.workers.dev/connect" },
       );
       if (status === "accepted") void host.wake(`control-${user}`).catch(() => { failures++; });
       return status;
@@ -625,6 +661,8 @@ export async function createService(
     const { owner, scopes } = principal;
     if (!scopes.includes(request.method === "GET" ? "read" : "write"))
       return json({ error: "forbidden" }, 403);
+    if (/^\/(?:api|v1)\/secretary(?:\/|$)/.test(url.pathname))
+      return serialize(() => secretaryApi(request, owner, host, redact));
     if (/^\/(?:api|v1)\/connectors(?:\/|$)/.test(url.pathname))
       return connectorApi(request, connectorsFor(owner), routeFor(owner));
     if (url.pathname.startsWith("/api/control/"))
@@ -907,23 +945,17 @@ export async function createService(
         !log.some((e) => e.type === "MessageReceived" && e.id === body.id)
       )
         return json({ error: "not_found" }, 404);
-      if (
-        log.some(
-          (e) =>
-            ["TurnCompleted", "TurnCancelled", "TurnFailed"].includes(e.type) &&
-            e.turn === body.id,
-        )
-      )
+      if (turnTerminalOf(log, body.id))
         return json({ error: "already_terminal" }, 409);
-      await host.seed(`user-${owner}`, [
+      await host.commitRoot(host.self(`user-${owner}`),
         cancellationRequested({
-          invocation: { method: "message", id: body.id, epoch: 0 },
-          request: `cancel:${body.id}`,
+          invocation: { method: "message", id: body.id, epoch: turnEpochOf(log, body.id) },
+          request: `cancel:${body.id}:${turnEpochOf(log, body.id)}`,
           cause: "requested",
           reason: "Cancelled by the owner",
           at: Date.now(),
         }),
-      ]);
+      );
       wake(owner);
       return json({ status: "cancelling" }, 202);
     }
@@ -956,6 +988,7 @@ export async function createService(
       } finally {
         await host.close();
         workflowDb?.close();
+        embeddingBudget?.close();
     modelBudget?.close();
         lock.close();
       }

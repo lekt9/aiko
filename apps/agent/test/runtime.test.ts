@@ -65,9 +65,7 @@ describe("native Tardie vertical slice", () => {
     const app = await setup(
       { mode: "live", modelKey: "fixture-model-key", voiceKey: "thinkfeel-runtime-fixture" },
       {
-        voiceFetch: async (_url, init) => Response.json({ status: "success", result: {
-          finalReply: JSON.parse(JSON.parse(String(init?.body)).messages[1].content).DRAFT,
-        } }),
+        voiceFetch: async (_url, init) => Response.json({ personified: JSON.parse(String(init?.body)).raw }),
         modelFetch: async (url, init) => {
           expect(String(url)).toBe(
             "https://gateway.codegraff.com/v1/chat/completions",
@@ -201,7 +199,8 @@ describe("native Tardie vertical slice", () => {
     expect((await app.request("/api/messages", body)).status).toBe(202);
     await app.service.host.drive();
     let log = (await app.service.host.read("user-local")) as AikoEvent[];
-    expect(log.filter((e) => e.type === "ToolReturned")).toHaveLength(1);
+    expect(log.filter((e) => e.type === "ToolReturned" && (e.result as any)?.kind !== "channel-response")).toHaveLength(1);
+    expect(log.filter(e => e.type === "ToolCalled").at(-1)?.name).toBe("respond");
     expect(log.filter((e) => e.type === "AikoReplyPrepared")).toHaveLength(1);
     const first = await (await app.request("/api/messages")).json();
     expect(first.messages[1].text).toContain("#17");
@@ -276,7 +275,7 @@ describe("native Tardie vertical slice", () => {
     await app.service.host.drive();
     const events = (await app.service.host.read("user-local")) as AikoEvent[];
     expect(
-      events.filter((e) => e.type === "ToolReturned").at(-1)?.result,
+      events.filter((e) => e.type === "ToolReturned" && (e.result as any)?.kind === "memory-receipt").at(-1)?.result,
     ).toMatchObject({
       kind: "memory-receipt",
       operation: "refresh_logs",
@@ -429,7 +428,7 @@ describe("native Tardie vertical slice", () => {
     expect(sends).toBe(1);
     let log = (await app.service.host.read("user-123")) as AikoEvent[];
     expect(log.find((e) => e.type === "AikoDeliverySettled")?.result).toEqual({
-      status: "unknown",
+      status: "unknown", reason: "transport",
     });
     expect(log.filter((e) => e.type === "MessageReceived")).toHaveLength(1);
     await app.restart();

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Event } from "tardie/core/log/event";
 import { BrowserLearning } from "../src/browser-learning.ts";
-import { decodeBrowserTraceEvent } from "@unbrowse/browser-runtime/trace";
+import { decodeBrowserTraceEvent } from "@unbrowse/browser-harness/trace";
 import { learningFromBrowserTrace } from "../src/unbrowse-learning.ts";
 
 const entry = (method = "GET") => ({

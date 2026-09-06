@@ -1,11 +1,16 @@
 import { Journal } from "./journal.js";
 import type { MemoryStorage } from "./storage.js";
-import { assertNoSecrets, canonical, clone, digest, fail, number, observationId, receipt, rememberInput, sourceCoverage, sourceInput, text, MAX_PAYLOAD_BYTES } from "./codec.js";
+import { assertNoSecrets, canonical, clone, digest, fail, number, object, observationId, receipt, rememberInput, sourceCoverage, sourceInput, text, MAX_PAYLOAD_BYTES } from "./codec.js";
 import { normalizeSource } from "./sources.js";
 import { recall, hit, accessible } from "./recall.js";
 import { MemoryError, type MemoryEvent, type Observation, type Producer, type RecallInput, type RecallResult,
   type RememberInput, type Source, type SourceInput, type SourceRunner, type SourceResult, type RefreshResult, type WriteOptions, type MemoryHit } from "./types.js";
 
+export interface ScanInput { after?: string; limit?: number; type?: string; kind?: "fact" | "episode" | "skill" | "entity"; }
+export interface ScanResult {
+  items: MemoryHit[]; nextAfter: string | null; scanned: number; sourceVersion: number;
+  coverage: "complete" | "partial"; reasons: string[];
+}
 export interface MemoryOptions {
   storage: MemoryStorage;
   /** Bound by the host, not supplied by the model on each call. */
@@ -102,6 +107,27 @@ export class Memory {
       .flatMap(o => { const item = hit(this, o, this.now(), undefined, "match"); return item ? [item] : []; }));
   }
   recall(input: RecallInput = {}): RecallResult { return this.journal.read(() => recall(this, input)); }
+  /** Bounded current-record keyset page. No execution, embeddings, or recency cutoff. */
+  scan(input: ScanInput = {}): ScanResult {
+    object(input, ["after", "limit", "type", "kind"]);
+    const limit = number(input.limit ?? 16, "limit", 1, 128);
+    if (input.after !== undefined) receipt(input.after);
+    if (input.type !== undefined) text(input.type, "type", 80);
+    if (input.kind !== undefined && !["fact", "episode", "skill", "entity"].includes(input.kind)) fail("invalid_input", "Unknown memory kind");
+    return this.journal.read(() => {
+      const rows = this.journal.page(this.scope, { ...input, limit: limit + 1 });
+      const more = rows.length > limit; if (more) rows.pop();
+      const reasons = new Set<string>([...(more ? ["page_limit"] : []), ...(input.after ? ["page_window"] : [])]);
+      const now = this.now();
+      const items = rows.flatMap(o => {
+        const item = hit(this, o, now, undefined, "match");
+        if (!item) { reasons.add("evidence_unavailable"); return []; }
+        return item.state === "current" ? [item] : [];
+      });
+      return { items, nextAfter: more ? rows.at(-1)!.id : null, scanned: rows.length,
+        sourceVersion: this.journal.scopeVersion(this.scope), coverage: reasons.size ? "partial" : "complete", reasons: [...reasons] };
+    });
+  }
   sources(): Source[] { return this.journal.sources(this.scope); }
   registerSource(value: SourceInput, key: string): Source {
     const input = sourceInput(value); text(key, "key");

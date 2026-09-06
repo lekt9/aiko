@@ -1,3 +1,4 @@
+import type { NativeLoginInput, NativeLoginView } from "./native-login.ts";
 /** Opaque host-owned relay identity. Never accept these fields from an actor's callback payload. */
 export type SecureBrowserBinding = { owner: string; domain: string; connectionId: string };
 export type SecureBrowserVerification = { verified: true; revision: number; expiresAt: number };
@@ -6,6 +7,9 @@ export type SecureBrowserStatus = SecureBrowserBinding & (
   | { status: "connected"; verification: SecureBrowserVerification }
 );
 export interface SecureBrowserAdapter {
+  native?: boolean;
+  readContext?(binding: SecureBrowserBinding, signal?: AbortSignal): Promise<{url: string; text: string}>;
+  control?(binding: SecureBrowserBinding, input: Omit<NativeLoginInput, "connectionId" | "domain">, signal?: AbortSignal): Promise<NativeLoginView>;
   begin(binding: SecureBrowserBinding, signal?: AbortSignal): Promise<{ authorizationUrl: string }>;
   status?(binding: SecureBrowserBinding, signal?: AbortSignal): Promise<SecureBrowserStatus>;
   disconnect?(binding: SecureBrowserBinding, signal?: AbortSignal): Promise<SecureBrowserBinding & { status: "disconnected" | "unknown" }>;

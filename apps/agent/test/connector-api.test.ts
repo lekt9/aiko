@@ -6,9 +6,9 @@ import { PERSONA, type AikoConfig } from "../src/config.ts";
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
 const alice = "aiko_test_alice_12345678901234567890123456789012", bob = "aiko_test_bob_1234567890123456789012345678901234", reader = "aiko_test_reader_123456789012345678901234567890";
-async function setup() {
+async function setup(arcadeOAuthEnabled: boolean | undefined = true) {
  const stateDir = await mkdtemp('/tmp/aiko-connector-api-'); cleanup.push(() => rm(stateDir,{recursive:true,force:true}));
- const config: AikoConfig = { mode:'demo',port:4242,stateDir,operatorToken:'private-test-operator-1234567890123456',persona:PERSONA,voiceEnabled:false,allowedUsers:new Set(['123','456']),arcadeKey:'private-test-arcade-key-123456',planeCredentials:[{account:'123',digest:credentialDigest(alice),scopes:['read','write']},{account:'456',digest:credentialDigest(bob),scopes:['read','write']},{account:'123',digest:credentialDigest(reader),scopes:['read']}] };
+ const config: AikoConfig = { arcadeOAuthEnabled, mode:'demo',port:4242,stateDir,operatorToken:'private-test-operator-1234567890123456',persona:PERSONA,voiceEnabled:false,allowedUsers:new Set(['123','456']),arcadeKey:'private-test-arcade-key-123456',planeCredentials:[{account:'123',digest:credentialDigest(alice),scopes:['read','write']},{account:'456',digest:credentialDigest(bob),scopes:['read','write']},{account:'123',digest:credentialDigest(reader),scopes:['read']}] };
  const calls: {url:string;body:any}[]=[];
  const connectorFetch = async (u: any, init?: RequestInit) => {
   const url=String(u), body=init?.body ? JSON.parse(String(init.body)):undefined; calls.push({url,body});
@@ -66,5 +66,13 @@ test('routing rejects nested credentials and authorization URLs before native ev
  for (const tasks of [[{id:'x',query:'GitHub',arguments:{nested:{token:'opaque-secret-value'}}}],[{id:'x',query:'https://cloud.arcade.dev/auth?state=opaque'}],[{id:'x',query:'https://example.com/callback?code=opaque'}]]) {
   const response=await app.request('/api/connectors/route',alice,{tasks});expect(response.status).toBe(409);
  }
+ expect(app.calls).toHaveLength(0);
+});
+
+
+test('disabled host rejects OAuth grant endpoints and omits apps',async()=>{
+ const app=await setup(false);
+ expect(await (await app.request('/api/connectors/apps',alice)).json()).toMatchObject({apps:[],oauthEnabled:false});
+ for(const [path,body] of [['/api/connectors/connect',{connectorId:'arcade:GitHub.List'}],['/api/connectors/apps/connect',{appId:'app:google:gmail'}]] as const) expect((await app.request(path,alice,body)).status).toBe(409);
  expect(app.calls).toHaveLength(0);
 });

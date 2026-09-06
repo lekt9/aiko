@@ -1,3 +1,4 @@
+import { turnEpochOf, turnTerminalOf } from "tardie/code/execution/turns";
 import type { BunHost } from "tardie/bun/host";
 import { cancellationRequested } from "tardie/core/method/cancellation";
 import { event, voiceAndOutbox, type AikoEvent, type Sender } from "./actor.ts";
@@ -15,6 +16,7 @@ export const controlCommand = (text: string) => {
   // Exact status-only questions bypass admission to the busy conversation turn.
   if (/^(?:what(?:'|’)?s happening|what is happening|what are you doing|any updates|status update|are you still working)[?!.]*$/i.test(value)) return "status";
   return (
+    /^\/(secretary)(?:\s+[^\r\n]+)?$/.exec(value)?.[1] ??
     /^\/(start|help|status|cancel)(?:\s+[A-Za-z0-9_-]+)?$/.exec(value)?.[1] ??
     /^\/(apps|connect|connections|disconnect|discover)(?:\s+[^\r\n]+)?$/.exec(
       value,
@@ -29,8 +31,7 @@ export type TelegramConnectorControls = Pick<
 
 /** Owner-scoped committed facts, not an invented progress estimate. */
 export function workStatus(log: readonly AikoEvent[], now = Date.now()): string {
-  const ended = new Set(log.filter(e => ["TurnCompleted", "TurnFailed", "TurnCancelled"].includes(e.type)).map(e => e.turn));
-  const pending = log.filter(e => e.type === "MessageReceived" && !ended.has(e.id));
+  const pending = log.filter(e => e.type === "MessageReceived" && !turnTerminalOf(log, String(e.id)));
   if (!pending.length) return "Work: no unfinished foreground request is recorded.";
   const active = new Set(pending.map(e => e.id));
   const browser = log.findLast(e => e.type === "AikoBrowserActionStarted" && active.has(e.turn) && !log.some(done => done.type === "AikoBrowserActionFinished" && done.id === e.id));
@@ -155,12 +156,15 @@ export async function telegramControl(
   publicWeb: boolean,
   usage?: ReturnType<ModelBudget["status"]>,
   capabilities?: {
+    stoppedDraftId?: number;
+    messageThreadId?: number;
     sandbox?: boolean;
     media?: boolean;
     voice?: boolean;
     connectors?: TelegramConnectorControls;
     connectorsUrl?: string;
     separateLane?: boolean;
+    secretary?: (text: string) => Promise<string>;
   },
 ) {
   const command = controlCommand(text)!;
@@ -175,7 +179,9 @@ export async function telegramControl(
   )
     return "limited" as const;
   let reply: string;
-  if (
+  if ((command === "secretary" || /^\/start bizChat/.test(text)) && capabilities?.secretary) {
+    reply = await capabilities.secretary(text);
+  } else if (
     ["apps", "connect", "connections", "disconnect", "discover"].includes(
       command,
     )
@@ -187,39 +193,30 @@ export async function telegramControl(
       capabilities?.connectorsUrl,
     );
   } else if (command === "cancel") {
-    const pending = log.filter(
-      (e) =>
-        e.type === "MessageReceived" &&
-        !log.some(
-          (terminal) =>
-            ["TurnCompleted", "TurnFailed", "TurnCancelled"].includes(
-              terminal.type,
-            ) && terminal.turn === e.id,
-        ),
-    );
-    await host.seed(
-      `user-${owner}`,
-      pending.map((turn) =>
-        cancellationRequested({
-          invocation: { method: "message", id: String(turn.id), epoch: 0 },
-          request: `telegram-control:${id}:${turn.id}`,
-          cause: "requested",
-          reason: "Cancelled by the owner",
-          at: Date.now(),
-        }),
-      ),
-    );
-    reply =
+    const draft = capabilities?.stoppedDraftId === undefined ? undefined : log.findLast(e =>
+      (e.type === "AikoTelegramTypingStarted" || e.type === "AikoTelegramDraftStarted") && e.owner === owner && e.draftId === capabilities.stoppedDraftId &&
+      (e.messageThreadId ?? undefined) === capabilities.messageThreadId);
+    if (capabilities?.stoppedDraftId !== undefined && (!draft || Number(draft.epoch ?? 0) !== turnEpochOf(log, String(draft.turn)))) return "duplicate" as const;
+    const pending = log.filter(e => e.type === "MessageReceived" && !turnTerminalOf(log, String(e.id)) && (!draft || e.id === draft.turn));
+    for (const turn of pending) {
+      const epoch = turnEpochOf(log, String(turn.id));
+      await host.commitRoot(host.self(`user-${owner}`), cancellationRequested({
+        invocation: { method: "message", id: String(turn.id), epoch },
+        request: `telegram-control:${id}:${turn.id}:${epoch}`,
+        cause: "requested", reason: "Cancelled by the owner", at: Date.now(),
+      }));
+    }
+    reply = capabilities?.stoppedDraftId !== undefined ? "Stopped this reply. Completed actions cannot be undone." :
       "Cancellation requested. Earlier requests still in the Telegram queue will be dropped, and active work will be asked to stop. Completed effects cannot be undone.";
   } else if (command === "status") {
     const memory = log.findLast((e) => e.type === "AikoLogMemoryFollowed");
     reply = `Account: ${owner}\nInference: ${live ? "live" : "demo"}${usage ? `\nModel requests today: ${usage.accountCalls}/${usage.limits.accountPerDay} (UTC)` : ""}\nMemory: entity-learn; log sync ${memory?.status ?? "not started"}\n${capabilities?.sandbox ? "Web: query-based search and browser in your own persistent sandbox (created on demand)" : `Public URL reading: ${publicWeb ? "enabled" : "disabled"}`}\nTelegram media: ${capabilities?.media ? "private inspection enabled; format and model limits apply" : "attachments accepted; advanced processing is not configured"}\nVoice replies: ${capabilities?.voice ? "synthetic speech enabled" : "not configured"}\nConnected apps: ${capabilities?.connectors ? "use /apps to search, /connections to check access" : "not configured"}${capabilities?.sandbox ? "" : "\nArbitrary-code VMs: unavailable"}`;
   } else {
-    reply = `Hi! I’m Aiko. Your account is ${owner}. ${live ? "I can answer questions and keep cited memory." : "This assistant is in demo mode."} ${capabilities?.sandbox ? "Ask a question to start live web search; you don't need a starting URL. Browser work runs in your own persistent sandbox, created when needed." : publicWeb ? "Send an exact public page URL for me to read." : "Public page reading is disabled."}\n\nYou can send photos, voice/audio, videos, documents, stickers and albums with captions or replies. ${capabilities?.media ? "I inspect supported content and flag any unprocessed or sampled parts." : "Advanced media interpretation is not configured; I won't pretend to see or hear unprocessed files."}${capabilities?.voice ? " Voice replies use synthetic speech." : ""}\n\nYour conversation and memory are separate from other accounts. Use /status for capabilities and /cancel to stop pending work. Never send passwords or tokens. To connect an app, send /apps followed by its name or website (for example /apps github.com). I check Arcade first; websites outside the catalog may need discovery or a connector built. Use /connect for secure onboarding and /connections to check access. ${capabilities?.connectors ? "" : "Connector access is not configured for this account yet."}`;
+    reply = `Hi! I’m Aiko. Your account is ${owner}. ${live ? "I can answer questions and keep cited memory." : "This assistant is in demo mode."} ${capabilities?.sandbox ? "Ask a question to start live web search; you don't need a starting URL. Browser work runs in your own persistent sandbox, created when needed." : publicWeb ? "Send an exact public page URL for me to read." : "Public page reading is disabled."}\n\nYou can send photos, voice/audio, videos, documents, stickers and albums with captions or replies. ${capabilities?.media ? "I inspect supported content and flag any unprocessed or sampled parts." : "Advanced media interpretation is not configured; I won't pretend to see or hear unprocessed files."}${capabilities?.voice ? " Voice replies use synthetic speech." : ""}\n\nYour conversation and memory are separate from other accounts. Use /secretary to connect your Telegram account and enable automatic replies per contact. Use /status for capabilities and /cancel to stop pending work. Never send passwords or tokens. To connect an app, send /apps followed by its name or website (for example /apps github.com). I check Arcade first; websites outside the catalog may need discovery or a connector built. Use /connect for secure onboarding and /connections to check access. ${capabilities?.connectors ? "" : "Connector access is not configured for this account yet."}`;
   }
   if (command === "status") {
     const workers = await Promise.all(([
-      ["Learning", `background-${owner}-indexer`, ["AikoHookReceived", "AikoIndexRequested"], ["AikoKnowledgeChanged", "AikoKnowledgeUnchanged", "AikoBackgroundFailed"]],
+      ["Learning", `background-${owner}-indexer`, ["AikoHookReceived", "AikoIndexRequested", "AikoConnectionIndexRequested"], ["AikoKnowledgeChanged", "AikoKnowledgeUnchanged", "AikoBackgroundFailed"]],
       ["Reflection", `background-${owner}-reflection`, ["AikoReflectionRequested"], ["AikoDecisionRecorded", "AikoBackgroundFailed"]],
     ] as const).map(async ([label, thread, starts, finishes]) => {
       const events = await host.read(thread) as AikoEvent[];
@@ -238,6 +235,7 @@ export async function telegramControl(
       source: "telegram",
       chat: owner,
       sender: owner,
+      ...(capabilities?.messageThreadId ? { telegram: { messageThreadId: capabilities.messageThreadId } } : {}),
     }),
   );
   return "accepted" as const;

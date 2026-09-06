@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import {
   browserRequestEvidenceIdOf,
   decodeBrowserTraceEvent,
-} from "@unbrowse/browser-runtime/trace";
-import { canonicalStringify, sha256 } from "@unbrowse/browser-runtime/har";
+} from "@unbrowse/browser-harness/trace";
+import { canonicalStringify, sha256 } from "@unbrowse/browser-harness/har";
 import { validateLearningInput, type LearningInput } from "./learning.ts";
 import type { BrowserLearningPending } from "./browser-learning.ts";
 

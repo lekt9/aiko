@@ -258,6 +258,15 @@ export function createApplication(
       ),
     ),
   );
+  app.post("/v1/owner/connections/:id/browser-login", async (c) =>
+    c.json(
+      await runtime.completeBrowserLogin(
+        c.get("owner").tenant,
+        id.parse(c.req.param("id")),
+        await c.req.json(),
+      ),
+    ),
+  );
   app.post("/v1/owner/sources", async (c) =>
     c.json(
       await vault.addSource(c.get("owner").tenant, await c.req.json()),

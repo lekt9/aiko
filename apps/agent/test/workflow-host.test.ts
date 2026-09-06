@@ -15,7 +15,9 @@ import { createBunHost } from "tardie/bun/host";
 import {
   WorkflowController,
   createWorkflowStore,
+  workflowDispatcher,
 } from "../src/workflow-host.ts";
+import type { ConnectorEngine } from "../src/connectors.ts";
 import { sqliteWorkflowKV } from "../src/workflow-store.ts";
 import {
   ToolWorkflows,
@@ -56,6 +58,24 @@ const program: WorkflowDefinition = {
 const runtimeInput = "runtime_query_private_sentinel";
 const runtimeOutput = "runtime_result_private_sentinel";
 const rawActionText = "raw_action_explanation_sentinel";
+test("workflow resolves a provider connection's authorized tool and rechecks revocation before execution", async () => {
+  const executions: unknown[] = [];
+  let connected = true;
+  const dispatcher = workflowDispatcher({ owner:"alice", redact:s=>s, readEvents:async()=>[], engine:{
+    describe:async()=>({metadata:{behavior:{read_only:true}},inputSchema:{type:"object"}}),
+    connections:async()=>connected ? [{id:"gmail-connection",connectorId:"arcade-provider:Gmail",toolIds:["arcade:Gmail.Search"],status:"connected"}] : [],
+    execute:async(...args: unknown[])=>{ executions.push(args); return {status:"succeeded",value:{count:2}}; },
+  } as unknown as ConnectorEngine });
+  const tool = await dispatcher.resolve({owner:"alice",toolId:"arcade:Gmail.Search",signal:new AbortController().signal});
+  if (!tool) throw Error("Missing registered tool");
+  const call = {owner:"alice",input:{query:"subject:report"},signal:new AbortController().signal,runId:"r",stepId:"s"};
+  expect(await tool.authorize(call)).toBe(true);
+  expect(await tool.execute(call)).toEqual({status:"succeeded",output:{count:2}});
+  expect(executions).toEqual([["gmail-connection",{query:"subject:report"},"arcade:Gmail.Search"]]);
+  connected = false;
+  expect(await tool.execute(call)).toEqual({status:"authorization_required"});
+  expect(executions).toHaveLength(1);
+});
 function registry(owner: string) {
   const calls: { toolId: string; input: unknown }[] = [];
   let active = 0,
@@ -188,7 +208,7 @@ test("Native BunHost executes parallel workflow, hydrates transient outputs, cry
   const definition = actor({
     name: "aiko",
     methods: { message: agentMessageMethod },
-    components: [infer([tool(controller.tools()), outputValidateOnce])],
+    components: [infer([controller.component(), outputValidateOnce])],
   });
   const host = await createBunHost({
     database: join(directory, "actor.sqlite"),
@@ -228,6 +248,26 @@ test("Native BunHost executes parallel workflow, hydrates transient outputs, cry
       runtimeOutput,
       rawActionText,
     ]);
+    // Recreate the native host after losing either tool acknowledgement or settlement.
+    // Opaque argument handles and intermediate results are deliberately absent on restart.
+    for (const checkpoint of ["AikoWorkflowStarted", "AikoWorkflowSettled"]) {
+      const cut = events.findIndex(e => e.type === checkpoint);
+      expect(cut).toBeGreaterThan(0);
+      const restored = new WorkflowController("alice", "user-alice", { store, dispatcher: registered.dispatcher }, s => s);
+      const recoveredActor = actor({ name: "aiko", methods: { message: agentMessageMethod }, components: [infer([restored.component(), outputValidateOnce])] });
+      const recoveredHost = await createBunHost({
+        database: join(directory, `${checkpoint}.sqlite`), actorName: "aiko", actorInstance: "workflow-test", actorFor: () => recoveredActor,
+        layersFor: () => restored.inference(Layer.succeed(Infer, { resolve: () => ({ model: { provider: "test", model_id: "workflow-controller" } }), react: () => Effect.succeed({ kind: "complete", output: "Recovered saved receipt." }) })),
+      });
+      try {
+        await recoveredHost.seed("user-alice", events.slice(0, cut + 1));
+        await recoveredHost.recover();
+        const recovered = await recoveredHost.read("user-alice");
+        expect(recovered.find(e => e.type === "ToolReturned")?.result).toMatchObject({ kind: "workflow-receipt", runId: nativeRunId, receipt: { status: "succeeded" } });
+        expect(recovered.some(e => e.type === "TurnCompleted")).toBe(true);
+        expect(registered.calls).toHaveLength(3);
+      } finally { await recoveredHost.close(); }
+    }
     const reopened = new Database(join(directory, "workflows.sqlite"));
     try {
       expect(
@@ -387,7 +427,7 @@ test("native workflow opaque handles cannot cross owner threads", async () => {
   const definition = actor({
     name: "aiko",
     methods: { message: agentMessageMethod },
-    components: [infer([tool(controller.tools()), outputValidateOnce])],
+    components: [infer([controller.component(), outputValidateOnce])],
   });
   const host = await createBunHost({
     database: join(directory, "actor.sqlite"),
@@ -455,7 +495,7 @@ test("configured credential redaction applies before workflow outputs enter mode
   const definition = actor({
     name: "aiko",
     methods: { message: agentMessageMethod },
-    components: [infer([tool(controller.tools()), outputValidateOnce])],
+    components: [infer([controller.component(), outputValidateOnce])],
   });
   const host = await createBunHost({
     database: join(directory, "actor.sqlite"),

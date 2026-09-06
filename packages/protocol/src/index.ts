@@ -181,6 +181,26 @@ export type VaultSession = z.infer<typeof sessionMaterial>;
 export const sessionWrite = z
   .object({ revision: z.number().int().positive(), cookies: cookieJar })
   .strict();
+/** Owner-only commit of a browser login; no caller-supplied verification flag. */
+export const browserLoginCommit = z
+  .object({
+    profileId: id,
+    runtimeId: id,
+    version: z.number().int().positive(),
+    identity,
+    credential,
+    cookies: cookieJar,
+  })
+  .strict();
+export const browserLoginReceipt = z
+  .object({
+    version: z.number().int().positive(),
+    revision: z.number().int().positive(),
+    expiresAt: z.number().finite(),
+  })
+  .strict();
+export type BrowserLoginCommit = z.infer<typeof browserLoginCommit>;
+export type BrowserLoginReceipt = z.infer<typeof browserLoginReceipt>;
 export const importPreview = z
   .object({
     id,

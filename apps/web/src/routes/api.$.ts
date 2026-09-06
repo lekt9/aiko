@@ -2,7 +2,13 @@ import { createFileRoute } from "@tanstack/react-router";
 import { DEMO_WORKSPACE } from "../lib/app-mode";
 async function handle(request: Request) {
   const path = new URL(request.url).pathname;
-  if (path === "/api/connectors" || path.startsWith("/api/connectors/")) {
+  if (
+    path === "/api/approvals" ||
+    path === "/api/connectors" ||
+    path.startsWith("/api/connectors/") ||
+    path === "/api/secretary" ||
+    path.startsWith("/api/secretary/")
+  ) {
     const { handleConnectorRequest } =
       await import("../server/connector-proxy");
     return handleConnectorRequest(request);

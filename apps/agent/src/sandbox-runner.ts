@@ -1,15 +1,22 @@
-import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, rm } from "node:fs/promises";
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { browserDriverFactory } from "./browser-driver.ts";
-import { replayKeys, unwrapReplay, sealReplay } from "./codegraff.ts";
-import { BrowserEventQueue } from "./browser-event-queue.ts";
 import {
-  agentBrowserAgentToolCallOf,
+  replayKeys,
+  unwrapReplay,
+  sealReplay,
+  PrivateOperationFence,
+} from "./codegraff.ts";
+import { BrowserEventQueue } from "./browser-event-queue.ts";
+import { runCodeSegment } from "./code-sandbox-runner.ts";
+import {
+  agentBrowserAgentActionOf,
+  AgentBrowserClientError,
   pinnedAgentBrowserAssetFor,
   pinnedAgentBrowserExecutablePath,
   verifyPinnedAgentBrowserExecutable,
-} from "@unbrowse/browser-runtime";
+} from "@unbrowse/browser-harness/client";
 
 // Trusted execution adapter in one tenant VM. Tardigrade stays in the control plane.
 const root = "/home/daytona/aiko";
@@ -18,7 +25,7 @@ await mkdir(`${root}/operations`, { recursive: true, mode: 0o700 });
 const mode = process.argv[2];
 if (mode === "install") {
   const asset = pinnedAgentBrowserAssetFor();
-  const path = pinnedAgentBrowserExecutablePath(asset);
+  const path = pinnedAgentBrowserExecutablePath(asset, `${root}/native`);
   await mkdir(path.slice(0, path.lastIndexOf("/")), {
     recursive: true,
     mode: 0o700,
@@ -31,7 +38,16 @@ if (mode === "install") {
     const bytes = new Uint8Array(await res.arrayBuffer());
     if (bytes.length !== asset.sizeBytes)
       throw new Error("Browser asset size mismatch");
-    await writeFile(path, bytes, { mode: 0o700 });
+    // A cancelled bootstrap must never leave an incomplete executable at the
+    // installed path. Validate the download before making it visible to launch.
+    const temporary = `${path}.partial`;
+    try {
+      await writeFile(temporary, bytes, { mode: 0o700 });
+      await verifyPinnedAgentBrowserExecutable(temporary, asset);
+      await rename(temporary, path);
+    } finally {
+      await rm(temporary, { force: true });
+    }
   }
   await verifyPinnedAgentBrowserExecutable(path, asset);
   console.log(JSON.stringify({ installed: true, asset: asset.name }));
@@ -41,12 +57,16 @@ if (mode === "install") {
     "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,status TEXT NOT NULL,result TEXT)",
   );
   const replayIdentity = replayKeys();
+  const privateOperations = new PrivateOperationFence();
+  const runnerDigest = createHash("sha256").update(await readFile(`${root}/runner.js`)).digest("hex");
+  let closing = false;
   let busy = false;
   const active = new Map<string, AbortController>();
   const queue = new BrowserEventQueue(db);
   const batch = () => queue.batch();
   const driver = await browserDriverFactory("/usr/bin/chromium", {
     persistentDirectory: `${root}/browser`,
+    nativeAssetDirectory: `${root}/native`,
   })({
     domains: ["*"],
     owner: JSON.parse(await readFile(`${root}/owner.json`, "utf8")).owner,
@@ -57,11 +77,16 @@ if (mode === "install") {
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 4860,
+    // Browser operations and cancellation have their own controller deadlines.
+    // Bun's default idle timeout must not sever a long, private loopback reply.
+    idleTimeout: 0,
     async fetch(request) {
       const url = new URL(request.url);
+      if (closing) return new Response("Runner closing", { status: 503 });
       if (url.pathname === "/health")
         return Response.json({
           ready: true,
+          runnerDigest,
           replayPublicKey: replayIdentity.publicKey,
           privateContext: await driver.sessionContext?.(),
           backend: "playground-agent-browser",
@@ -83,8 +108,14 @@ if (mode === "install") {
         const input = (await request.json()) as { id?: unknown };
         if (typeof input?.id !== "string" || !/^[a-f0-9-]{36}$/.test(input.id))
           return new Response("Invalid operation", { status: 400 });
+        // Fence a cancellation that arrives before the execution request itself.
+        db.query("INSERT OR IGNORE INTO operations(id,status,result) VALUES(?,'unknown',?)")
+          .run(input.id, JSON.stringify({status: "unknown", reason: "cancelled_before_start"}));
         active.get(input.id)?.abort();
-        return Response.json({ cancellationRequested: true });
+        const deadline = performance.now() + 30_000;
+        while (active.has(input.id) && performance.now() < deadline) await Bun.sleep(25);
+        if (active.has(input.id)) return new Response("Cancellation unsettled", {status: 409});
+        return Response.json({ cancellationRequested: true, settled: true, ...batch() });
       }
       if (url.pathname === "/capture" && request.method === "POST") {
         if (busy || !driver.screenshot)
@@ -116,42 +147,50 @@ if (mode === "install") {
         }
       }
       if (url.pathname === "/request-replay" && request.method === "POST") {
-        if (busy || !driver.requestTransport)
-          return new Response("Unavailable", { status: 409 });
-        busy = true;
+        let ownsBrowser = false;
         try {
           const { key, value } = unwrapReplay(
             await request.json(),
             replayIdentity.privateKey,
           );
-          if (typeof value.id !== "string" || !/^[a-f0-9-]{36}$/.test(value.id))
-            throw new Error("Invalid operation");
+          privateOperations.consume(value.id);
+          if (value.operation !== "code") {
+            if (busy || !driver.requestTransport) return new Response("Unavailable", { status: 409 });
+            busy = true;
+            ownsBrowser = true;
+          }
           const cancellation = new AbortController();
           active.set(value.id, cancellation);
           // No operation result or plaintext request is journaled. Retrying requires a new read.
           try {
             const output =
-              value.operation === "session-install" && driver.installSession
+              value.operation === "code"
+                ? await runCodeSegment(value.input, cancellation.signal)
+                : value.operation === "native-auth" && driver.nativeAuth
+                ? await driver.nativeAuth(value.input, cancellation.signal)
+                : value.operation === "session-install" && driver.installSession
                 ? await driver.installSession(value.input, cancellation.signal)
                 : value.operation === "session-clear" && driver.clearSession
-                  ? await driver.clearSession(value.scope,cancellation.signal).then(()=>({cleared:true}))
+                  ? await driver
+                      .clearSession(value.scope, cancellation.signal)
+                      .then(() => ({ cleared: true }))
                   : value.operation === "search" && driver.requestSearch
-                ? await driver.requestSearch(
-                    value.query,
-                    value.limit,
-                    cancellation.signal,
-                  )
-                : value.operation === "hydrate" && driver.requestRehydrate
-                  ? await driver.requestRehydrate(
-                      value.pointerId,
-                      value.inputs,
-                      cancellation.signal,
-                    )
-                  : value.operation === "send"
-                    ? await driver.requestTransport.send(value.request)
-                    : (() => {
-                        throw new Error("Unknown replay operation");
-                      })();
+                    ? await driver.requestSearch(
+                        value.query,
+                        value.limit,
+                        cancellation.signal,
+                      )
+                    : value.operation === "hydrate" && driver.requestRehydrate
+                      ? await driver.requestRehydrate(
+                          value.pointerId,
+                          value.inputs,
+                          cancellation.signal,
+                        )
+                      : value.operation === "send"
+                        ? await driver.requestTransport!.send(value.request)
+                        : (() => {
+                            throw new Error("Unknown replay operation");
+                          })();
             return Response.json(sealReplay({ output }, key));
           } catch {
             return Response.json(
@@ -163,18 +202,26 @@ if (mode === "install") {
         } catch {
           return new Response("Invalid envelope", { status: 400 });
         } finally {
-          busy = false;
+          if (ownsBrowser) busy = false;
         }
       }
       if (url.pathname === "/close" && request.method === "POST") {
         if (busy) return new Response("busy", { status: 409 });
-        await driver.close();
-        setTimeout(() => {
-          server.stop();
-          db.close();
-          process.exit(0);
-        }, 200);
-        return Response.json({ closed: true });
+        closing = true;
+        let cleaned = false;
+        try {
+          await driver.close();
+          cleaned = true;
+          return Response.json({ closed: true });
+        } catch {
+          return Response.json({ closed: false, reason: "cleanup_failed" }, { status: 500 });
+        } finally {
+          // A failed flush must not strand a resident process permanently in closing.
+          setTimeout(() => {
+            try { server.stop(true); db.close(); }
+            finally { process.exit(cleaned ? 0 : 1); }
+          }, 200);
+        }
       }
       if (url.pathname !== "/execute" || request.method !== "POST")
         return new Response("Not found", { status: 404 });
@@ -196,14 +243,11 @@ if (mode === "install") {
           ...batch(),
         });
       // The original library performs exact per-operation argument validation.
-      const action = agentBrowserAgentToolCallOf(
-        `agent_browser_${body.action.action}`,
-        Object.fromEntries(
-          Object.entries(body.action).filter(([k]) => k !== "action"),
-        ),
-        ["*"],
-      ).action;
-      if (!action) return new Response("Invalid action", { status: 400 });
+      // The control plane already decoded the tool into the closed action union.
+      // Wait variants share action:"wait" and are not model function names.
+      let action;
+      try { action = agentBrowserAgentActionOf(body.action, ["*"]); }
+      catch { return new Response("Invalid action", { status: 400 }); }
       busy = true;
       const cancellation = new AbortController();
       active.set(body.id, cancellation);
@@ -217,12 +261,17 @@ if (mode === "install") {
           "UPDATE operations SET status='completed',result=? WHERE id=?",
         ).run(result, body.id);
         return Response.json({ ...JSON.parse(result), ...batch() });
-      } catch {
-        const result = JSON.stringify({ status: "unknown" });
+      } catch (error) {
+        // Only the client's settled, telemetry-corroborated failed read is
+        // recoverable. The driver has flushed its evidence before throwing.
+        const outcome = error instanceof AgentBrowserClientError && error.code === "element_not_found"
+          ? { status: "failed", reason: "element_not_found" }
+          : { status: "unknown" };
+        const result = JSON.stringify(outcome);
         db.query(
-          "UPDATE operations SET status='unknown',result=? WHERE id=?",
-        ).run(result, body.id);
-        return Response.json({ status: "unknown", ...batch() });
+          "UPDATE operations SET status=?,result=? WHERE id=?",
+        ).run(outcome.status, result, body.id);
+        return Response.json({ ...outcome, ...batch() });
       } finally {
         busy = false;
         active.delete(body.id);
@@ -249,11 +298,26 @@ if (mode === "install") {
     }
   }
   if (!ready) throw new Error("Browser runner did not start");
-  console.log(await (await fetch(`${endpoint}/health`)).text());
+  const health = await (await fetch(`${endpoint}/health`)).json() as { ready?: boolean; runnerDigest?: string };
+  const expected = createHash("sha256").update(await readFile(`${root}/runner.js`)).digest("hex");
+  if (health.ready !== true || health.runnerDigest !== expected)
+    throw new Error("Browser runner bundle mismatch");
+  console.log(JSON.stringify(health));
 } else if (mode === "close") {
   const res = await fetch(`${endpoint}/close`, { method: "POST" });
   if (!res.ok) throw new Error("Runner close failed");
-  console.log(await res.text());
+  const result = await res.text();
+  // Acknowledging close is not process settlement. Wait before replacement or VM stop.
+  let stopped = false;
+  const deadline = performance.now() + 10_000;
+  while (!stopped && performance.now() < deadline) {
+    await Bun.sleep(100);
+    stopped = await fetch(`${endpoint}/health`, { signal: AbortSignal.timeout(1000) })
+      .then(async r => { await r.body?.cancel(); return false; })
+      .catch(error => error?.code === "ConnectionRefused" || error?.code === "ECONNREFUSED");
+  }
+  if (!stopped) throw new Error("Browser runner did not stop");
+  console.log(result);
 } else if (mode === "drain") {
   const res = await fetch(`${endpoint}/drain`);
   if (!res.ok) throw new Error("Trace drain failed");

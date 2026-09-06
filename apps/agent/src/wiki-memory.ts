@@ -1,6 +1,7 @@
 import {
-  MemoryError, validateNoSecrets, validateRememberInput,
-  type Memory, type MemoryHit, type RememberInput, type WriteOptions,
+  MemoryError, validateNoSecrets, validateRememberInput, Knowledge, renderKnowledgeHtml,
+  type PageDraft, type ScanInput,
+  type Memory, type MemoryHit, type RecallInput, type RememberInput, type WriteOptions,
 } from "entity-learn/cloudflare";
 
 /** Host service, not a second store. Pass the same openMemory(binding) handle used by
@@ -94,6 +95,93 @@ export class WikiMemory {
     validateNoSecrets(value);
     if (this.binding.redact(encoded) !== encoded) throw new MemoryError("sensitive_material", "Credentials must not enter wiki memory");
   }
+  /** Context policy follows pinned evidence, not links, similarity or model-supplied consent. */
+  private evidence(hit: MemoryHit): MemoryHit[] {
+    const queue = [hit]; const seen = new Set<string>(); const evidence: MemoryHit[] = [];
+    while (queue.length) {
+      const current = queue.pop()!; const o = current.observation;
+      if (seen.has(o.id)) continue; seen.add(o.id);
+      if (seen.size > 256) throw new MemoryError("evidence_unavailable", "Evidence closure exceeds consent bound");
+      evidence.push(current);
+      for (const id of [...o.supports, ...o.dependsOn]) {
+        const parent = this.memory.get(id);
+        if (!parent) throw new MemoryError("evidence_unavailable", "Evidence unavailable");
+        queue.push(parent);
+      }
+    }
+    return evidence;
+  }
+  private privateExamples(hit: MemoryHit): string[] {
+    return this.evidence(hit).filter(h => h.observation.type === "style-example").map(h => h.observation.id);
+  }
+  private contextExclusion(hit: MemoryHit): string | null {
+    for (const { observation } of this.evidence(hit)) {
+      if (observation.type === "style-example" && this.binding.styleExampleConsent?.(observation.id) !== true)
+        return "style_consent_required";
+      const encoded = JSON.stringify(observation);
+      if (this.binding.redact(encoded) !== encoded) return "redaction_policy";
+    }
+    return null;
+  }
+  allowsContext(hit: MemoryHit): boolean { return this.contextExclusion(hit) === null; }
+  requireContextReferences(ids: readonly string[]) {
+    for (const id of new Set(ids)) {
+      const hit = this.memory.get(id);
+      if (!hit) throw new MemoryError("evidence_unavailable", "Evidence is unavailable for model context");
+      if (!this.allowsContext(hit)) throw new MemoryError("forbidden", "Evidence is unavailable for model context");
+    }
+  }
+  private contextItems<T extends { items: MemoryHit[]; coverage: "complete" | "partial"; reasons: string[] }>(page: T): T {
+    const items = page.items.filter(hit => this.allowsContext(hit));
+    return items.length === page.items.length ? page : { ...page, items, coverage: "partial",
+      reasons: [...new Set([...page.reasons, "host_policy"])] };
+  }
+  /** Native tool results are model context. Owner inspection methods below deliberately remain separate.
+   * Filter the bounded native result, never widen a scan silently; keep policy omissions explicit.
+   * Authorization and canonical reads share a snapshot, including transitive evidence. */
+  contextRecall(input: RecallInput) {
+    return this.memory.journal.read(() => {
+      const result = this.contextItems(this.memory.recall(input));
+      result.expanded = result.items.filter(hit => hit.via !== "match").length;
+      return bound(result, input.maxBytes ?? 12000);
+    });
+  }
+  contextScan(input: ScanInput) {
+    return this.memory.journal.read(() => this.contextItems(this.memory.scan(input)));
+  }
+  contextRead(id: string) {
+    return this.memory.journal.read(() => {
+      const hit = this.memory.get(id);
+      return hit && this.allowsContext(hit) ? hit : null;
+    });
+  }
+  contextHistory(subject: string, limit: number) {
+    return this.memory.journal.read(() => this.memory.history(subject, limit).filter(hit => this.allowsContext(hit)));
+  }
+  contextCompiled(revision: string) {
+    return this.memory.journal.read(() => this.contextRead(revision) ? this.compiled(revision) : null);
+  }
+  contextLint(input: Pick<ScanInput, "after" | "limit">) {
+    return this.memory.journal.read(() => {
+      const page = this.contextItems(new Knowledge(this.memory).list(input));
+      const allowed = new Set(page.items.map(hit => hit.observation.id));
+      const audit = this.lint(input);
+      return { ...audit, issues: audit.issues.filter(issue => allowed.has(issue.observation)),
+        coverage: page.coverage, reasons: [...new Set([...audit.reasons, ...page.reasons])] };
+    });
+  }
+  /** Compilation and HTML rendering belong to entity-learn; this adapter adds owner/redaction/consent policy. */
+  compile(input: PageDraft, options: WriteOptions) {
+    this.safe(input); this.safe(options);
+    for (const claim of input.claims ?? []) for (const citation of claim.citations ?? []) {
+      const evidence = this.memory.get(citation.observation);
+      if (evidence && !this.allowsContext(evidence)) throw new MemoryError("forbidden", "Evidence is unavailable for model context");
+    }
+    return new Knowledge(this.memory).publish(input, options);
+  }
+  compiled(revision: string) { return new Knowledge(this.memory).get(revision); }
+  compiledHtml(revision: string) { return renderKnowledgeHtml(new Knowledge(this.memory), revision); }
+  lint(input: Pick<ScanInput, "after" | "limit"> = {}) { return new Knowledge(this.memory).lint(input); }
   private pageOf(hit: MemoryHit): WikiPage {
     const o = hit.observation;
     const sources: WikiCitation[] = [];
@@ -113,7 +201,7 @@ export class WikiMemory {
       // A producer reference alone is a claim citation, not a verified source read.
       sources.push({ relation: "producer", id: p.reference, label: "missing" });
     }
-    return { revision: o.id, subject: o.subject, hit, sources, privateStyleExample: o.type === "style-example" };
+    return { revision: o.id, subject: o.subject, hit, sources, privateStyleExample: this.privateExamples(hit).length > 0 };
   }
   /** Current subject page; pinned revisions use read(). */
   page(subject: string, options: WikiBudget = {}) {
@@ -181,9 +269,9 @@ export class WikiMemory {
     }
     if (missing.length) reasons.push("missing_sources");
     const pages = [...hits.values()].filter(hit => {
-      if (hit.observation.type !== "style-example") return true;
-      if (this.binding.styleExampleConsent?.(hit.observation.id) === true) return true;
-      reasons.push("style_consent_required"); return false;
+      const reason = this.contextExclusion(hit);
+      if (reason === null) return true;
+      reasons.push(reason); return false;
     }).map(h => this.pageOf(h));
     if (pages.length > b.limit) reasons.push("result_budget");
     const result: WikiBundle = { ...view(pages.slice(0, b.limit), reasons), owner: this.binding.owner, trust: "untrusted-recorded-evidence", missing };

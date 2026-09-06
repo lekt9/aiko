@@ -215,6 +215,76 @@ describe.runIf(enabled)("real HTTP, owner OIDC, agent OAuth and SDK", () => {
     expect(await trusted.importCsv.commit(preview.id, [2])).toEqual(result);
     await management.connections.delete(result.connectionIds[0]);
   });
+  it("requires owner auth and CSRF for browser commits, never accepts runtime authority or raw verification flags", async () => {
+    const { trusted, connection, profile, client } = await ownerFixture();
+    const path =
+      origin + "/v1/owner/connections/" + connection.id + "/browser-login";
+    const login = {
+      profileId: profile.id,
+      runtimeId: client.id,
+      version: connection.version,
+      identity: connection.identity,
+      credential: { password: "SYNTHETIC-BROWSER-PASSWORD" },
+      cookies: [cookie()],
+    };
+    expect(
+      (
+        await fetch(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(login),
+        })
+      ).status,
+    ).toBe(401);
+    expect(
+      (
+        await browser.request(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Origin: origin },
+          body: JSON.stringify(login),
+        })
+      ).status,
+    ).toBe(403);
+    const { agentOAuth, callback } = await grant(client.id);
+    await agentOAuth.finish(callback);
+    expect(
+      (
+        await fetch(path, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Origin: origin,
+            Authorization: "Bearer " + (await agentOAuth.accessToken()),
+          },
+          body: JSON.stringify(login),
+        })
+      ).status,
+    ).toBe(401);
+    const untrusted = await browser.request(path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: origin,
+        "X-Unlock-CSRF": csrf,
+      },
+      body: JSON.stringify({ ...login, verified: true }),
+    });
+    expect(untrusted.status).toBe(400);
+    expect(await untrusted.text()).not.toContain(login.credential.password);
+    const receipt = await trusted.completeBrowserLogin(connection.id, login);
+    expect(receipt).toMatchObject({
+      version: connection.version + 1,
+      revision: 1,
+    });
+    expect(Object.keys(receipt).sort()).toEqual([
+      "expiresAt",
+      "revision",
+      "version",
+    ]);
+    expect(await trusted.revealPassword(connection.id)).toEqual(
+      login.credential,
+    );
+  });
   it("authorizes agents once, rejects code replay, binds tokens and revokes future access immediately", async () => {
     const { management, trusted, connection, profile, client } =
         await ownerFixture(),

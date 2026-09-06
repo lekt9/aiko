@@ -7,7 +7,7 @@ import {
   openReplay,
   sealReplay,
 } from "../src/codegraff.ts";
-import type { HarnessTransportRequest } from "../../../packages/browser-runtime/src/harness-runtime.ts";
+import type { HarnessTransportRequest } from "@unbrowse/browser-harness/harness-runtime";
 const request = (
   url = "https://api.vendor.com/items",
 ): HarnessTransportRequest => ({
@@ -133,7 +133,7 @@ const endpoint = process.env.AIKO_REPLAY_TEST_CDP;
   "live observation auto-indexes locally then semantically searches and rehydrates fresh browser data",
   async () => {
     const { CdpNetworkListener } =
-      await import("@unbrowse/browser-runtime/network-listener");
+      await import("@unbrowse/browser-harness/network-listener");
     const { BrowserLearning } = await import("../src/browser-learning.ts");
     const { RequestMemory } = await import("../src/request-memory.ts");
     const { createRequestEmbedding } =
@@ -273,3 +273,12 @@ const endpoint = process.env.AIKO_REPLAY_TEST_CDP;
   },
   60000,
 );
+
+test("portable workerd transport interoperates with the Bun runner", async () => {
+  const {wrapReplayPortable,openReplayPortable}=await import("../src/codegraff.ts");
+  const identity=replayKeys();
+  const wrapped=await wrapReplayPortable({private:"password-fixture"},identity.publicKey);
+  const decoded=unwrapReplay(wrapped.envelope,identity.privateKey);
+  expect(decoded.value).toEqual({private:"password-fixture"});
+  expect(await openReplayPortable(sealReplay({output:{status:"pending"}},decoded.key),wrapped.key)).toEqual({output:{status:"pending"}});
+});

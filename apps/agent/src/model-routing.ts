@@ -60,17 +60,33 @@ export function parseModelRouting(env: ModelRoutingEnv, defaults: ModelRoutingDe
   return Object.freeze({ roles: Object.freeze(roles), contextWindowTokens, maxOutputTokens });
 }
 
-/** Drop unsupported Cerebras string constraints only at schema nodes, never property names; do not mutate native schemas. */
-function cerebrasSchema(value: unknown, depth = 0): unknown {
+/** Drop unsupported strict-decoder constraints only at wire schema nodes; native validators retain the original constraints. */
+function strictWireSchema(value: unknown, depth = 0): unknown {
   if (depth > 32) throw new Error("Model schema nesting limit");
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  return Object.fromEntries(Object.entries(value).filter(([key]) => !["minLength", "maxLength", "pattern"].includes(key)).map(([key, entry]) => {
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !["minLength", "maxLength", "pattern", "minItems", "maxItems"].includes(key)).map(([key, entry]) => {
     if (["properties", "$defs", "definitions", "patternProperties"].includes(key) && entry && typeof entry === "object" && !Array.isArray(entry))
-      return [key, Object.fromEntries(Object.entries(entry).map(([name, child]) => [name, cerebrasSchema(child, depth + 1)]))];
-    if (["items", "additionalProperties", "not", "if", "then", "else", "contains"].includes(key)) return [key, cerebrasSchema(entry, depth + 1)];
-    if (["anyOf", "allOf", "oneOf", "prefixItems"].includes(key) && Array.isArray(entry)) return [key, entry.map(child => cerebrasSchema(child, depth + 1))];
+      return [key, Object.fromEntries(Object.entries(entry).map(([name, child]) => [name, strictWireSchema(child, depth + 1)]))];
+    if (["items", "additionalProperties", "not", "if", "then", "else", "contains"].includes(key)) return [key, strictWireSchema(entry, depth + 1)];
+    if (["anyOf", "allOf", "oneOf", "prefixItems"].includes(key) && Array.isArray(entry)) return [key, entry.map(child => strictWireSchema(child, depth + 1))];
     return [key, entry];
   }));
+}
+/** Strict decoding cannot represent arbitrary connector arguments. Never close an open schema just to satisfy the provider. */
+function cerebrasStrictSchema(value: unknown, depth = 0): boolean {
+  if (depth > 32 || !value || typeof value !== "object" || Array.isArray(value)) return value === false;
+  const schema = value as Record<string, any>;
+  if (!Object.keys(schema).length) return false;
+  if (schema.type === "object" || (Array.isArray(schema.type) && schema.type.includes("object")) || schema.properties) {
+    if (!schema.properties || schema.additionalProperties !== false) return false;
+  }
+  for (const key of ["properties", "$defs", "definitions", "patternProperties"])
+    if (schema[key] && !Object.values(schema[key]).every(child => cerebrasStrictSchema(child, depth + 1))) return false;
+  for (const key of ["items", "additionalProperties", "not", "if", "then", "else", "contains"])
+    if (schema[key] !== undefined && !cerebrasStrictSchema(schema[key], depth + 1)) return false;
+  for (const key of ["anyOf", "allOf", "oneOf", "prefixItems"])
+    if (Array.isArray(schema[key]) && !schema[key].every((child: unknown) => cerebrasStrictSchema(child, depth + 1))) return false;
+  return true;
 }
 function adaptCerebras(body: Record<string, any>) {
   const adapted: Record<string, any> = { ...body, parallel_tool_calls: false, temperature: 0, stream_options: { include_usage: true } };
@@ -79,8 +95,16 @@ function adaptCerebras(body: Record<string, any>) {
     if (!body.tools.length) delete adapted.tools;
     else adapted.tools = body.tools.map((tool: any) => {
       if (tool?.type !== "function" || !tool.function || typeof tool.function.name !== "string") throw new Error("Invalid model tool");
-      return { ...tool, function: { ...tool.function, strict: true, parameters: cerebrasSchema(tool.function.parameters) } };
+      const parameters = strictWireSchema(tool.function.parameters);
+      return { ...tool, function: { ...tool.function, strict: cerebrasStrictSchema(parameters), parameters } };
     });
+    // Cerebras requires a uniform strict setting across the entire tool list.
+    // Open connector inputs retain their original wire schema and are checked
+    // by the registered host validator before execution.
+    if (adapted.tools?.some((tool: any) => !tool.function.strict))
+      adapted.tools = adapted.tools.map((tool: any, index: number) => ({ ...tool,
+        function: { ...tool.function, strict: false, parameters: body.tools[index].function.parameters },
+      }));
   }
   // From unbrowse-playground's native provider adapter. No hidden output allowance expansion.
   if (body.model === "qwen-3.8-27b") { adapted.reasoning_effort = adapted.tools ? "high" : "none"; adapted.reasoning_format = "parsed"; }
@@ -144,6 +168,8 @@ export function createModelRouting(options: ModelRoutingOptions) {
         body = JSON.parse(init.body);
         if (!body || typeof body !== "object" || Array.isArray(body) || body.model !== route.model || !Array.isArray(body.messages) || !Number.isInteger(body.max_tokens) || body.max_tokens < 1 || body.max_tokens > config.maxOutputTokens) throw new Error("invalid model request");
         if (route.provider === "cerebras") body = adaptCerebras(body);
+        else if (Array.isArray(body.tools)) body = {...body,tools:body.tools.map((tool:any) =>
+          tool?.function?.strict === true ? {...tool,function:{...tool.function,parameters:strictWireSchema(tool.function.parameters)}} : tool)};
       } catch { throw new ModelRoutingUnavailable(role, route.provider, "request_rejected"); }
       const encoded = JSON.stringify(body);
       if (Buffer.byteLength(encoded) > 262144) throw new ModelRoutingUnavailable(role, route.provider, "request_rejected");
