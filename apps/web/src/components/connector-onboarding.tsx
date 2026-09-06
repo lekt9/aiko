@@ -96,6 +96,7 @@ export function ConnectorOnboarding() {
   const [connections, setConnections] = useState<ConnectorConnection[]>();
   const search = useRef<AbortController | null>(null);
   const signingIn = useRef(false);
+  const completing = useRef(false);
   const version = useRef(0);
   useEffect(
     () => () => {
@@ -318,7 +319,10 @@ export function ConnectorOnboarding() {
       return;
     let active = true;
     const timer = window.setInterval(() => {
-      if (document.visibilityState !== "visible" || pending) return;
+      // Never overlap completion checks: each is a serialized server op, and
+      // overlapping polls starve user actions such as disconnect behind them.
+      if (document.visibilityState !== "visible" || pending || completing.current) return;
+      completing.current = true;
       void Promise.all(
         connections
           .filter((c) => c.status === "pending" && c.provider === "arcade")
@@ -327,7 +331,10 @@ export function ConnectorOnboarding() {
         .then(() => {
           if (active) return refresh();
         })
-        .catch(reportError);
+        .catch(reportError)
+        .finally(() => {
+          completing.current = false;
+        });
     }, 5000);
     return () => {
       active = false;

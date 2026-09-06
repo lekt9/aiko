@@ -21,7 +21,7 @@ export type ConnectorExecution = {
 };
 export type Connection = { id: string; connectorId: string; provider: "arcade" | "browser"; status: "pending" | "connected" | "disconnected" | "failed"; authorizationUrl?: string; createdAt: number; appName?: string; toolIds?: string[]; relayDisconnectStatus?: "pending" | "confirmed" | "unavailable" | "unknown" };
 export type ConnectionEvent = {type:"AikoConnectionChanged"|"AikoLoginSubmitted"|"AikoLoginAttemptFailed";id:string;owner:string;connectionId:string;provider:"browser"|"arcade";status:Connection["status"];domain?:string;at:number};
-type StoredConnection = Connection & { owner: string; authId?: string; expiresAt: number; toolName?: string; authorizationDomains?: string[]; authProviderId?: string; oauthLaunchUrl?: string; browserVerification?: SecureBrowserVerification; eventSequence?:number; pendingEvents?:ConnectionEvent[] };
+type StoredConnection = Connection & { owner: string; authId?: string; expiresAt: number; toolName?: string; authorizationDomains?: string[]; authProviderId?: string; oauthLaunchUrl?: string; browserVerification?: SecureBrowserVerification; eventSequence?:number; pendingEvents?:ConnectionEvent[]; lastAuthCheckAt?: number };
 export type GeneratedCapability = { id: string; domain: string; method: string; path: string; source: { kind: "owned-log" | "public"; reference: string }; status: "review_required"; version: 1; createdAt: number };
 export type ConnectorSearch = { status: "available" | "absent" | "unavailable"; connectors: Connector[]; fallbackAllowed: boolean; message: string; totalMatches?: number; catalogSize?: number; authProviders?: ConnectorAuthProvider[]; authProvidersStatus?: "available" | "unavailable" };
 export type ConnectorOptions = {
@@ -68,12 +68,12 @@ export class ConnectorEngine {
     this.prefix = `connectors:${hash(options.owner)}:`;
   }
   private clean(value: unknown) { return clean(value, [this.options.env?.ARCADE_API_KEY ?? process.env.ARCADE_API_KEY ?? ""]); }
-  private async api(path: string, body?: unknown, maxBytes = 2_000_000, catalogKey?: string): Promise<Record<string, any>> {
+  private async api(path: string, body?: unknown, maxBytes = 2_000_000, catalogKey?: string, timeoutMs = 15_000): Promise<Record<string, any>> {
     const key = catalogKey ?? this.options.env?.ARCADE_API_KEY ?? process.env.ARCADE_API_KEY;
     if (!key) throw new Error("Arcade is not configured");
     try {
       const response = await (this.options.fetch ?? fetch)(`https://api.arcade.dev/v1/${path}`, {
-        method: body === undefined ? "GET" : "POST", redirect: "manual", signal: AbortSignal.timeout(15000),
+        method: body === undefined ? "GET" : "POST", redirect: "manual", signal: AbortSignal.timeout(timeoutMs),
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
@@ -196,7 +196,12 @@ export class ConnectorEngine {
   }
   private serial<T>(run: () => Promise<T>): Promise<T> {
     const prior = ownerQueues.get(this.prefix) ?? Promise.resolve();
-    const next = prior.catch(() => undefined).then(run);
+    const queuedAt = Date.now();
+    const next = prior.catch(() => undefined).then(() => {
+      const waited = Date.now() - queuedAt;
+      if (waited > 10_000) console.warn("connector_serial_starved", { owner: this.options.owner, waitedMs: waited });
+      return run();
+    });
     ownerQueues.set(this.prefix, next);
     void next.finally(() => { if (ownerQueues.get(this.prefix) === next) ownerQueues.delete(this.prefix); }).catch(() => undefined);
     return next;
@@ -299,7 +304,13 @@ export class ConnectorEngine {
     if (this.options.arcadeOAuthEnabled === false) throw Error("App OAuth is temporarily disabled");
     if (row.expiresAt <= Date.now()) { row.status = "failed"; delete row.authorizationUrl; await this.save(row); return this.view(row); }
     if (row.provider !== "arcade" || !row.authId) throw new Error("Secure browser completion is not configured");
-    const auth = await this.api(`auth/status?id=${encodeURIComponent(row.authId)}`);
+    // Auth-status polls run through the owner-serial queue; without a cooldown an
+    // eager poller fills it with slow Arcade round-trips and starves user actions
+    // such as disconnect for minutes. A recent check answers from the stored view.
+    if (row.lastAuthCheckAt && Date.now() - row.lastAuthCheckAt < 4_000) return this.view(row);
+    row.lastAuthCheckAt = Date.now();
+    await this.save(row);
+    const auth = await this.api(`auth/status?id=${encodeURIComponent(row.authId)}`, undefined, 2_000_000, undefined, 5_000);
     // Re-read after network wait so a concurrent disconnect cannot be undone.
     const current = await this.load(id);
     if (current.status !== "pending") return this.view(current);
