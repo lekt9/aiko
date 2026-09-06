@@ -79,6 +79,10 @@ export async function connectorRequest<T>(
   else if (authentication?.telegram !== false && telegram?.initData)
     headers["x-telegram-init-data"] = telegram.initData;
   if (body) headers["Content-Type"] = "application/json";
+  // Requests always settle: a stalled server surfaces as a retryable error,
+  // never an indefinite spinner.
+  const timeout = AbortSignal.timeout(20_000);
+  const settled = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const response = await fetch(
     (path.startsWith("/secretary") || path.startsWith("/approvals")) ? `/api${path}` : `/api/connectors${path}`,
     {
@@ -86,14 +90,14 @@ export async function connectorRequest<T>(
       headers,
       credentials: "same-origin",
       cache: "no-store",
-      signal,
+      signal: settled,
       ...(body ? { body: JSON.stringify(body) } : {}),
     },
   );
   if (!response.ok) {
     if (response.status === 401 || response.status === 403)
       throw new Error(
-        "Sign in with an Aiko account credential below, or open Aiko’s app from Telegram.",
+        "This Telegram identity was not accepted. Reopen Aiko from the Connect apps menu and try again.",
       );
     if (path.startsWith("/secretary")) {
       const detail = (await response.json().catch(() => ({}))) as {

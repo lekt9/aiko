@@ -95,6 +95,7 @@ export function ConnectorOnboarding() {
   const [authorization, setAuthorization] = useState<string>();
   const [connections, setConnections] = useState<ConnectorConnection[]>();
   const search = useRef<AbortController | null>(null);
+  const signingIn = useRef(false);
   const version = useRef(0);
   useEffect(
     () => () => {
@@ -105,6 +106,7 @@ export function ConnectorOnboarding() {
   );
 
   async function signInTelegram() {
+    if (signingIn.current) return;
     const initData = (
       window as Window & { Telegram?: { WebApp?: { initData?: string } } }
     ).Telegram?.WebApp?.initData;
@@ -114,6 +116,7 @@ export function ConnectorOnboarding() {
       );
       return;
     }
+    signingIn.current = true;
     setTelegramMiniApp(true);
     clearAccount();
     telegramEnabled.current = true;
@@ -127,22 +130,29 @@ export function ConnectorOnboarding() {
       clearAccount();
       reportError(failure);
     } finally {
+      signingIn.current = false;
       setPending(false);
     }
   }
+  // Telegram populates initData for the current launch only after its web-app
+  // script connects; the auto sign-in waits for it briefly instead of racing the
+  // script load. Manual sign-in remains available when it never appears.
   useEffect(() => {
-    const nativeSignIn = () => {
-      if (!telegramEnabled.current) return;
+    if (telegramMiniApp || signedIn) return;
+    const started = Date.now();
+    const timer = window.setInterval(() => {
+      if (signingIn.current) return;
       if (
         (window as Window & { Telegram?: { WebApp?: { initData?: string } } })
           .Telegram?.WebApp?.initData
-      )
+      ) {
+        window.clearInterval(timer);
+        setTelegramMiniApp(true);
         void signInTelegram();
-    };
-    if (document.readyState === "complete") nativeSignIn();
-    else window.addEventListener("load", nativeSignIn, { once: true });
-    return () => window.removeEventListener("load", nativeSignIn);
-  }, []);
+      } else if (Date.now() - started > 10_000) window.clearInterval(timer);
+    }, 400);
+    return () => window.clearInterval(timer);
+  }, [telegramMiniApp, signedIn]);
 
   function openAuthorization(event: React.MouseEvent<HTMLAnchorElement>) {
     const app = (
