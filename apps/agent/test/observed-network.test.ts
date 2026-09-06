@@ -159,6 +159,24 @@ test("vault cookies ride the write and a fresh Set-Cookie is recomputed into the
   expect(JSON.stringify(lifecycle)).not.toContain("QnJhbmROZXdWYWx1ZQ");
 });
 
+test("anti-bot challenges are classified value-free and never retried host-side", async () => {
+  const events = await compiled();
+  const prepared = ownedNetworkDefinitions(events)[0]!;
+  let sends = 0;
+  const journal = [...events, { type: "AikoRequestMemoryIndexed", toolDigest: prepared.toolDigest } as Event];
+  const result = await run(
+    journal,
+    { toolDigest: prepared.toolDigest, inputs: Object.fromEntries(prepared.definition.inputs.map(i => [i.name, "items"])) },
+    { send: async () => { sends++; return { status: 403, headers: { "cf-mitigated": "challenge", server: "cloudflare" }, classification: "application" as const, body: { error: "blocked" } }; } },
+  );
+  expect(result).toMatchObject({ kind: "observed-network-receipt", challenged: true, browser: false });
+  expect(sends).toBe(1);
+  const lifecycle = journal.filter(e => e.type === "AikoObservedOriginChallenged");
+  expect(lifecycle).toHaveLength(1);
+  expect(lifecycle[0]).toMatchObject({ owner: "123", status: 403, headerNames: ["cf-mitigated", "server"] });
+  expect(JSON.stringify(lifecycle)).not.toContain("cloudflare");
+});
+
 test("a renewed grant is recorded as ordered lifecycle events before replay", async () => {
   const events = await compiledWrite();
   const action = ownedObservedActions(events)[0]!;

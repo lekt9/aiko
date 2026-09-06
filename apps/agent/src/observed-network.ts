@@ -25,6 +25,18 @@ export interface ObservedNetworkBinding extends CapabilityBuilderBinding {
 }
 
 const WRITE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+/** Value-free anti-bot refusal signatures. A challenge means the origin's edge never
+ * reached the application; host replay must not be retried and the browser session
+ * actor (real fingerprint) is the designed route for such origins. */
+const CHALLENGE_STATUS = new Set([403, 429, 503]);
+const CHALLENGE_HEADER = /^(?:cf-mitigated|x-datadome(?:-status|-captcha)?|x-px-[a-z0-9-]+|x-akamai-[a-z0-9-]+|x-kpsdk-[a-z0-9-]+|x-kasada|x-f5-[a-z0-9-]+|x-bm-telemetry|x-perimeterx-[a-z0-9-]+)$/i;
+const challengedResponse = (response: HarnessTransportResponse): { status: number; headerNames: readonly string[] } | undefined => {
+  if (!CHALLENGE_STATUS.has(response.status)) return undefined;
+  const names = Object.keys(response.headers);
+  const flagged = names.some(name => CHALLENGE_HEADER.test(name) ||
+    (name === "server" && /cloudflare|akamaighost|datadome/i.test(String(response.headers[name]))));
+  return flagged ? { status: response.status, headerNames: names.sort() } : undefined;
+};
 export function observedActionEventKey(event: Event) {
   if (event.type === "AikoObservedActionStarted" && typeof event.owner === "string" && typeof event.key === "string")
     return `aiko-observed-action:${event.owner}:${event.key}`;
@@ -235,9 +247,11 @@ export function createObservedNetworkTools(binding: ObservedNetworkBinding): Nat
         const sessionAdapter: HarnessSessionAdapter | undefined = grant ? {
           resolve: origin => ({ origin, cookies: grant.cookies, revision: grant.revision }),
         } : undefined;
+        let challenge: { status: number; headerNames: readonly string[] } | undefined;
         const send: HarnessTransport["send"] = async request => {
-          if (binding.send) return binding.send(request);
-          return sendObservedHttp(request, context.signal);
+          const response = binding.send ? await binding.send(request) : await sendObservedHttp(request, context.signal);
+          challenge ??= challengedResponse(response);
+          return response;
         };
         const run = async () => {
           if (read) {
@@ -288,6 +302,8 @@ export function createObservedNetworkTools(binding: ObservedNetworkBinding): Nat
           const writeCounts = recomputeCounts(writeTrace);
           if (writeCounts.sessions || writeCounts.cookieEvents)
             yield* log.append([{ type: "AikoObservedHeadersRecomputed", owner: binding.owner, artifactDigest: action!.artifactDigest, ...writeCounts, at: Date.now() }]);
+          if (challenge)
+            yield* log.append([{ type: "AikoObservedOriginChallenged", owner: binding.owner, origin: new URL(origins[0]!).hostname, status: challenge.status, headerNames: challenge.headerNames, at: Date.now() }]);
           if (settled.state === "unknown")
             return { status: "unknown", reason: "Write outcome is uncertain; inspect the app and do not retry automatically", browser: false };
           if (settled.state !== "settled")
@@ -301,8 +317,11 @@ export function createObservedNetworkTools(binding: ObservedNetworkBinding): Nat
             effect: "write",
             browser: false,
             session: sessionNeeded,
+            ...(challenge ? { challenged: true } : {}),
             text: settled.outcome === "succeeded"
-              ? "Learned write replayed over host HTTPS using the current Unlock session. Receipt is not proof the remote business action succeeded."
+              ? challenge
+                ? "Learned write replayed but the origin edge answered with an anti-bot challenge; the application likely never saw it. Inspect the app; never retry automatically."
+                : "Learned write replayed over host HTTPS using the current Unlock session. Receipt is not proof the remote business action succeeded."
               : "Learned write did not complete. Do not retry automatically.",
           };
         }
@@ -310,6 +329,8 @@ export function createObservedNetworkTools(binding: ObservedNetworkBinding): Nat
         const counts = recomputeCounts(executed.result.trace);
         if (counts.sessions || counts.cookieEvents)
           yield* log.append([{ type: "AikoObservedHeadersRecomputed", owner: binding.owner, ...(read ? { toolDigest: read.toolDigest } : { artifactDigest: action!.artifactDigest }), ...counts, at: Date.now() }]);
+        if (challenge)
+          yield* log.append([{ type: "AikoObservedOriginChallenged", owner: binding.owner, origin: new URL(origins[0]!).hostname, status: challenge.status, headerNames: challenge.headerNames, at: Date.now() }]);
         const text = executed.terminal === undefined ? "" : binding.redact(JSON.stringify(executed.terminal)).slice(0, 12000);
         if (text && binding.redact(text) !== text) throw new Error("Secret in observed response");
         return {
@@ -322,7 +343,10 @@ export function createObservedNetworkTools(binding: ObservedNetworkBinding): Nat
           effect: "read",
           browser: false,
           session: sessionNeeded,
-          text: executed.result.status === "completed"
+          ...(challenge ? { challenged: true } : {}),
+          text: challenge
+            ? "Origin answered with an anti-bot challenge; the application never saw this request. Host replay is not retried — route this action through the browser session actor."
+            : executed.result.status === "completed"
             ? `Learned DAG replayed over host HTTP${sessionNeeded ? " with the current Unlock session" : ""}, not the browser.\n${text}`
             : "Learned DAG did not complete. Do not treat this as a successful action.",
         };
