@@ -135,11 +135,15 @@ export function ConnectorOnboarding() {
       setPending(false);
     }
   }
-  // Telegram populates initData for the current launch only after its web-app
-  // script connects; the auto sign-in waits for it briefly instead of racing the
-  // script load. Manual sign-in remains available when it never appears.
+  // Telegram populates initData for the current launch when its web-app script
+  // connects; sign in immediately when it is already present, and otherwise
+  // retry briefly so a late-connecting client still auto-connects.
   useEffect(() => {
-    if (telegramMiniApp || signedIn) return;
+    if (signedIn || signingIn.current) return;
+    if (telegramMiniApp) {
+      void signInTelegram();
+      return;
+    }
     const started = Date.now();
     const timer = window.setInterval(() => {
       if (signingIn.current) return;
