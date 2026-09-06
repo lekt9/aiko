@@ -22,7 +22,6 @@ import {
   type Connector,
   type ConnectorSearch,
   type ConnectorConnection,
-  type ConnectorConnect,
 } from "../lib/connectors";
 
 type PendingApproval = {id:string;name:string;args:unknown;snapshot:string;expires:number};
@@ -123,7 +122,22 @@ export function ConnectorOnboarding() {
     telegramEnabled.current = true;
     setPending(true);
     try {
-      await refresh();
+      // A cold account object, or an in-flight automation browser drive, can
+      // stall requests for a minute; retry patiently instead of bouncing the
+      // owner to an error screen.
+      let lastFailure: unknown;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        if (attempt) setNotice("Still opening your apps…");
+        try {
+          await refresh();
+          lastFailure = undefined;
+          break;
+        } catch (failure) {
+          lastFailure = failure;
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+      if (lastFailure) throw lastFailure;
       setSignedIn(true);
       setSignedOut(false);
       setNotice("");
@@ -351,37 +365,6 @@ export function ConnectorOnboarding() {
     }>("/connections");
     setConnections(result.connections);
   }
-  async function connect(connector: Connector) {
-    setPending(true);
-    setError("");
-    setAuthorization(undefined);
-    setNotice("");
-    try {
-      const response = await request<ConnectorConnect>("/apps/connect", {
-        appId: connector.id,
-      });
-      const url = safeAuthorizationUrl(response.authorizationUrl);
-      if (response.authorizationUrl && !url)
-        throw new Error(
-          "The authorization link is invalid. Try connecting again.",
-        );
-      setAuthorization(url);
-      await refresh();
-      setNotice(
-        url
-          ? "Continue in the secure authorization page, then refresh your connections."
-          : response.status === "connected"
-            ? "Connected. Refresh your connections to see access."
-            : response.status === "pending"
-              ? "Authorization is pending. Refresh your connections to check its status."
-              : "Connection was not completed. Try connecting again.",
-      );
-    } catch (failure) {
-      reportError(failure);
-    } finally {
-      setPending(false);
-    }
-  }
   async function openApp(app: DrawerApp) {
     if (opening.current || pending || !signedIn) return;
     opening.current = true;
@@ -391,39 +374,17 @@ export function ConnectorOnboarding() {
     setAuthorization(undefined);
     setNotice("");
     try {
-      // Resolve current capabilities on selection, never infer availability from a suggestion.
-      const found = app.connector
-        ? undefined
-        : await request<{
-            apps: Array<{ id: string; name: string; domains: string[] }>;
-            nativeAvailable: boolean;
-            nativeInline: boolean;
-          }>(`/apps?query=${encodeURIComponent(app.domain)}`);
-      const match = found?.apps.find((candidate) =>
-        candidate.domains.some((domain) => domain === app.domain),
-      );
-      if (app.connector || match) {
-        await connect(
-          app.connector ?? {
-            ...match!,
-            provider: "arcade",
-            toolName: "",
-            description: "",
-          },
-        );
-        return;
-      }
-      if (!found?.nativeAvailable)
-        throw new Error(
-          "Password sign-in is not available for this app right now. Try another app or check again later.",
-        );
-      setNativeInline(found.nativeInline);
+      // Password-manager flow: every app opens a private login session for its
+      // website where the owner signs in with their own credentials. No OAuth
+      // handoff, no catalog round-trip before the login screen appears.
       const response = await request<{
         id?: string;
         status: string;
         authorizationUrl?: string;
+        nativeInline?: boolean;
       }>("/browser", { domain: app.domain });
-      if (found.nativeInline && response.id) {
+      if ((response.nativeInline ?? nativeInline) && response.id) {
+        setNativeInline(response.nativeInline ?? nativeInline);
         setNativeDomain(app.domain);
         setNativeConnection(response.id);
         await refresh();
@@ -521,13 +482,13 @@ export function ConnectorOnboarding() {
   const visibleConnections = activeConnections.filter((c) =>
     matchesQuery(connectionName(c), c.connectorId),
   );
-  const catalogApps: DrawerApp[] = (result?.connectors ?? []).map(
-    (connector) => ({
+  const catalogApps: DrawerApp[] = (result?.connectors ?? [])
+    .filter((connector) => Boolean(connector.domains[0]))
+    .map((connector) => ({
       name: connector.name,
-      domain: connector.domains[0] ?? "",
+      domain: connector.domains[0]!,
       connector,
-    }),
-  );
+    }));
   const apps = [
     ...catalogApps,
     ...suggestedApps.filter(
@@ -814,7 +775,7 @@ export function ConnectorOnboarding() {
                 <AppTileIcon name={app.name} />
                 <span className="drawer-tile-name">{app.name}</span>
                 <span className="drawer-tile-status">
-                  {app.connector ? "Authorize" : "Add login"}
+                  {"Add login"}
                 </span>
               </button>
             ))}
