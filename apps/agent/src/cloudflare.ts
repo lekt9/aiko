@@ -718,35 +718,43 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
   }
   async alarm() {
     if (!this.owner) return;
-    const { host, capabilities, connectors } = await this.open(this.owner);
-    await connectors.flushEvents();
-    const at = Date.now();
-    const tick = automationWakeEvent(await host.read(`user-${this.owner}`), at);
-    if (tick) await host.commitRoot(host.self(`user-${this.owner}`), tick);
-    await host.alarm();
-    await this.serialize(async () => {
-      const deadline = await this.sandboxDeadline(host, capabilities);
-      if (
-        !capabilities ||
-        deadline === undefined ||
-        deadline > Date.now() ||
-        capabilities.sandbox.busy ||
-        !(await host.resting())
-      )
-        return;
-      // Retire only this owner's cached browser, retaining the controller and durable VM/profile for later wake.
-      if (!(await capabilities.browser.retire(this.owner!))) return;
-      try {
-        if (!(await capabilities.sandbox.stop())) {
-          await this.ctx.storage.setAlarm(Math.min(await this.ctx.storage.getAlarm() ?? Infinity, Date.now() + 120_000));
+    try {
+      const { host, capabilities, connectors } = await this.open(this.owner);
+      await connectors.flushEvents();
+      const at = Date.now();
+      const tick = automationWakeEvent(await host.read(`user-${this.owner}`), at);
+      if (tick) await host.commitRoot(host.self(`user-${this.owner}`), tick);
+      await host.alarm();
+      await this.serialize(async () => {
+        const deadline = await this.sandboxDeadline(host, capabilities);
+        if (
+          !capabilities ||
+          deadline === undefined ||
+          deadline > Date.now() ||
+          capabilities.sandbox.busy ||
+          !(await host.resting())
+        )
           return;
+        // Retire only this owner's cached browser, retaining the controller and durable VM/profile for later wake.
+        if (!(await capabilities.browser.retire(this.owner!))) return;
+        try {
+          if (!(await capabilities.sandbox.stop())) {
+            await this.ctx.storage.setAlarm(Math.min(await this.ctx.storage.getAlarm() ?? Infinity, Date.now() + 120_000));
+            return;
+          }
+          await host.drive();
+        } catch (error) {
+          await this.ctx.storage.setAlarm(Math.min(await this.ctx.storage.getAlarm() ?? Infinity, Date.now() + 120_000));
+          throw error;
         }
-        await host.drive();
-      } catch (error) {
-        await this.ctx.storage.setAlarm(Math.min(await this.ctx.storage.getAlarm() ?? Infinity, Date.now() + 120_000));
-        throw error;
-      }
-    });
+      });
+    } catch {
+      // A storage-timeout reset still drops this isolate. If we survived, keep a
+      // near-term alarm so remaining native work is not stranded for the recovery delay.
+      const current = await this.ctx.storage.getAlarm().catch(() => null);
+      if (current === null)
+        await this.ctx.storage.setAlarm(Date.now() + 1_000).catch(() => undefined);
+    }
   }
   async handle(
     owner: string,
@@ -1197,7 +1205,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
 }
 
 export default {
-  async fetch(request: Request, env: AikoCloudflareEnv): Promise<Response> {
+  async fetch(request: Request, env: AikoCloudflareEnv, ctx?: { waitUntil(promise: Promise<unknown>): void }): Promise<Response> {
     try {
       const url = new URL(request.url);
       if (
@@ -1334,21 +1342,37 @@ export default {
         const owner = received.inbound.user;
         if (!(await registry.admit(owner, config.maxAccounts)))
           return json({ error: "limited" }, 429);
-        const status = await env.AIKO_ACCOUNTS.getByName(owner).acceptTelegram(
+        const inbound = received.inbound;
+        const pending = env.AIKO_ACCOUNTS.getByName(owner).acceptTelegram(
           owner,
-          received.inbound,
+          inbound,
         );
-        if (received.inbound.callback)
-          await telegram
-            .answerCallback(
-              owner,
-              received.inbound.callback.id,
-              AbortSignal.timeout(5_000),
-            )
-            .catch(() => undefined);
+        const answer = () =>
+          inbound.callback
+            ? telegram
+                .answerCallback(
+                  owner,
+                  inbound.callback.id,
+                  AbortSignal.timeout(5_000),
+                )
+                .catch(() => undefined)
+            : Promise.resolve();
+        // Durable Objects serialize alarm/drive with RPCs. If the account is mid-slice,
+        // ack Telegram before the client times out; persist continues via waitUntil.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<"timeout">((resolve) => {
+          timer = setTimeout(() => resolve("timeout"), 8_000);
+        });
+        const raced = await Promise.race([pending, timeout]);
+        if (timer) clearTimeout(timer);
+        if (raced === "timeout") {
+          ctx?.waitUntil((async () => { try { await pending; await answer(); } catch { /* persist/ack best-effort after Telegram 200 */ } })());
+          return json({ ok: true, status: "accepted" }, 200);
+        }
+        await answer();
         return json(
-          { ok: status !== "conflict", status },
-          status === "conflict" ? 409 : status === "limited" ? 429 : 200,
+          { ok: raced !== "conflict", status: raced },
+          raced === "conflict" ? 409 : raced === "limited" ? 429 : 200,
         );
       }
       const principal = authenticate(request, config);

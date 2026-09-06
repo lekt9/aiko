@@ -341,6 +341,82 @@ test("fresh-account history and native memory sidecar import atomically without 
   await source.close();
 });
 
+test("alarm settles one unrested thread per invocation and re-arms remaining work", async () => {
+  const durable = storage();
+  const calls: string[] = [];
+  const makeActor = (label: string) =>
+    actor({
+      name: "aiko",
+      methods: {},
+      components: [
+        component({
+          name: `slice-${label}`,
+          keys: {
+            prefixes: ["Done:"],
+            keyOf: (e) => (e.type === "Done" ? `Done:${e.id}` : undefined),
+          },
+          initial: () => ({ pending: [] as string[] }),
+          step: (state, e) => ({
+            pending:
+              e.type === "Input"
+                ? [...state.pending, String(e.id)]
+                : e.type === "Done"
+                  ? state.pending.filter((id) => id !== e.id)
+                  : state.pending,
+          }),
+          output: (state) => ({
+            view: undefined,
+            transitions: state.pending.map((id) =>
+              effect({
+                key: `Done:${id}`,
+                input: id,
+                act: (id) =>
+                  Effect.sync(() => {
+                    calls.push(`${label}:${id}`);
+                    return [{ type: "Done", id, at: Date.now() }];
+                  }),
+              }),
+            ),
+          }),
+        }),
+      ],
+    });
+  const foreground = makeActor("fg");
+  const indexer = makeActor("idx");
+  const options = {
+    storage: durable,
+    actorName: "aiko",
+    actorInstance: "demo",
+    ownsThread: (t: string) =>
+      t === "user-123" || t === "background-123-indexer",
+    actorFor: (t: string) =>
+      t === "user-123" ? foreground : t === "background-123-indexer" ? indexer : undefined,
+    layersFor: () => Layer.empty,
+    keyOf,
+  };
+  let host = await createCloudflareAccountHost(options);
+  await host.commitRoot(host.self("user-123"), { type: "Input", id: "fg", at: 1 });
+  await host.commitRoot(host.self("background-123-indexer"), {
+    type: "Input",
+    id: "idx",
+    at: 1,
+  });
+  await host.close();
+  calls.length = 0;
+  host = await createCloudflareAccountHost(options);
+  await host.alarm();
+  expect(calls).toEqual(["fg:fg"]);
+  expect((await host.read("user-123")).some((e) => e.type === "Done")).toBe(true);
+  expect(
+    (await host.read("background-123-indexer")).some((e) => e.type === "Done"),
+  ).toBe(false);
+  const next = await durable.getAlarm();
+  expect(next).toBeGreaterThan(0);
+  await host.alarm();
+  expect(calls).toEqual(["fg:fg", "idx:idx"]);
+  await host.close();
+});
+
 test("native recovery preserves an external durable idle deadline across eviction", async () => {
   const durable = storage();
   let nextWake: number | undefined = Date.now() + 240_000;

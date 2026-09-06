@@ -433,11 +433,28 @@ export async function createCloudflareAccountHost<R>(
             new Error("No provider route is mounted on this account host"),
           ),
   });
+  const sliceStop = Object.freeze({ slice: true as const });
+  let sliceBudget = Infinity;
+  let sliceThread: string | undefined;
   const driver = createThreadDriver({
     policy: { maxConcurrentThreads: 3 },
-    pick: (dirty) =>
-      [...dirty].find((thread) => thread.startsWith("user-")) ??
-      dirty.values().next().value!,
+    pick: (dirty) => {
+      const pool = [...dirty];
+      if (!Number.isFinite(sliceBudget))
+        return pool.find((thread) => thread.startsWith("user-")) ?? pool[0]!;
+      const next =
+        (sliceThread !== undefined &&
+        pool.includes(sliceThread) &&
+        threadNeedsWork(sliceThread)
+          ? sliceThread
+          : undefined) ??
+        pool.find((thread) => threadNeedsWork(thread) && thread.startsWith("user-")) ??
+        pool.find((thread) => threadNeedsWork(thread));
+      if (next === undefined) throw sliceStop;
+      if (sliceThread === undefined) sliceThread = next;
+      if (next !== sliceThread) throw sliceStop;
+      return next;
+    },
     serve: async (thread) => {
       checkThread(thread);
       const actor = options.actorFor(thread);
@@ -468,19 +485,6 @@ export async function createCloudflareAccountHost<R>(
       runtime.settled = true;
     },
   });
-  const resting = async () => {
-    if (!driver.resting()) return false;
-    return threadsSync().every((thread) => {
-      const runtime = runtimes.get(thread);
-      const actor = options.actorFor(thread);
-      return (
-        !actor ||
-        (runtime?.settled
-          ? runtime.reconciler.isResting()
-          : restingActor(actor, readSync(thread)))
-      );
-    });
-  };
   const deadlineFor = (thread: string) => {
     const actor = options.actorFor(thread);
     return earliestDeadlineOf(
@@ -488,6 +492,15 @@ export async function createCloudflareAccountHost<R>(
       actor && "methods" in actor ? (actor.methods as ActorMethods) : undefined,
     );
   };
+  const threadNeedsWork = (thread: string) => {
+    const actor = options.actorFor(thread);
+    if (!actor) return false;
+    const runtime = runtimes.get(thread);
+    return runtime?.settled && runtime.actor === actor
+      ? !runtime.reconciler.isResting()
+      : !restingActor(actor, readSync(thread));
+  };
+  const resting = async () => !threadsSync().some(threadNeedsWork);
   async function synchronizeAlarm() {
     const observed = revision;
     const idle = await resting();
@@ -509,10 +522,18 @@ export async function createCloudflareAccountHost<R>(
     if (revision !== observed) await arm();
   }
   let tail = Promise.resolve();
-  function drive() {
+  function drive(budget = Infinity) {
     const next = tail.then(async () => {
-      await driver.drain();
-      await synchronizeAlarm();
+      sliceBudget = budget;
+      sliceThread = undefined;
+      try {
+        await driver.drain();
+      } catch (error) {
+        if (error !== sliceStop) throw error;
+      }
+      if (Number.isFinite(budget) && driver.work() > 0)
+        await storage.setAlarm(Date.now() + 1);
+      else await synchronizeAlarm();
     });
     tail = next.catch(() => undefined);
     return next;
@@ -661,9 +682,11 @@ export async function createCloudflareAccountHost<R>(
           await append(thread, [
             alarmFired({ scheduledFor: deadline, at: Date.now() }),
           ]);
-        driver.mark(thread);
+        else if (threadNeedsWork(thread)) driver.mark(thread);
       }
-      await drive();
+      // One settlement per alarm so a long native drive cannot pin the isolate
+      // and starve Telegram webhook RPCs. Remaining unrested threads re-arm immediately.
+      await drive(1);
     },
     resting,
     work: driver.work,
