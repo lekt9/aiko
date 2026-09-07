@@ -34,7 +34,7 @@ type Transition = Event & {
 export class ApprovalError extends Error {}
 
 // Strict JSON only: no lossy undefined/NaN/date/accessor conversion or mutable aliases.
-function canonical(value: unknown, seen = new Set<object>()): string {
+export function canonical(value: unknown, seen = new Set<object>()): string {
   if (value === null || typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
   if (typeof value === "number" && Number.isFinite(value)) return JSON.stringify(value);
   if (!value || typeof value !== "object" || seen.has(value)) throw new ApprovalError("Payload must be finite acyclic JSON");
@@ -62,7 +62,7 @@ function freeze<T>(value: T): T {
   return value;
 }
 const copy = <T>(value: T): T => freeze(JSON.parse(canonical(value)));
-async function hash(value: unknown): Promise<string> {
+export async function hash(value: unknown): Promise<string> {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical(value)));
   return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, "0")).join("");
 }

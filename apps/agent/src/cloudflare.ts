@@ -119,6 +119,11 @@ import {
   automationWakeEvent,
   automationAppendAllowed,
 } from "./automations.ts";
+import {
+  promiseEventKey,
+  promiseNextWake,
+  promiseWakeEvent,
+} from "./promises.ts";
 import { CONSOLE_HTML } from "./console.ts";
 import type { AikoConfig } from "./config.ts";
 import {
@@ -709,6 +714,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         const times = [
           await this.sandboxDeadline(host, capabilities),
           automationNextWake(await host.read(`user-${owner}`)),
+          promiseNextWake(await host.read(`user-${owner}`)),
         ].filter((n): n is number => n !== undefined);
         return times.length ? Math.min(...times) : undefined;
       },
@@ -721,6 +727,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         methodIngressKeyOf(e) ??
         secretaryEventKey(e) ??
         automationEventKey(e) ??
+        promiseEventKey(e) ??
         routerEventKey(e) ??
         backgroundEventKey(e) ??
         telegramEventKey(e) ??
@@ -774,6 +781,17 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                         ? createReflectionActor(memory)
                         : createAikoActor({
                             automations: true,
+                            promises: capabilities
+                              ? {
+                                  executors: {
+                                    harness: (segment, signal) =>
+                                      capabilities.sandbox.codeSegment(
+                                        segment,
+                                        signal ?? AbortSignal.timeout(120_000),
+                                      ),
+                                  },
+                                }
+                              : undefined,
                             owner,
                             memory,
                             voice,
@@ -913,6 +931,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     const lastEvent = events.reduce(
       (latest, e) =>
         e.type !== "AikoAutomationTick" &&
+        e.type !== "AikoPromiseTick" &&
         typeof e.at === "number" &&
         Number.isFinite(e.at)
           ? Math.max(latest, e.at)
@@ -1083,6 +1102,12 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         at,
       );
       if (tick) await host.commitRoot(host.self(`user-${this.owner}`), tick);
+      const promiseTick = promiseWakeEvent(
+        await host.read(`user-${this.owner}`),
+        at,
+      );
+      if (promiseTick)
+        await host.commitRoot(host.self(`user-${this.owner}`), promiseTick);
       await host.alarm();
       await this.serialize(async () => {
         const deadline = await this.sandboxDeadline(host, capabilities);
