@@ -46,9 +46,6 @@ async function fixture(mode: "delivered" | "unknown" = "delivered") {
       search: async () => {
         throw Error("unused");
       },
-      connect: async () => {
-        throw Error("unused");
-      },
       connectBrowser: async () => {
         throw Error("unused");
       },

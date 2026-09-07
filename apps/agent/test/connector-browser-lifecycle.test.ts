@@ -15,7 +15,7 @@ const verified = (binding: SecureBrowserBinding, revision = 1) => ({ ...binding,
 test("native connect reuses its flow and reconciles only already-revoked browser grants", async()=>{
  const store=new Store();let cleanup=0;let confirmed=false;
  const adapter:SecureBrowserAdapter={native:true,begin,disconnect:async b=>{cleanup++;return {...b,status:confirmed?"disconnected":"unknown"}}};
- const e=new ConnectorEngine({owner:"123",store,arcadeOAuthEnabled:false,secureBrowser:adapter});
+ const e=new ConnectorEngine({owner:"123",store,secureBrowser:adapter});
  const first=await e.connectBrowser("service.net");
  expect((await e.connectBrowser("service.net")).id).toBe(first.id);
  await e.disconnect(first.id);expect(cleanup).toBe(1);
@@ -59,12 +59,12 @@ test("connection events are durable metadata and replay a lost delivery acknowle
 test("initial context needs verified owner access and rechecks disconnection after the read", async()=>{
  const store=new Store();let reads=0;let revoke:undefined|(()=>Promise<unknown>);
  const adapter:SecureBrowserAdapter={native:true,begin,status:async b=>verified(b),readContext:async b=>{reads++;await revoke?.();return {url:`https://${b.domain}/home`,text:"A project has a review due tomorrow."}}};
- const e=new ConnectorEngine({owner:"123",store,arcadeOAuthEnabled:false,secureBrowser:adapter});
+ const e=new ConnectorEngine({owner:"123",store,secureBrowser:adapter});
  const c=await e.connectBrowser("service.net");
  await expect(e.initialContext(c.id)).rejects.toThrow();expect(reads).toBe(0);
  await e.completeAuth(c.id);
  const context=await e.initialContext(c.id);expect(context.type).toBe("connected-app-context");
- const other=new ConnectorEngine({owner:"456",store,arcadeOAuthEnabled:false,secureBrowser:adapter});
+ const other=new ConnectorEngine({owner:"456",store,secureBrowser:adapter});
  await expect(other.initialContext(c.id)).rejects.toThrow();expect(reads).toBe(1);
  revoke=()=>e.disconnect(c.id);
  await expect(e.initialContext(c.id)).rejects.toThrow("revoked");

@@ -143,7 +143,7 @@ const ofType = (events: readonly AikoEvent[], type: string) =>
 
 test("verified connections trigger one native context index and reflection, never on pending or foreign grants", async()=>{
  let reads=0;
- const f=await fixture({arcadeOAuthEnabled:false},{connectorBrowser:owner=>({native:true,
+ const f=await fixture({},{connectorBrowser:owner=>({native:true,
    begin:async()=>({authorizationUrl:"https://signin.aiko.com/connect"}),
    status:async binding=>({...binding,status:"connected",verification:{verified:true,revision:1,expiresAt:Date.now()+600000}}),
    readContext:async binding=>{expect(binding.owner).toBe(owner);reads++;return {url:`https://${binding.domain}/home`,text:"Aurorapanda has a Thursday release review."}},
@@ -934,7 +934,7 @@ test("the next foreground turn sees the proactive reply that was actually sent t
 });
 
 test("a real owner connection event opens a Telegram Mini App through the foreground actor", async () => {
-  const f = await fixture({arcadeOAuthEnabled:false,replyStyle:"direct"}, {connectorBrowser: () => ({native:true,
+  const f = await fixture({replyStyle:"direct"}, {connectorBrowser: () => ({native:true,
     begin: async () => ({authorizationUrl:"https://signin.aiko.com/connect"}),
     status: async binding => ({...binding,status:"pending"}),
   })});
