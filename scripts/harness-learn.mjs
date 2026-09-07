@@ -486,6 +486,7 @@ async function mineTardigradeRemote({ url, token, exportFile }) {
   const base = url.replace(/\/$/, "");
   const auth = { authorization: `Bearer ${token}` };
   const skippedAccounts = [];
+  let accountsFound = 0;
   let payload;
   if (exportFile) {
     payload = JSON.parse(fs.readFileSync(exportFile, "utf8"));
@@ -503,6 +504,7 @@ async function mineTardigradeRemote({ url, token, exportFile }) {
         owners = (list.accounts ?? [])
           .map((a) => (typeof a === "string" ? a : a?.owner))
           .filter(Boolean);
+        accountsFound = owners.length;
       }
     } catch {}
     if (!owners?.length) owners = [null];
@@ -548,6 +550,7 @@ async function mineTardigradeRemote({ url, token, exportFile }) {
   return {
     threads: threads.length,
     events: mined,
+    accounts_found: accountsFound,
     accounts_skipped: skippedAccounts,
     url: new URL(url).host,
     source: exportFile ? "export-file" : "live",

@@ -71,18 +71,17 @@ attempts made) instead of being silently dropped.
 Privacy: user message content (`MessageReceived`) is never mined — only
 failure outcomes and receipt statuses.
 
-### Production (remote) Tardigrade logs
+### Production (remote) Tardigrade logs — on by default
 
-Production Aiko runs on Cloudflare Durable Objects. The loop mines them from
-the operator export endpoint — `GET /api/control/export`, gated by
-`AIKO_OPERATOR_TOKEN` — when these are set:
-
-```sh
-export AIKO_EXPORT_URL="https://aiko-agent.<account>.workers.dev"  # or --remote-url
-export AIKO_OPERATOR_TOKEN="..."                                  # or --remote-token
-```
-
-Alternatively, mine a saved export offline: `--remote-export <file.json>`.
+Production Aiko runs on Cloudflare Durable Objects. The loop mines it by
+default: it enumerates accounts from `GET /api/control/accounts`, then exports
+each account's event journal via `GET /api/control/export?account=<owner>`
+(operator-gated). Token discovery order: `--remote-token` →
+`AIKO_OPERATOR_TOKEN` env → `~/.config/unbrowse/aiko-operator.env` (0600) →
+`~/.config/unbrowse/aiko-cloudflare.env`. URL: `--remote-url` →
+`AIKO_EXPORT_URL` → `AIKO_CLOUDFLARE_URL` → the production workers.dev host
+(the same one hardcoded in `apps/agent` for connectors). Disable with
+`--no-remote`, or mine a saved export offline: `--remote-export <file.json>`.
 The raw export is cached (gitignored) under
 `artifacts/harness-learn/tardigrade-remote/` as evidence; **thread names are
 hashed** (`remote-<sha>`) so account/chat identifiers never enter lessons or
