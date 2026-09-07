@@ -108,11 +108,12 @@ function receiptSummary(
   );
 }
 type SpeechState = {
-  messages: Map<string, { text: string; chat?: string; context?: Speech["context"] }>;
+  messages: Map<string, { id?: string; text: string; chat?: string; context?: Speech["context"] }>;
   receipts: Map<string, (ReadReceipt | MemoryReceipt | BrowserReceipt)[]>;
   replies: Map<string, Speech>;
   browserAttempts: Map<string, "started" | "uncertain">;
   omittedReceipts: Set<string>;
+  nudged: Set<string>;
   telegramFinal: Map<string, TelegramReceipt>;
 };
 
@@ -122,6 +123,9 @@ export function voiceAndOutbox(
   voice: Voice,
   send?: Sender,
   policy?: { live: boolean; redact: (text: string) => string; browserAnswers?: boolean; requireThinkFeel?: boolean },
+  /** Production hosts force a real reply: when a turn ends without one, the
+   * host injects an operator instruction that re-drives the model. */
+  nudge?: (turn: string) => Promise<void>,
 ) {
   return component({
     name: "aiko.voice-and-outbox",
@@ -155,6 +159,7 @@ export function voiceAndOutbox(
       replies: new Map(),
       browserAttempts: new Map(),
       omittedReceipts: new Set(),
+      nudged: new Set(),
       telegramFinal: new Map(),
     }),
     step: (previous, raw): SpeechState => {
@@ -165,6 +170,7 @@ export function voiceAndOutbox(
         replies: new Map(previous.replies),
         browserAttempts: new Map(previous.browserAttempts),
         omittedReceipts: new Set(previous.omittedReceipts),
+        nudged: new Set(previous.nudged),
         telegramFinal: new Map(previous.telegramFinal),
       };
       if (e.type === "AikoTelegramActionSettled") {
@@ -204,6 +210,7 @@ export function voiceAndOutbox(
         state.browserAttempts.set(String(e.turn), "started");
       if (e.type === "MessageReceived")
         state.messages.set(String(e.id), {
+          id: String(e.id),
           text: String(e.text),
           context: { replyTo: (e.telegram as any)?.messageId, messageThreadId: (e.telegram as any)?.messageThreadId },
           ...((e.source === "telegram" || (["operator", "automation"].includes(String(e.source)) && e.channel === "telegram")) && String(e.chat) === owner
@@ -288,7 +295,15 @@ export function voiceAndOutbox(
                           ? state.browserAttempts.get(String(e.turn)) === "uncertain"
                             ? "I ran that in the browser but couldn’t confirm the results — ask me to retry."
                             : policy?.browserAnswers
-                              ? "I finished the steps but couldn’t produce a confirmed answer. Please try again."
+                              ? (() => {
+                                  const messageId = String(message?.id ?? "");
+                                  if (nudge && !state.nudged.has(String(e.turn)) && !messageId.startsWith("answer-nudge-")) {
+                                    state.nudged.add(String(e.turn));
+                                    void nudge(String(e.turn)).catch(() => undefined);
+                                    return "Putting the final reply together…";
+                                  }
+                                  return "I finished the steps but couldn’t produce a confirmed answer. Please try again.";
+                                })()
                               : receiptSummary(
                                   receipts,
                                   state.omittedReceipts.has(String(e.turn)),
@@ -414,6 +429,9 @@ export function createAikoActor(options: {
   telegramTyping?: ReturnType<typeof createTelegramTyping>;
   toolCallLimit?: number | null;
   send?: Sender;
+  /** Host callback that forces a fresh model turn when a turn ends with tools
+   * but no final reply; the injected instruction must produce the answer. */
+  nudge?: (turn: string) => Promise<void>;
   live?: boolean;
   publicWeb?: boolean;
   webRead?: (url: string, signal: AbortSignal) => Promise<PublicPage>;
@@ -488,7 +506,7 @@ export function createAikoActor(options: {
         redact: options.memory.redact,
         browserAnswers: options.browserMode === "sandbox",
         requireThinkFeel: options.requireThinkFeel,
-      }),
+      }, options.nudge),
       infer(
         [
           system(

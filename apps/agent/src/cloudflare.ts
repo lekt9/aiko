@@ -855,6 +855,13 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                               },
                             },
                             toolCallLimit: null,
+                            nudge: async (turn) => {
+                              await this.acceptOperatorMessage(
+                                owner,
+                                `answer-nudge-${turn.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 80)}`,
+                                "Your tools have finished running for the owner’s last request, but you have not produced a final reply yet. Write the final reply now, in plain spoken prose, from the results you already have. Do not start new browser sessions or repeat the tools; respond directly.",
+                              );
+                            },
                             requireThinkFeel,
                             ...(telegramTyping ? { telegramTyping } : {}),
                             extraTools: [
