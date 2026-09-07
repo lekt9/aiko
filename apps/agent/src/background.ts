@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { automationHookForwarder } from "./automations.ts";
+import { connectionRouteId, type ConnectionRoute, type ConnectionIndexPage } from "./connection-index.ts";
 import {
   actor,
   agentMessageMethod,
@@ -306,7 +307,7 @@ function validSupports(
   );
 }
 
-export function createIndexerActor(binding: MemoryBinding, connectionContext?: (id:string,signal:AbortSignal)=>Promise<LearningInput>) {
+export function createIndexerActor(binding: MemoryBinding, connectionContext?: (id:string,signal:AbortSignal,route?:ConnectionRoute)=>Promise<ConnectionIndexPage>) {
   const indexing = component({
     name: "aiko.learning-indexer",
     keys,
@@ -336,7 +337,12 @@ export function createIndexerActor(binding: MemoryBinding, connectionContext?: (
       };
       if (e.type === "AikoHookReceived" || e.type === "AikoIndexRequested" || e.type === "AikoConnectionIndexRequested")
         n.jobs.set(e.id, e);
-      if (e.type === "AikoLearningIndexed") n.indexed.add(e.id);
+      if (e.type === "AikoLearningIndexed") {
+        n.indexed.add(e.id);
+        const job = n.jobs.get(e.id);
+        if (job?.type === "AikoConnectionIndexRequested" && typeof e.url === "string")
+          n.jobs.set(e.id, {...job, url:e.url});
+      }
       if (
         e.type === "AikoKnowledgeChanged" ||
         e.type === "AikoKnowledgeUnchanged"
@@ -421,25 +427,39 @@ export function createIndexerActor(binding: MemoryBinding, connectionContext?: (
           transitions: [
             effect({
               key: `aiko-background:AikoLearningIndexed:${job.id}`,
-              input: job,
-              act: (e) =>
+              input: {
+                job,
+                knownUrls: [...s.jobs.values()].filter(e => (e.crawlId ?? e.id) === (job.crawlId ?? job.id)).map(e => e.url),
+                knownIds: [...s.jobs.keys()],
+              },
+              act: ({job:e, knownUrls, knownIds}) =>
                 Effect.tryPromise({
                   try: async (signal) => {
-                    const input = e.type === "AikoConnectionIndexRequested"
-                      ? await (connectionContext ? connectionContext(e.connectionId, signal) : Promise.reject(new Error("Connection context unavailable")))
-                      : e.input as LearningInput;
+                    const page = e.type === "AikoConnectionIndexRequested"
+                      ? await (connectionContext ? connectionContext(e.connectionId, signal, e.revision === undefined ? undefined : {url:e.url,revision:e.revision}) : Promise.reject(new Error("Connection context unavailable")))
+                      : undefined;
+                    const input = page ? page.input : e.input as LearningInput;
                     signal.throwIfAborted();
-                    return indexLearning(
+                    const result = await indexLearning(
                       binding,
                       input,
                       binding.redact,
                     );
+                    const crawlId = e.crawlId ?? e.id;
+                    const visited = new Set([...knownUrls, page?.url]);
+                    const scheduled = new Set(knownIds);
+                    const next = (page?.routes ?? []).flatMap(url => {
+                      const id = `connection-route:${connectionRouteId(crawlId, url)}`;
+                      if (visited.has(url) || scheduled.has(id)) return [];
+                      scheduled.add(id);
+                      return [ev("AikoConnectionIndexRequested", {id, crawlId, connectionId:e.connectionId, url, revision:page!.revision, cause:e.cause ?? e.id})];
+                    });
+                    // Page evidence and the next frontier commit together in the
+                    // native effect receipt. Recovery never depends on an in-memory crawl.
+                    return [ev("AikoLearningIndexed", {id:e.id,...result,...(page ? {url:page.url,revision:page.revision,crawlId,linksTruncated:page.linksTruncated} : {})}), ...next];
                   },
                   catch: () => job.type === "AikoConnectionIndexRequested" ? "connection_context_index_failed" : "learning_index_failed",
                 }).pipe(
-                  Effect.map((result) => [
-                    ev("AikoLearningIndexed", { id: job.id, ...result }),
-                  ]),
                   Effect.catch((errorCode) =>
                     Effect.succeed([
                       ev("AikoBackgroundFailed", {

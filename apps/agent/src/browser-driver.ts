@@ -482,8 +482,10 @@ export function browserDriverFactory(
               lifetime.signal,
               ...(signal ? [signal] : []),
             ]);
-            if (action.action === "navigate")
+            if (action.action === "navigate") {
+              learning.beginNavigation();
               targetOrigin = publicTarget(action.url).origin;
+            }
             const capture = async () => {
               await network.flush();
               await flush();

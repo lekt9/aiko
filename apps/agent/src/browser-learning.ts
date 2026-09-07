@@ -67,12 +67,16 @@ export class BrowserLearning {
       onPrepared?(event: BrowserNetworkToolPrepared, responses: Record<string, unknown>, semantics: ReadonlyMap<string, ResponseSemanticEvidence>): Promise<void>;
     },
   ) {}
-  /** Tracker-heavy pages fire hundreds of requests; capturing all of them floods
-   * the turn's durable log and starves the actual answer. Learn from the first
-   * requests of a session and skip the rest. */
+  /** Bound tracker traffic per navigation without disabling learning on later routes. */
   private captureLimit = 120;
   private capped = false;
   private capturedIndexes = new Set<number>();
+
+  beginNavigation() {
+    this.captureLimit = this.networkSequence + 120;
+    this.capped = false;
+    this.capturedIndexes.clear();
+  }
 
   async observe(entry: NetworkEntry, index: number, complete: boolean) {
     if (this.capped) return;

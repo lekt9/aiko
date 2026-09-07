@@ -452,8 +452,8 @@ export async function createService(
               : role === "router"
                 ? createToolRouterActor(routerBinding(owner))
                 : role === "indexer"
-                  ? createIndexerActor(memory, (id, signal) =>
-                      connectorsFor(owner).initialContext(id, signal),
+                  ? createIndexerActor(memory, (id, signal, route) =>
+                      connectorsFor(owner).connectionPage(id, signal, route),
                     )
                   : role === "reflection"
                     ? createReflectionActor(memory)

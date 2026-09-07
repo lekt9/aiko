@@ -139,6 +139,17 @@ test("indexed Merkle network DAGs become ready observed skills that execute with
   f.owned.push({ type: "AikoUnlockSessionRenewed", owner: "123", connectionId: "conn", revision: "2", domain: "api.vendor.com", at: 2000 } as Event);
   const recovered = await f.call("route", { tasks: [{ id: "items", query: "vendor api network", domain: "api.vendor.com" }] });
   expect(recovered.tasks[0].tools.some((t: {provider:string; connected?: boolean}) => t.provider === "observed" && t.connected)).toBe(true);
+  f.setUnavailable(true);
+  f.binding.engine.search = async () => { throw new Error("Arcade offline"); };
+  expect(await f.call("status", { decisionId: recovered.id })).toMatchObject({current: false});
+  const offline = await f.call("route", { tasks: [{ id: "items", query: "vendor api network", domain: "api.vendor.com" }] });
+  expect(offline).toMatchObject({state: "ready", tasks: [{fallbackAllowed: false, tools: [{provider: "observed", connected: true}]}]});
+  expect(await f.call("describe", {toolIds: [prepared.toolId]})).toMatchObject({state: "ready"});
+  expect(await f.call("status", {decisionId: offline.id})).toMatchObject({current: true});
+  await f.restart();
+  expect(await f.call("route", { tasks: [{ id: "items", query: "vendor api network", domain: "api.vendor.com" }] })).toMatchObject({state: "ready"});
+  // A catalog outage never manufactures an Arcade grant or enables discovery.
+  expect(await f.call("route", { tasks: [{id: "mail", query: "read Gmail email messages", domain: "gmail.com"}] })).toMatchObject({tasks: [{tools: [], fallbackAllowed: false}]});
 });
 test("collection search favors query schemas over unknown IDs and unrequested folders", async () => {
   const f = await fixture();

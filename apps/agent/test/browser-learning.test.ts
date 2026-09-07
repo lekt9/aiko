@@ -36,6 +36,22 @@ const windows = [
   },
 ];
 
+test("a busy first page does not exhaust network learning for subsequent routes", async () => {
+  const events: Event[] = [];
+  let sequence = 0;
+  const learning = new BrowserLearning({threadId:"multi-page-trace",nextSequence:()=>++sequence,emit:async e=>{events.push(e);}});
+  const entries = Array.from({length:62}, (_, i) => ({...entry(),request:{...entry().request,url:`https://shop.example.com/items/${i}`}}));
+  for (let i=0;i<61;i++) await learning.observe(entries[i]!,i,true);
+  expect(events.filter(e=>e.type==="NetworkFactObserved")).toHaveLength(120);
+  learning.beginNavigation();
+  await learning.observe(entries[61]!,61,true);
+  const compiled = await learning.compile(entries,windows,"https://shop.example.com");
+  expect(compiled.prepared).toBeGreaterThan(0);
+  const checkpoint = events.findLast(e=>e.type==="NetworkGraphCheckpointPrepared");
+  expect(checkpoint?.sourceRequestIds).toEqual(["req-0062"]);
+  expect(events.filter(e=>e.type==="NetworkFactObserved")).toHaveLength(122);
+});
+
 test("native passive network facts compile owner-local read definitions without leaking query or response values", async () => {
   const events: Event[] = [];
   let sequence = 0;

@@ -14,7 +14,7 @@ import type { ConnectorEngine } from "./connectors.ts";
 import { replayCapabilities } from "./capability-builder.ts";
 import { validateWorkflowDefinition, type WorkflowRecord } from "./tool-workflows.ts";
 
-export const ROUTER_VERSION = "aiko-tool-router/7";
+export const ROUTER_VERSION = "aiko-tool-router/8";
 export type RouterMethod = "discover" | "describe" | "route" | "status";
 export type RouteState = "ready" | "needs_connection" | "needs_discovery" | "catalog_unavailable";
 export type AtomicTask = { id: string; query: string; domain?: string; arguments?: Record<string, unknown> };
@@ -108,8 +108,10 @@ function rank(task: AtomicTask, candidates: Candidate[], history: ReturnType<typ
   }).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
 }
 async function snapshot(binding: ToolRouterBinding) {
-  const [catalog, connections, events, vaultDomains] = await Promise.all([binding.engine.listCatalog(), binding.engine.connections(), binding.readOwnedEvents?.() ?? Promise.resolve([]), binding.vaultDomains?.() ?? Promise.resolve([])]);
-  if (!Array.isArray(catalog) || !catalog.length || catalog.length > 30000) throw new Error("Catalog unavailable");
+  const [catalogResult, connections, events, vaultDomains] = await Promise.all([binding.engine.listCatalog().catch(() => undefined), binding.engine.connections(), binding.readOwnedEvents?.() ?? Promise.resolve([]), binding.vaultDomains?.() ?? Promise.resolve([])]);
+  if (catalogResult !== undefined && (!Array.isArray(catalogResult) || catalogResult.length > 30000)) throw new Error("Invalid catalog");
+  const catalog = catalogResult ?? [];
+  const catalogAvailable = catalog.length > 0;
   const redact = binding.redact ?? (text => text);
   const candidates: Candidate[] = [];
   const ids = new Set<string>();
@@ -196,7 +198,7 @@ async function snapshot(binding: ToolRouterBinding) {
     // Generated and learned-network steps retain their Arcade absence gate even inside a reusable workflow.
     let allowed = true;
     for(const tool of stepTools) if(tool!.provider === "generated" || tool!.provider === "observed") for(const domain of tool!.domains) {
-      const authority = await binding.engine.search(domain);
+      const authority = await searchAuthority(binding, domain);
       if(authority.status!=="absent" || !authority.fallbackAllowed) allowed=false;
     }
     if(!allowed)continue;
@@ -204,7 +206,13 @@ async function snapshot(binding: ToolRouterBinding) {
     if(redact(JSON.stringify(workflow))!==JSON.stringify(workflow))continue;
     candidates.push(workflow);
   }
-  return { candidates, generated, observed, history, version: hash([ROUTER_VERSION, catalog.map(c => [c.id, c.toolkit, c.metadata]).sort((a,b) => String(a[0]).localeCompare(String(b[0]))), [...candidates].sort((a, b) => a.id.localeCompare(b.id)), generated, observed, [...history].sort(), [...vaultDomains].sort()]) };
+  // Observed capabilities are established by the owner's verified network graph,
+  // independently of Arcade. A missing catalog still grants no discovery fallback.
+  if (!catalogAvailable && !observed.length && !candidates.some(c => c.provider === "observed")) throw new Error("Catalog unavailable");
+  return { candidates, generated, observed, history, catalogAvailable, version: hash([ROUTER_VERSION, catalogAvailable, catalog.map(c => [c.id, c.toolkit, c.metadata]).sort((a,b) => String(a[0]).localeCompare(String(b[0]))), [...candidates].sort((a, b) => a.id.localeCompare(b.id)), generated, observed, [...history].sort(), [...vaultDomains].sort()]) };
+}
+async function searchAuthority(binding: ToolRouterBinding, domain: string) {
+  return binding.engine.search(domain).catch(() => ({ status: "unavailable" as const, fallbackAllowed: false, connectors: [], message: "Catalog unavailable" }));
 }
 function authoritySignature(result: Awaited<ReturnType<ToolRouterBinding["engine"]["search"]>>) { return hash([result.status, result.fallbackAllowed, result.connectors.map(c => c.id).sort()]); }
 function overall(tasks: TaskRoute[]): RouteState {
@@ -227,7 +235,7 @@ async function respond(binding: ToolRouterBinding, method: RouterMethod, input: 
     if (!object(input) || Object.keys(input).some(k => k !== "decisionId") || (input.decisionId !== undefined && !safeString(input.decisionId, 100))) throw new Error("Invalid status arguments");
     const prior = [...log].reverse().find(e => e.type === "AikoRouterDecisionRecorded" && e.owner === binding.owner && (!input.decisionId || (e.result as RouteDecision)?.id === input.decisionId));
     const decision = prior?.result as RouteDecision | undefined;
-    const authority = decision ? await Promise.all(decision.authority.map(async check => ({ domain: check.domain, signature: authoritySignature(await binding.engine.search(check.domain)) }))) : [];
+    const authority = decision ? await Promise.all(decision.authority.map(async check => ({ domain: check.domain, signature: authoritySignature(await searchAuthority(binding, check.domain)) }))) : [];
     const version = hash([current.version, authority]);
     return { state: decision?.snapshot === version ? decision.state : "needs_discovery", current: !!decision && decision.snapshot === version, decisionId: decision?.id, snapshot: version, reason: decision ? "Compare snapshot before reuse; changed catalog, auth or execution history requires rerouting" : "No owned route decision" };
   }
@@ -247,7 +255,7 @@ async function respond(binding: ToolRouterBinding, method: RouterMethod, input: 
     let pool = current.candidates;
     let fallbackAllowed = false;
     if (task.domain) {
-      const authority = await binding.engine.search(task.domain);
+      const authority = await searchAuthority(binding, task.domain);
       checks.push({domain: task.domain, signature: authoritySignature(authority)});
       fallbackAllowed = authority.status === "absent" && authority.fallbackAllowed;
       if (authority.status === "available") {
@@ -261,7 +269,7 @@ async function respond(binding: ToolRouterBinding, method: RouterMethod, input: 
     if (fallbackAllowed) ranked = rank(task, [...current.generated, ...current.observed, ...current.candidates.filter(c=>c.provider==="workflow"||c.provider==="observed")].filter(c => c.domains.includes(task.domain!)), current.history);
     if (!ranked.length) ranked = rank(task, [...current.observed, ...current.candidates.filter(c=>c.provider==="observed")], current.history);
     const tools = bounded(ranked, 2).filter(tool => { const bytes = JSON.stringify(tool).length; if (bytes > remainingBytes) return false; remainingBytes -= bytes; return true; }); // At most 16 exact schemas for eight atomic tasks.
-    const state: RouteState = tools.length ? tools.some(t => t.connected && t.history !== "unknown") ? "ready" : tools.every(t => t.history === "unknown" || t.reviewRequired) ? "needs_discovery" : "needs_connection" : "needs_discovery";
+    const state: RouteState = tools.length ? tools.some(t => t.connected && t.history !== "unknown") ? "ready" : tools.every(t => t.history === "unknown" || t.reviewRequired) ? "needs_discovery" : "needs_connection" : current.catalogAvailable ? "needs_discovery" : "catalog_unavailable";
     tasks.push({ taskId: task.id, state, tools, fallbackAllowed, reason: tools.length ? "Ranked fine-grained schemas with parent provider, owned connection state and verified execution history; missingArguments must still be supplied; routing grants no action authority" : fallbackAllowed ? "Arcade confirms provider absence; discover or build a validated capability" : "No safe exact-schema match; refine this atomic task or provider. Absence has not been authorized" });
   }
   const version = hash([current.version, checks]);

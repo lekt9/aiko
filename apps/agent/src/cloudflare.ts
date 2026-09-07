@@ -565,7 +565,9 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       secureBrowser:
         connectorVault(config.connectorVault, owner) ??
         (capabilities
-          ? nativeBrowserConnector(owner, capabilities.sandbox.browserFactory())
+          ? nativeBrowserConnector(owner, capabilities.sandbox.browserFactory(), async (record) => {
+              await host.commitRoot(host.self(`user-${owner}`), record as Event);
+            })
           : undefined),
       env: { ARCADE_API_KEY: config.arcadeKey },
       store: doStore,
@@ -802,8 +804,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                   : bound.role === "router"
                     ? createToolRouterActor(routerBinding)
                     : bound.role === "indexer"
-                      ? createIndexerActor(memory, (id, signal) =>
-                          connectors.initialContext(id, signal),
+                      ? createIndexerActor(memory, (id, signal, route) =>
+                          connectors.connectionPage(id, signal, route),
                         )
                       : bound.role === "reflection"
                         ? createReflectionActor(memory)

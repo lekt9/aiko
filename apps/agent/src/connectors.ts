@@ -6,6 +6,7 @@ import {
   type HttpFetch,
 } from "./security.ts";
 import { publicTarget } from "./browser-proxy.ts";
+import { connectionRoute, connectionRouteId, CONNECTION_LINK_LIMIT, type ConnectionRoute, type ConnectionIndexPage } from "./connection-index.ts";
 import { readPublicPage } from "./public-web.ts";
 import {
   CatalogCache,
@@ -731,6 +732,13 @@ export class ConnectorEngine {
     id: string,
     signal?: AbortSignal,
   ): Promise<import("./learning.ts").LearningInput> {
+    return (await this.connectionPage(id, signal)).input;
+  }
+  async connectionPage(
+    id: string,
+    signal?: AbortSignal,
+    route?: ConnectionRoute,
+  ): Promise<ConnectionIndexPage> {
     const row = await this.load(id);
     if (
       this.view(row).status !== "connected" ||
@@ -740,13 +748,22 @@ export class ConnectorEngine {
     )
       throw Error("Verified connection context unavailable");
     const binding = this.browserBinding(row);
+    const target = route && connectionRoute(route.url, binding.domain);
+    if (route && (!target || route.revision !== row.browserVerification.revision))
+      throw Error("Connection route or session changed before indexing");
     const context = await this.options.secureBrowser.readContext(
       binding,
       signal,
+      target || undefined,
     );
     signal?.throwIfAborted();
-    if (this.view(await this.load(id)).status !== "connected")
+    const current = await this.load(id);
+    if (this.view(current).status !== "connected")
       throw Error("Connection revoked during indexing");
+    if (
+      current.browserVerification?.revision !== row.browserVerification.revision
+    )
+      throw Error("Connection session changed during indexing");
     const url = publicTarget(context.url);
     if (
       url.protocol !== "https:" ||
@@ -756,19 +773,30 @@ export class ConnectorEngine {
       context.text.length > 16000
     )
       throw Error("Invalid connection context");
-    return {
-      id: `connection:${id}:${row.browserVerification.revision}`,
-      subject: binding.domain,
-      title: `Initial context from ${binding.domain}`,
+    if (context.links !== undefined && (!Array.isArray(context.links) || context.links.length > CONNECTION_LINK_LIMIT))
+      throw Error("Invalid connection links");
+    const pageUrl = connectionRoute(url.href, binding.domain) ?? `${url.origin}${url.pathname}`;
+    const routes = [...new Set((context.links ?? []).flatMap(value => {
+      const link = connectionRoute(value, binding.domain, pageUrl);
+      return link ? [link] : [];
+    }))];
+    const revision = row.browserVerification.revision;
+    const pageId = route ? connectionRouteId(id, target!) : undefined;
+    return { url: pageUrl, revision, routes, linksTruncated: context.linksTruncated === true,
+      input: {
+      id: pageId ? `connection:${revision}:${pageId}` : `connection:${id}:${revision}`,
+      subject: pageId ? `${binding.domain}/route/${pageId}` : binding.domain,
+      title: route ? `Connected route on ${binding.domain}` : `Initial context from ${binding.domain}`,
       kind: "episode",
       type: "connected-app-context",
       payload: {
         domain: binding.domain,
-        url: `${url.origin}${url.pathname}`,
+        url: pageUrl,
         context: context.text,
-        coverage: "Initial connected page only; not a complete account index",
+        coverage: context.links === undefined ? "Initial connected page only; route discovery unavailable" : "Observed connected page; discovered navigation links queued separately; not proof of complete account coverage",
+        linksTruncated: context.linksTruncated === true,
       },
-    };
+    }};
   }
   private view(row: StoredConnection): Connection {
     const {

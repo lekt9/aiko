@@ -1,6 +1,10 @@
 import { test, expect } from "bun:test";
 import { ConnectorEngine, type ConnectorStore, type SecureBrowserAdapter, type SecureBrowserBinding } from "../src/connectors.ts";
 import { nativeBrowserConnector } from "../src/native-browser-connector.ts";
+import { BrowserLearning } from "../src/browser-learning.ts";
+import { executableObservedReads } from "../src/capability-builder-network.ts";
+import type { Event } from "tardie/core/event";
+import { connectionRoute } from "../src/connection-index.ts";
 class Store implements ConnectorStore {
  rows = new Map<string, any>();
  async get(key: string) { return structuredClone(this.rows.get(key)); }
@@ -33,14 +37,31 @@ test("native initial context uses read-only actions, rejects login walls and str
    if(input.action==="url")return {url};
    if(input.action==="get_count")return {count:login};
    return {text:"Project review due tomorrow"};
- }} as any));
+ }} as any), async () => {});
  const binding={owner:"123",connectionId:"fixture-context",domain:"service.net"};
  const context=await adapter.readContext!(binding);expect(context.url).toBe("https://service.net/home");
- expect(calls).toEqual(["navigate","url","get_count","snapshot","get_text","url"]);
+ expect(calls).toEqual(["navigate","url","get_count","snapshot","get_text","url","get_count","url"]);
  expect(JSON.stringify(context)).not.toContain("session");
  login=1;await expect(adapter.readContext!(binding)).rejects.toThrow("sign-in");
  login=0;url="https://other.net/";await expect(adapter.readContext!(binding)).rejects.toThrow("domain");
  const count=calls.length;await expect(adapter.readContext!({...binding,owner:"456"})).rejects.toThrow("Owner");expect(calls).toHaveLength(count);
+});
+
+test("route discovery retains ordinary parameters and excludes credentials, actions and foreign destinations", async () => {
+ const hrefs = ["/projects?id=12", "/projects?id=12#heading", "#/projects/12", "/logout", "#/logout", "/projects?session=private", "//other.net/projects", "/%64elete/12"];
+ let current = "https://service.net/home";
+ const adapter = nativeBrowserConnector("123", async () => ({close:async()=>{},execute:async action => {
+  if (action.action === "navigate") current = action.url;
+  if (action.action === "url") return {url:current};
+  if (action.action === "get_count") return {count:action.selector === "a[href]" ? hrefs.length : 0};
+  if (action.action === "get_attribute") return {value:hrefs[Number(action.selector.split("nth=")[1])]};
+  return {text:"Projects"};
+ }}), async () => {});
+ const page = await adapter.readContext!({owner:"123",domain:"service.net",connectionId:"route-test"}, undefined, current);
+ expect(page.links).toEqual(["https://service.net/projects?id=12", "https://service.net/home#/projects/12"]);
+ expect(page.linksTruncated).toBe(false);
+ for (const href of ["https://service.net/#/logout", "https://service.net/?token=private", "https://service.net/#/projects?secret=private", "https://127.0.0.1/projects", "javascript:alert(1)"])
+  expect(connectionRoute(href,"service.net")).toBeUndefined();
 });
 
 test("connection events are durable metadata and replay a lost delivery acknowledgement", async () => {
@@ -56,6 +77,37 @@ test("connection events are durable metadata and replay a lost delivery acknowle
  expect(JSON.stringify(seen)).not.toMatch(/authorization|password|cookie|token|owner-only-relay/);
  expect([...store.rows.values()][0].pendingEvents).toHaveLength(0);
 });
+test("post-login context forwards the complete learned request graph before acknowledging it", async () => {
+ const events: Event[] = [];
+ let offline = false;
+ const adapter = nativeBrowserConnector("123", async ({owner, emit}) => {
+  expect(owner).toBe("123");
+  let sequence = 0;
+  const learning = new BrowserLearning({
+   threadId: "connected-page-trace", nextSequence: () => ++sequence,
+   emit: e => emit(e),
+   onPrepared: async e => { await emit({type: "AikoRequestMemoryIndexed", toolDigest: e.toolDigest}); },
+  });
+  return {close: async () => {}, execute: async input => {
+   if (input.action === "navigate") {
+    const entry = {startedDateTime: new Date(1000).toISOString(), time: 20, _observationComplete: true,
+     request: {method: "GET", url: "https://service.net/api/projects", headers: [], cookies: []},
+     response: {status: 200, headers: [], cookies: [], content: {mimeType: "application/json", size: 15, text: '{"projects":[]}'}}};
+    await learning.observe(entry, 0, true);
+    await learning.compile([entry], [{callId: "navigate", action: "navigate", startedAtMs: 999, endedAtMs: 1050, direct: true, resultObserved: true}], "https://service.net");
+   }
+   if (input.action === "url") return {url: "https://service.net/home"};
+   if (input.action === "get_count") return {count: 0};
+   return {text: "Projects"};
+  }};
+ }, async e => { if (offline) throw new Error("Host log unavailable"); events.push(e as Event); });
+ const binding = {owner: "123", connectionId: "connected-context", domain: "service.net"};
+ await adapter.readContext!(binding);
+ expect(executableObservedReads(events)).toHaveLength(1);
+ expect(JSON.stringify(events)).not.toContain('{"projects":[]}');
+ offline = true;
+ await expect(adapter.readContext!(binding)).rejects.toThrow("Host log unavailable");
+});
 test("initial context needs verified owner access and rechecks disconnection after the read", async()=>{
  const store=new Store();let reads=0;let revoke:undefined|(()=>Promise<unknown>);
  const adapter:SecureBrowserAdapter={native:true,begin,status:async b=>verified(b),readContext:async b=>{reads++;await revoke?.();return {url:`https://${b.domain}/home`,text:"A project has a review due tomorrow."}}};
@@ -68,6 +120,27 @@ test("initial context needs verified owner access and rechecks disconnection aft
  await expect(other.initialContext(c.id)).rejects.toThrow();expect(reads).toBe(1);
  revoke=()=>e.disconnect(c.id);
  await expect(e.initialContext(c.id)).rejects.toThrow("revoked");
+});
+
+test("initial context rejects a session replaced during the browser read", async () => {
+ const store = new Store();
+ let revision = 1;
+ let replaceSession: (() => Promise<unknown>) | undefined;
+ const adapter: SecureBrowserAdapter = {
+  native: true, begin, status: async b => verified(b, revision),
+  readContext: async b => {
+   await replaceSession?.();
+   return {url: `https://${b.domain}/home`, text: "Context from the previous session"};
+  },
+ };
+ const e = new ConnectorEngine({owner: "123", store, secureBrowser: adapter});
+ const c = await e.connectBrowser("service.net");
+ await e.completeAuth(c.id);
+ replaceSession = async () => { revision = 2; await e.completeAuth(c.id); };
+ await expect(e.initialContext(c.id)).rejects.toThrow("session changed");
+ expect((await e.connections())[0]!.status).toBe("connected");
+ replaceSession = undefined;
+ expect((await e.initialContext(c.id)).id).toBe(`connection:${c.id}:2`);
 });
 
 test("begin-only relay stays pending; browser execution is never fabricated", async () => {
