@@ -33,6 +33,9 @@ import {
 } from "./workflow-host.ts";
 import { ConnectorEngine } from "./connectors.ts";
 import { createCartesiaTts } from "./cartesia-tts.ts";
+import { createOpsLogger, type OpsLogger } from "./ops.ts";
+
+const workerOps = createOpsLogger((text) => text);
 import { FilePasswordManagerHost } from "./password-managers.ts";
 import { connectorApi } from "./connector-api.ts";
 import { DurableObject } from "cloudflare:workers";
@@ -384,6 +387,29 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
   }>;
   private admission = Promise.resolve();
   private failures = 0;
+  private opsRedactor?: (text: string) => string;
+  private opsFor(): OpsLogger {
+    this.opsRedactor ??= (text) => {
+      try {
+        const config = configOf(this.env);
+        return redactor([
+          config.modelKey ?? "",
+          config.cerebrasKey ?? "",
+          config.arcadeKey ?? "",
+          config.cartesiaKey ?? "",
+          config.botToken ?? "",
+          config.webhookSecret ?? "",
+          config.operatorToken ?? "",
+        ])(text);
+      } catch {
+        return text;
+      }
+    };
+    return createOpsLogger(this.opsRedactor);
+  }
+  private get ops(): OpsLogger {
+    return this.opsFor();
+  }
   constructor(ctx: DurableObjectState, env: AikoCloudflareEnv) {
     super(ctx, env);
     this.ctx.storage.sql.exec(
@@ -428,6 +454,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     return this.runtime;
   }
   private async makeRuntime(owner: string) {
+    const bootStarted = Date.now();
+    this.ops("runtime.boot_started", { owner });
     const config = configOf(this.env);
     const redact = redactor([
       config.operatorToken,
@@ -855,6 +883,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                               },
                             },
                             toolCallLimit: null,
+                            report: (event, fields) => this.ops(event, fields),
                             nudge: async (turn) => {
                               await this.acceptOperatorMessage(
                                 owner,
@@ -903,6 +932,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
           : base;
       },
     });
+    this.ops("runtime.boot_completed", { owner, ms: Date.now() - bootStarted });
     return { host, config, binding, redact, capabilities, connectors, route, telegram };
   }
   private serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -1100,6 +1130,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
   }
   async alarm() {
     if (!this.owner) return;
+    const alarmStarted = Date.now();
     try {
       const { host, capabilities, connectors } = await this.open(this.owner);
       await connectors.flushEvents();
@@ -1168,6 +1199,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       return json({ error: "forbidden" }, 403);
     if (!principal.scopes.includes(request.method === "GET" ? "read" : "write"))
       return json({ error: "forbidden" }, 403);
+    const handleStarted = Date.now();
+    const handlePath = new URL(request.url).pathname;
     const { host, config, binding, redact, capabilities, connectors, route } =
       await this.open(owner);
     const url = new URL(request.url);
@@ -1958,7 +1991,12 @@ export default {
         request,
         principal,
       );
-    } catch {
+    } catch (error) {
+      workerOps("request.failed", {
+        path: new URL(request.url).pathname.slice(0, 60),
+        method: request.method,
+        error: error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 200) : "unknown",
+      });
       return json({ error: "service_unavailable" }, 503);
     }
   },

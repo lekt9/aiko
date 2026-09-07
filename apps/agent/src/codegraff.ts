@@ -656,7 +656,9 @@ export class CodegraffSandbox {
       if (this.options.tts) {
         // Provider audio is synthesized in the Worker; the sandbox never sees
         // the TTS credential and only converts the waveform for Telegram.
+        const ttsStarted = Date.now();
         const wav = await this.options.tts(text, signal);
+        console.log(JSON.stringify({ ops: "aiko-ops", event: "voice.synthesized", at: new Date().toISOString(), ms: Date.now() - ttsStarted, bytes: wav.length, provider: "cartesia" }));
         await this.options.gateway.request(
           `/v1/sandboxes/${idOf(id)}/upload`,
           {
@@ -679,6 +681,7 @@ export class CodegraffSandbox {
           signal,
         );
       }
+      const convertStarted = Date.now();
       const result = await this.mediaResult(
         id,
         operation,
@@ -689,6 +692,7 @@ export class CodegraffSandbox {
         ),
         signal,
       );
+      console.log(JSON.stringify({ ops: "aiko-ops", event: "voice.converted", at: new Date().toISOString(), ms: Date.now() - convertStarted }));
       if (
         result.mimeType !== "audio/ogg" ||
         typeof result.data !== "string" ||

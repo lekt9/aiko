@@ -126,6 +126,7 @@ export function voiceAndOutbox(
   /** Production hosts force a real reply: when a turn ends without one, the
    * host injects an operator instruction that re-drives the model. */
   nudge?: (turn: string) => Promise<void>,
+  report?: (event: string, fields: Record<string, string | number | boolean | undefined>) => void,
 ) {
   return component({
     name: "aiko.voice-and-outbox",
@@ -299,6 +300,7 @@ export function voiceAndOutbox(
                                   const messageId = String(message?.id ?? "");
                                   if (nudge && !state.nudged.has(String(e.turn)) && !messageId.startsWith("answer-nudge-")) {
                                     state.nudged.add(String(e.turn));
+                                    report?.("reply.nudge_fired", { turn: String(e.turn).slice(0, 60) });
                                     void nudge(String(e.turn)).catch(() => undefined);
                                     return "Putting the final reply together…";
                                   }
@@ -312,6 +314,28 @@ export function voiceAndOutbox(
                             ? "I couldn’t confirm a usable answer. Please try again. Connected-account actions are not available; no app action was verified."
                             : "No tool-backed result was confirmed. Try sample apps, sample issues, scoped memory, or Access status to inspect available capabilities.",
                       };
+        const decision =
+          e.type === "TurnFailed"
+            ? "turn_failed"
+            : e.type === "TurnCancelled"
+              ? "cancelled"
+              : answer !== undefined
+                ? "model_answer"
+                : receipts.length
+                  ? state.browserAttempts.get(String(e.turn)) === "uncertain"
+                    ? "browser_uncertain"
+                    : policy?.browserAnswers
+                      ? "missing_answer"
+                      : "receipt_summary"
+                  : isGreeting(message?.text ?? "")
+                    ? "greeting"
+                    : "no_result";
+        report?.("reply.decided", {
+          turn: String(e.turn).slice(0, 60),
+          decision,
+          receipts: receipts.length,
+          hasMessage: Boolean(message),
+        });
         state.replies.set(key, {
           turn: String(e.turn),
           epoch: Number(e.epoch ?? 0),
@@ -432,6 +456,7 @@ export function createAikoActor(options: {
   /** Host callback that forces a fresh model turn when a turn ends with tools
    * but no final reply; the injected instruction must produce the answer. */
   nudge?: (turn: string) => Promise<void>;
+  report?: (event: string, fields: Record<string, string | number | boolean | undefined>) => void;
   live?: boolean;
   publicWeb?: boolean;
   webRead?: (url: string, signal: AbortSignal) => Promise<PublicPage>;
@@ -506,7 +531,7 @@ export function createAikoActor(options: {
         redact: options.memory.redact,
         browserAnswers: options.browserMode === "sandbox",
         requireThinkFeel: options.requireThinkFeel,
-      }, options.nudge),
+      }, options.nudge, options.report),
       infer(
         [
           system(
