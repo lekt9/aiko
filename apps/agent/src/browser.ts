@@ -282,7 +282,7 @@ export class BrowserController {
               if (
                 e.type === "ToolCalled" &&
                 typeof e.name === "string" &&
-                e.name.startsWith("agent_browser_")
+                (e.name.startsWith("agent_browser_") || e.name.startsWith("request_memory_"))
               ) {
                 const ref = (e.arguments as { request?: string })?.request;
                 const original = ref ? controller.requests.get(ref) : undefined;
@@ -665,18 +665,22 @@ export class BrowserController {
             const driver = await session;
             const args = request.args as {query?:string;pointerId?:string;inputs?:Record<string,any>};
             if (operation === "search") {
-              if (!driver.requestSearch || typeof args.query !== "string") return receipt("blocked","Request-memory search is unavailable until the browser index is configured.");
+            if (!driver.requestSearch) return receipt("blocked","Request-memory search is unavailable until the browser index is configured.");
+            if (typeof args.query !== "string") return receipt("blocked","Search requires a query string. Call request_memory_search with {query: your search text}; internal request handles are not tool inputs.");
               const found = await driver.requestSearch(args.query,5,context.signal);
               const observation = randomUUID(); this.observations.set(observation,{owner,id:observation,action:"request_memory_search",content:this.options.redact(JSON.stringify(found)).slice(0,16000),expires:Date.now()+900000});
               return receipt("completed","Semantic pointer search completed; inspect the transient shortlist and its required inputs.",observation);
             }
-            if (!driver.requestRehydrate || typeof args.pointerId !== "string") return receipt("blocked","Request-pointer hydration is unavailable.");
-            const result = await driver.requestRehydrate(args.pointerId,args.inputs??{},context.signal) as any;
-            if (result.status !== "completed" || !result.hydration) return receipt("blocked","Request DAG could not produce a fresh response. Check prerequisites or browse again.");
+            if (!driver.requestRehydrate) return receipt("blocked","Request-pointer hydration is unavailable.");
+            if (typeof args.pointerId !== "string") return receipt("blocked","Hydration requires pointerId from search and all required inputs. Internal request handles are not tool inputs.");
+            const result = await driver.requestRehydrate(args.pointerId,args.inputs??{},context.signal);
+            if (result.status !== "completed" || !result.hydration) return receipt("blocked",`Request DAG could not produce a fresh response (${result.code}). Check the search result's required inputs or browse again.`);
             const observation=randomUUID(); this.observations.set(observation,{owner,id:observation,action:"request_memory_hydrate",content:this.options.redact(JSON.stringify(result.hydration)).slice(0,16000),expires:Date.now()+900000});
             return receipt("completed","Request dependencies replayed; fresh untrusted response available transiently. Response values were not saved to memory.",observation);
           } finally {
-            this.requests.delete(ref!); this.busy.delete(owner);
+            // Retain bounded transient arguments for the next model turn, while
+            // making this handle unusable for a second execution.
+            request.error ??= "consumed"; this.busy.delete(owner);
             if (context.signal.aborted) await this.closeSession(owner).catch(() => {});
             if (!this.stopped && this.sessions.has(owner)) {
               const timer = setTimeout(() => {

@@ -1,0 +1,17 @@
+# Aiko cloud backup and recovery
+
+The Cloudflare account host exposes operator-only `GET /api/control/backups`, `POST /api/control/backup`, and `POST /api/control/restore`, scoped by `?account=<owner>`. Authenticate with the existing operator bearer credential. Ordinary account credentials cannot access these endpoints. Backup is on demand; no scheduled retention or deletion policy is enabled.
+
+Backups require the account and its Codegraff sandbox to be idle. Pending browser observations commit to the authoritative account log before the snapshot. The runner closes its browser, serializes SQLite including committed WAL pages, and transfers bounded chunks through its encrypted private channel. The account archive includes native thread history, entity-learn memory, connection metadata, route frontiers, generated capabilities and saved workflows.
+
+R2 binding `AIKO_BACKUPS` names bucket `aiko-state-backups`. Each chunk and manifest is AES-256-GCM encrypted using `AIKO_BACKUP_KEY`, with owner, snapshot and object location authenticated. Every chunk is downloaded and checked before the encrypted manifest is published. The backup returns HTTP 201 with `status: verified` only after readback. Failed and partial backups never enter the completed-backup list.
+
+`scripts/deploy-aiko-cloudflare.ts` retains the recovery key in the owner-only private deployment configuration and installs it as a Worker secret. Preserve that private configuration independently of the VM and R2 bucket. Redeployment reuses the key. Replacing or losing it prevents recovery of older ciphertext; a backup does not contain its own outer recovery key.
+
+VM files include `owner.json`, the runner journal, request evidence and pointer SQLite stores, and the private native-vault wrapping key. Verified credentials and restorable cookies reside inside encrypted native-vault rows. Browser profile caches, localStorage, downloaded models and executable bundles are excluded. The runtime reinstalls binaries and restores supported sessions from vault cookies or verified login credentials. A site requiring other browser storage may require signing in again.
+
+Restore accepts `{ "id": "<snapshot UUID>", "mode": "vm" }` for native VM state, or mode `account` to additionally import an empty account's archived control-plane state. Recovery verifies all bytes before publication and requires an empty browser store. It refuses to replace populated state. Provision or reconcile the replacement Codegraff VM through the existing operator sandbox controls first. Account import accepts only a fresh account or an exact retry.
+
+The current account grant remains authoritative: recovery removes native credentials whose connection, domain or verification revision no longer matches a connected account record. A snapshot cannot reactivate a revoked login. The runner starts a new operation journal; its archived journal is retained for inspection, not replayed as executable work. Verified browser stores publish together by directory rename.
+
+Verification is separated by environment: `apps/agent/test/cloud-backup.test.ts` covers encrypted recovery, tampering, SQLite WAL consistency and current-grant filtering; `scripts/verify-cloud-backup.ts` performs a synthetic real-R2 encrypted round trip and deletes its own smoke-test objects. Neither alone proves a production VM recovery. Deployed backup receipts are recorded separately under `artifacts/backups/`.

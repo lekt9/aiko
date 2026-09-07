@@ -45,6 +45,9 @@ export type AikoConfig = {
   cartesiaModel?: string;
   codeMode?: boolean;
   connectorVault?: ConnectorVaultConfig;
+  /** Selected by the host's loaded configuration, never inferred from ambient
+   * process state when constructing an isolated service. */
+  connectorStorage?: "postgres" | "file";
   /** Base64 32-byte AES key that seals password manager tokens at rest. Omitting it keeps the feature off. */
   managerKey?: string;
   /** Operator-level HashiCorp Vault cluster for the hashicorp-vault manager kind. */
@@ -110,6 +113,15 @@ export async function loadConfig(
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   const get = (key: string) => env[key] ?? file[key];
+  for (const key of [
+    "DATABASE_URL",
+    "DIRECT_URL",
+    "SUPABASE_URL",
+    "SUPABASE_SECRET_KEY",
+  ] as const) {
+    const value = get(key);
+    if (value) env[key] ??= value;
+  }
   const mode = get("AIKO_MODE") ?? "demo";
   if (mode !== "demo" && mode !== "live")
     throw new Error("AIKO_MODE must be demo or live");
@@ -315,6 +327,7 @@ export async function loadConfig(
   }
   return {
     mode,
+    connectorStorage: mode === "live" && get("DATABASE_URL") ? "postgres" : "file",
     instanceId,
     model,
     modelLimits,

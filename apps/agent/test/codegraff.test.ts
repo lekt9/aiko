@@ -724,6 +724,7 @@ test("VM browser replay encrypts uploads and output before gateway journals", as
     commands.push(cmd);
     if (cmd.endsWith(" health"))
       return JSON.stringify({ replayPublicKey: keys.publicKey });
+    if (cmd.endsWith(" drain")) return JSON.stringify({events:[]});
     const { key, value } = unwrapReplay(
       JSON.parse(uploads[0]!),
       keys.privateKey,
@@ -762,6 +763,36 @@ test("VM browser replay encrypts uploads and output before gateway journals", as
     upload.mockRestore();
     exec.mockRestore();
   }
+});
+
+test("VM backups use encrypted chunks and exclude concurrent browser operations until close",async()=>{
+ const {replayKeys,unwrapReplay,sealReplay}=await import("../src/codegraff.ts");
+ const f=fixture(), keys=replayKeys(), uploads:string[]=[], commands:string[]=[];
+ const driver=await f.sandbox.browserFactory()({domains:["*"],emit:async()=>{}});
+ const ensure=spyOn(f.sandbox,"ensure").mockResolvedValue("vm-fixture");
+ const upload=spyOn(f.sandbox,"upload").mockImplementation(async(_id,_path,text)=>{uploads.push(text);});
+ const exec=spyOn(f.sandbox,"exec").mockImplementation(async(_id,command)=>{
+  commands.push(command);
+  if(command.endsWith(" health"))return JSON.stringify({replayPublicKey:keys.publicKey});
+  if(command.endsWith(" drain"))return JSON.stringify({events:[]});
+  if(command.endsWith(" close"))return '{}';
+  const {key,value}=unwrapReplay(JSON.parse(uploads.at(-1)!),keys.privateKey);
+  expect(value.operation).toBe("backup");
+  const output=value.action === "prepare"?{version:1,owner:"acct_fixture",files:[{path:"owner.json",bytes:6,sha256:"0".repeat(64)}]}:value.action === "read"?Buffer.from("secret").toString("base64"):{discarded:true};
+  return JSON.stringify(sealReplay({output},key));
+ });
+ try {
+  expect(await f.sandbox.backup(async source=>{
+   expect(f.sandbox.busy).toBe(true);
+   await expect(driver.execute({action:"url"})).rejects.toThrow("maintenance");
+   expect(Buffer.from(await source.read("owner.json",0,6)).toString()).toBe("secret");
+   return "stored";
+  })).toBe("stored");
+  expect(f.sandbox.busy).toBe(false);
+  expect(commands.at(-1)).toMatch(/runner.js close$/);
+  expect(uploads.join()).not.toContain("secret");
+  expect(commands.join()).not.toContain("secret");
+ } finally {ensure.mockRestore();upload.mockRestore();exec.mockRestore();}
 });
 
 for (const failure of ["settled-read", "unknown", "commit-failed"] as const) {

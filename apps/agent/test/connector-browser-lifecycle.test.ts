@@ -34,6 +34,16 @@ test("expired native connections renew in place and expose a resumable MFA chall
  }
 });
 
+test("server logout before cookie expiry exposes renewal MFA and a new verified revision emits indexing metadata",async()=>{
+ const store=new Store();let challenge=false, revision=1;const events:any[]=[];
+ const e=new ConnectorEngine({owner:"123",store,secureBrowser:{native:true,begin,status:async b=>challenge?{...b,status:"pending"}:verified(b,revision)},onEvent:async event=>{events.push(event);}});
+ const c=await e.connectBrowser("service.net");await e.completeAuth(c.id);
+ revision=2;await e.completeAuth(c.id);
+ expect(events.filter(event=>event.type==="AikoConnectionChanged" && event.status==="connected")).toHaveLength(2);
+ challenge=true;const pending=await e.completeAuth(c.id);
+ expect(pending.status).toBe("pending");expect(pending.authorizationUrl).toContain("signin.aiko.com");
+});
+
 test("native connect reuses its flow and reconciles only already-revoked browser grants", async()=>{
  const store=new Store();let cleanup=0;let confirmed=false;
  const adapter:SecureBrowserAdapter={native:true,begin,disconnect:async b=>{cleanup++;return {...b,status:confirmed?"disconnected":"unknown"}}};

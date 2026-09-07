@@ -2,7 +2,14 @@ import { mkdir, open, readdir, rename, lstat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { resolve, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { eq, like } from "drizzle-orm";
+import { db, connectorRecords } from "./db.ts";
 import type { ConnectorStore } from "./connectors.ts";
+
+const CONNECTOR_KEY =
+  /^connectors:[a-f0-9]{64}:(?:connection|capability|manager):[a-f0-9-]+$/;
+const CONNECTOR_PREFIX =
+  /^connectors:[a-f0-9]{64}:(?:connection|capability|manager):$/;
 
 /** Host-private durable records. Never put this directory under a static web root or share it with untrusted processes. */
 export class FileConnectorStore implements ConnectorStore {
@@ -17,12 +24,7 @@ export class FileConnectorStore implements ConnectorStore {
       throw new Error("Connector store requires a private directory");
   }
   private name(key: string) {
-    if (
-      !/^connectors:[a-f0-9]{64}:(?:connection|capability|manager):[a-f0-9-]+$/.test(
-        key,
-      )
-    )
-      throw new Error("Invalid connector storage key");
+    if (!CONNECTOR_KEY.test(key)) throw new Error("Invalid connector storage key");
     return `${key}.json`;
   }
   async get(key: string): Promise<unknown> {
@@ -66,11 +68,7 @@ export class FileConnectorStore implements ConnectorStore {
     }
   }
   async list(prefix: string): Promise<unknown[]> {
-    if (
-      !/^connectors:[a-f0-9]{64}:(?:connection|capability|manager):$/.test(
-        prefix,
-      )
-    )
+    if (!CONNECTOR_PREFIX.test(prefix))
       throw new Error("Invalid connector storage prefix");
     await this.ready();
     const result: unknown[] = [];
@@ -79,5 +77,43 @@ export class FileConnectorStore implements ConnectorStore {
         result.push(await this.get(name.slice(0, -5)));
     }
     return result;
+  }
+}
+
+/** Host-private durable records on the shared Postgres (Supabase) pooler. */
+export class PostgresConnectorStore implements ConnectorStore {
+  private async row(key: string) {
+    if (!CONNECTOR_KEY.test(key)) throw new Error("Invalid connector storage key");
+    const [record] = await db()
+      .select({ value: connectorRecords.value })
+      .from(connectorRecords)
+      .where(eq(connectorRecords.key, key))
+      .limit(1);
+    return record;
+  }
+  async get(key: string): Promise<unknown> {
+    return (await this.row(key))?.value;
+  }
+  async set(key: string, value: unknown): Promise<void> {
+    if (!CONNECTOR_KEY.test(key)) throw new Error("Invalid connector storage key");
+    const content = JSON.stringify(value);
+    if (content.length > 128000) throw new Error("Connector record too large");
+    const parsed = JSON.parse(content) as unknown;
+    await db()
+      .insert(connectorRecords)
+      .values({ key, value: parsed, updatedAt: Date.now() })
+      .onConflictDoUpdate({
+        target: connectorRecords.key,
+        set: { value: parsed, updatedAt: Date.now() },
+      });
+  }
+  async list(prefix: string): Promise<unknown[]> {
+    if (!CONNECTOR_PREFIX.test(prefix))
+      throw new Error("Invalid connector storage prefix");
+    const rows = await db()
+      .select({ value: connectorRecords.value })
+      .from(connectorRecords)
+      .where(like(connectorRecords.key, `${prefix}%`));
+    return rows.map((row) => row.value);
   }
 }

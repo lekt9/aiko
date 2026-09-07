@@ -1,5 +1,12 @@
 import { useEffect } from "react";
 import { createRoot } from "react-dom/client";
+import {
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ShieldCheck } from "lucide-react";
 import { ConnectorOnboarding } from "../src/components/connector-onboarding";
 import "../src/styles/mini-app.css";
@@ -52,4 +59,18 @@ function MiniApp() {
     </main>
   );
 }
-createRoot(document.getElementById("root")!).render(<MiniApp />);
+const rootRoute = createRootRoute();
+const connectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/connect",
+  component: MiniApp,
+});
+const router = createRouter({
+  routeTree: rootRoute.addChildren([connectRoute]),
+});
+const queryClient = new QueryClient();
+createRoot(document.getElementById("root")!).render(
+  <QueryClientProvider client={queryClient}>
+    <RouterProvider router={router} />
+  </QueryClientProvider>,
+);

@@ -2,6 +2,7 @@ import { canonicalStringify, sha256 } from "@unbrowse/browser-harness/har";
 import type { HarnessJsonValue } from "@unbrowse/browser-harness/harness-runtime";
 import { validateNoSecrets } from "entity-learn/cloudflare";
 import { validateRouterInput } from "./connector-router-host.ts";
+import { createHash } from "node:crypto";
 
 export type WorkflowJson = HarnessJsonValue;
 export type WorkflowBinding = { kind: "input"; name: string } | { kind: "result"; step: string; path: string[] } | { kind: "literal"; value: WorkflowJson };
@@ -29,6 +30,12 @@ export interface CodeWorkflowRecord {
   dependencies: { name: string; schemaDigest: string }[];
   reusable: boolean;
   provenance?: { thread: string; execId: string; harness: "aiko-code/1" };
+}
+/** Matches persisted v1 code artifacts; dependencies are hashed children of the source root. */
+export const codeSchemaDigest = (schema: unknown) => createHash("sha256").update(JSON.stringify(schema)).digest("hex");
+export function codeWorkflowDigest(record: CodeWorkflowRecord): string {
+  const { version, owner, id, description, code, inputSchema, outputSchema, dependencies } = record;
+  return codeSchemaDigest({ version, owner, id, description, code, inputSchema, outputSchema, dependencies });
 }
 /** Trusted durable storage. Every operation is owner scoped; never persist execution inputs or outputs.
  * putDefinition must atomically reject conflicting digests; claimRun is atomic insert-if-absent.

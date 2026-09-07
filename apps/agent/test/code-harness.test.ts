@@ -3,6 +3,10 @@ import { Database } from "bun:sqlite";
 import { Effect, Layer } from "effect";
 import { actor, agentMessageMethod, codeMode, infer, Infer, outputValidateOnce } from "tardie";
 import { createCloudflareAccountHost, type AccountStorage } from "../src/cloudflare-host.ts";
+import { browserMemoryGraph } from "../src/browser-memory-graph.ts";
+import { nodeStorage } from "entity-learn";
+import { Memory } from "entity-learn/cloudflare";
+import { indexToolArtifact, toolLogProjection } from "../src/log-memory.ts";
 import { CodeHarness } from "../src/code-harness.ts";
 import { runCodeSegment } from "../src/code-sandbox-runner.ts";
 import { createCodeChildActor, scopedAgentsPackage } from "../src/code-agents.ts";
@@ -87,6 +91,26 @@ test("code workflows promote verified source and reuse fresh inputs under curren
   expect(observed).toEqual([2,7]);
   const record=await store.getCode!("123","scale-read-v1");
   expect(record?.reusable).toBe(true);expect(record?.provenance?.execId).toBe("workflow:first");
+  const logs=await host.read("user-123");
+  const saved=logs.find(e=>e.type==="AikoCodeWorkflowSaved")!;
+  expect(saved.digest).toBe(`sha256:${record!.digest}`);
+  expect(toolLogProjection(saved)).toMatchObject({workflowId:"scale-read-v1",harness:"aiko-code/1"});
+  expect(toolLogProjection({type:"AikoCodeToolSettled",tool:"fixture_read",result:{private:"never import"}})).toEqual({tool:"fixture_read"});
+  const graph=browserMemoryGraph(logs.map((event,i)=>({seq:i+1,event})));
+  expect(graph.nodes.some(n=>n.kind==="code-workflow")).toBe(true);
+  expect(graph.edges.some(e=>e.from===`artifact:${saved.digest}`&&e.relation==="depends_on")).toBe(true);
+  const memory=new Memory({storage:nodeStorage(":memory:"),scope:"artifact-test"});
+  try {
+    for(const event of logs)indexToolArtifact(memory,event,"123",redact);
+    const artifacts=memory.recall({type:"tool-artifact",search:"scale-read-v1",depth:2,limit:10,maxNodes:24});
+    const source=artifacts.items.find(h=>(h.observation.payload as any).workflowId==="scale-read-v1")!.observation;
+    expect(source.dependsOn).toHaveLength(1);
+    expect(memory.get(source.dependsOn[0]!)!.observation.payload).toEqual({digest:(saved.dependencies as any[])[0].digest});
+    const before=memory.exportArchive();for(const event of logs)indexToolArtifact(memory,event,"123",redact);
+    expect(memory.exportArchive()).toEqual(before);
+  } finally {memory.close();}
+
+
   expect(await store.getCode!("456","scale-read-v1")).toBeUndefined();
   expect(JSON.stringify(record)).not.toContain('"number":');
   await expect(store.putCode!("123",{...record!,digest:"changed"})).rejects.toThrow("conflict");

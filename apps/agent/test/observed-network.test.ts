@@ -205,3 +205,19 @@ test("a renewed grant is recorded as ordered lifecycle events before replay", as
   expect(lifecycle[0]).toMatchObject({ owner: "123", connectionId: "conn", revision: "7" });
   expect(JSON.stringify(lifecycle)).not.toContain("SECRET_COOKIE");
 });
+
+test("host requests leave durable start and change receipts without private request or response values",async()=>{
+ const events=await compiled();const prepared=ownedNetworkDefinitions(events)[0]!;
+ events.push({type:"AikoRequestMemoryIndexed",toolDigest:prepared.toolDigest});
+ const input={toolDigest:prepared.toolDigest,inputs:Object.fromEntries(prepared.definition.inputs.map(i=>[i.name,"items"]))};
+ let body={value:"PRIVATE_FIRST"};
+ const send=async()=>({status:200,headers:{},classification:"application" as const,body});
+ await run(events,input,{send,callId:"first"});
+ await run(events,input,{send,callId:"same"});
+ body={value:"PRIVATE_SECOND"};await run(events,input,{send,callId:"changed"});
+ const checks=events.filter(e=>e.type==="AikoNetworkRequestSettled");
+ expect(checks.map(e=>e.changed)).toEqual([null,false,true]);
+ expect(events.filter(e=>e.type==="AikoNetworkRequestStarted")).toHaveLength(3);
+ expect(JSON.stringify(checks)).not.toMatch(/PRIVATE_FIRST|PRIVATE_SECOND/);
+ expect(checks[0]!.definitionDigest).toBe(prepared.toolDigest);
+});

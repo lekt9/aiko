@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, rename } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { loadConfig, privateEnv } from "../apps/agent/src/config.ts";
 import { credentialDigest } from "../apps/agent/src/plane-auth.ts";
@@ -38,6 +38,22 @@ if (
   !/^[A-Za-z0-9_-]{40,}$/.test(state.AIKO_E2E_TOKEN ?? "")
 )
   throw new Error("Invalid deployment canary binding");
+// Retain the independent recovery key before publishing any encrypted backup.
+// Re-deployments reuse it; replacing it would orphan existing R2 snapshots.
+if (!state.AIKO_BACKUP_KEY) {
+  state.AIKO_BACKUP_KEY = randomBytes(32).toString("base64");
+  const pending = `${path}.${process.pid}.pending`;
+  await writeFile(
+    pending,
+    Object.entries(state)
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n") + "\n",
+    { flag: "wx", mode: 0o600 },
+  );
+  await rename(pending, path);
+}
+if (Buffer.from(state.AIKO_BACKUP_KEY, "base64").length !== 32)
+  throw Error("Invalid backup recovery key");
 const credentials = [
   ...(config.planeCredentials ?? []),
   {
@@ -47,6 +63,7 @@ const credentials = [
   },
 ];
 const secrets = {
+  AIKO_BACKUP_KEY: state.AIKO_BACKUP_KEY,
   AIKO_CODE_MODE: String(config.codeMode === true),
   ...(config.arcadeKey ? { ARCADE_API_KEY: config.arcadeKey } : {}),
   ...(config.cerebrasKey ? { CEREBRAS_API_KEY: config.cerebrasKey } : {}),
@@ -70,8 +87,12 @@ const secrets = {
     : {}),
   ...(config.voiceKey ? { AIKO_VOICE_KEY: config.voiceKey } : {}),
   ...(config.cartesiaKey ? { AIKO_CARTESIA_KEY: config.cartesiaKey } : {}),
-  ...(config.cartesiaVoiceId ? { AIKO_CARTESIA_VOICE_ID: config.cartesiaVoiceId } : {}),
-  ...(config.cartesiaModel ? { AIKO_CARTESIA_MODEL: config.cartesiaModel } : {}),
+  ...(config.cartesiaVoiceId
+    ? { AIKO_CARTESIA_VOICE_ID: config.cartesiaVoiceId }
+    : {}),
+  ...(config.cartesiaModel
+    ? { AIKO_CARTESIA_MODEL: config.cartesiaModel }
+    : {}),
 };
 const redact = redactor([...Object.values(secrets), state.AIKO_E2E_TOKEN]);
 async function run(args: string[], input?: string) {

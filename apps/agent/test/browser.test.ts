@@ -165,6 +165,22 @@ async function nativeAnswerHost(
 }
 
 describe("native production browser answers", () => {
+  test("request-memory arguments return to model context without entering durable history", async () => {
+    const query="transient pointer query 74589";
+    let restored=false;
+    const app=await nativeAnswerHost(mockModel(req=>{
+      if(!returns(req).length)return {kind:"call",callId:"pointer-search",name:"request_memory_search",arguments:{query}};
+      restored=req.trajectory.some(e=>e.type==="ToolCalled"&&e.name==="request_memory_search"&&(e.arguments as any).query===query);
+      return {kind:"complete",output:"Pointer search checked."};
+    }),async()=>({
+      execute:async()=>({}),close:async()=>{},
+      requestSearch:async()=>({items:[],model:"fixture",coverage:"complete",reasons:[],scanned:0,sourceVersion:0}),
+    }));
+    await app.send("pointer-context","Search request memory");
+    expect(restored).toBe(true);
+    expect(JSON.stringify(await app.host.read("user-123"))).not.toContain(query);
+  });
+
   test("allowModelAnswers delivers the actual redacted answer while raw browser evidence stays transient", async () => {
     const answer = "The observed product costs $9.99. PRIVATE_MODEL_SENTINEL";
     let hydrated = false;

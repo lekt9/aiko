@@ -1010,8 +1010,8 @@ summary {
   z-index: 100;
   width: 100%;
   height: var(--tg-viewport-stable-height, 100dvh);
-  background: var(--tg-theme-bg-color, #fff);
-  color: var(--tg-theme-text-color, #171717);
+  background: var(--tg-theme-bg-color, var(--app-bg));
+  color: var(--tg-theme-text-color, var(--app-text));
   overflow: auto;
   overscroll-behavior: contain;
   padding-top: env(safe-area-inset-top);
@@ -1025,8 +1025,8 @@ summary {
   align-items: center;
   min-height: 56px;
   padding: 8px 16px;
-  background: var(--tg-theme-bg-color, #fff);
-  border-bottom: 1px solid var(--tg-theme-section-separator-color, #e9e9eb);
+  background: var(--tg-theme-bg-color, var(--app-bg));
+  border-bottom: 1px solid var(--tg-theme-section-separator-color, var(--app-line));
 }
 .mini-app-screen-header h2 {
   font-size: 17px;

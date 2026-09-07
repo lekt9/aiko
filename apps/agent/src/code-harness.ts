@@ -13,11 +13,11 @@ import { validateRouterInput } from "./connector-router-host.ts";
 import { component } from "tardie/core/component";
 import { effect } from "tardie/core/effect";
 import { codeDispatched } from "tardie/code/execution/events";
-import type { CodeWorkflowRecord, WorkflowStore } from "./tool-workflows.ts";
+import { codeWorkflowDigest, type CodeWorkflowRecord, type WorkflowStore } from "./tool-workflows.ts";
 
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const controls = new Set(["execute", "respond", "send_message", "telegram_send", "telegram_voice", "telegram_screenshot", "tool_router_route", "tool_router_discover", "tool_router_describe", "tool_router_status", "code_workflow_run", "code_workflow_save", "code_workflow_list"]);
-export const codeHarnessEventKey = (e: Event) => (e.type === "AikoCodeToolStarted" || e.type === "AikoCodeToolSettled") && typeof e.id === "string" ? `aiko-code-tool:${e.type}:${e.id}` : undefined;
+export const codeHarnessEventKey = (e: Event) => ["AikoCodeToolStarted", "AikoCodeToolSettled", "AikoToolDefinitionRecorded", "AikoCodeWorkflowSaved"].includes(e.type) && typeof e.id === "string" ? `aiko-code-tool:${e.type}:${e.id}` : undefined;
 type ValueRef = { kind: "aiko-code-value"; owner: string; thread: string; id: string };
 
 /** Per-owner/thread facade. Durable logs hold references and effect receipts, not private tool data. */
@@ -29,6 +29,8 @@ export class CodeHarness {
   private readonly workflowRuns = new Map<string,{record:CodeWorkflowRecord;input:ValueRef}>();
   constructor(readonly owner: string, readonly thread: string, readonly transport: CodeSegmentTransport,
     readonly redact: (value: string) => string, readonly workflows?: WorkflowStore) {}
+
+  toolSpecs() { return [...this.native.values()].map(tool => tool.spec); }
 
   private put(id: string, value: unknown): ValueRef {
     const encoded = JSON.stringify(value ?? null);
@@ -81,6 +83,13 @@ export class CodeHarness {
           throw new Error("Invalid input");
       } catch { return {error:"Arguments do not match the registered schema or contain sensitive data. Use tools.describe."}; }
       const events = yield* log.read;
+      const schemaDigest = digest(native.spec.inputSchema);
+      const definitionDigest = digest(native.spec);
+      if (!events.some(e => e.type === "AikoToolDefinitionRecorded" && e.digest === `sha256:${definitionDigest}`)) {
+        yield* log.append([{type:"AikoToolDefinitionRecorded",id:digest([definitionDigest,callId]),owner:this.owner,
+          tool:native.spec.name,description:this.redact(native.spec.description ?? "").slice(0,500),
+          digest:`sha256:${definitionDigest}`,schemaDigest:`sha256:${schemaDigest}`,at:Date.now()}]);
+      }
       const dispatch = events.findLast(e=>e.type==="PackageCalled"&&e.callId===callId);
       if (!dispatch || typeof dispatch.turn !== "string") return {error:"Missing native package invocation"};
       const execution = events.findLast(e=>e.type==="CodeDispatched"&&typeof e.execId==="string"&&callId.startsWith(`${e.execId}.`));
@@ -94,7 +103,7 @@ export class CodeHarness {
       if (settled) return settled.result;
       if (events.some(e=>e.type==="AikoCodeToolStarted"&&e.id===id))
         return {status:"unknown",message:"This invocation was interrupted after dispatch. Inspect its outcome before issuing a new write."};
-      yield* log.append([{type:"AikoCodeToolStarted",id,owner:this.owner,tool:native.spec.name,callId,turn:dispatch.turn,at:Date.now()}]);
+      yield* log.append([{type:"AikoCodeToolStarted",id,owner:this.owner,tool:native.spec.name,definitionDigest:`sha256:${definitionDigest}`,callId,turn:dispatch.turn,at:Date.now()}]);
       const result = yield* Effect.promise(parentSignal => {
         const executionSignal=this.executionSignals.get(String(execution?.execId));
         const signal=executionSignal?AbortSignal.any([parentSignal,executionSignal]):parentSignal;
@@ -105,7 +114,7 @@ export class CodeHarness {
       const ref = this.put(`tool:${id}`,result);
       const outcome=result as any;
       const succeeded=!outcome?.error && !["failed","unknown","blocked","rejected","authorization_required","needs_connection","unavailable"].includes(outcome?.status);
-      yield* log.append([{type:"AikoCodeToolSettled",id,owner:this.owner,tool:native.spec.name,callId,turn:dispatch.turn,result:ref,succeeded,at:Date.now()}]);
+      yield* log.append([{type:"AikoCodeToolSettled",id,owner:this.owner,tool:native.spec.name,definitionDigest:`sha256:${definitionDigest}`,callId,turn:dispatch.turn,result:ref,succeeded,at:Date.now()}]);
       return ref;
     });
     // privateInput is installed by the sandbox adapter. It is never a credential
@@ -166,6 +175,10 @@ export class CodeHarness {
                 if(!run||!output||!new Validator(run.record.outputSchema as any).validate(output.result).valid||calls.length!==settled.length||settled.some(e=>e.succeeded!==true))throw new Error("Workflow lacks a fully successful execution with valid output");
                 const promoted={...run.record,reusable:true,provenance:{thread:harness.thread,execId:args.execId,harness:"aiko-code/1" as const}};
                 yield* Effect.promise(()=>harness.workflows!.putCode!(harness.owner,promoted));
+                yield* log.append([{type:"AikoCodeWorkflowSaved",id:digest([promoted.digest,call.callId]),owner:harness.owner,
+                  workflowId:promoted.id,description:promoted.description,digest:`sha256:${promoted.digest}`,
+                  dependencies:promoted.dependencies.map(d=>({tool:d.name,digest:`sha256:${d.schemaDigest}`})),
+                  execId:args.execId,harness:"aiko-code/1",at:Date.now()}]);
                 result={id:promoted.id,digest:promoted.digest,reusable:true,provenance:promoted.provenance};
               } else {
                 if(!/^[A-Za-z0-9_-]{1,128}$/.test(args.id))throw new Error("Invalid workflow id");
@@ -181,7 +194,7 @@ export class CodeHarness {
                   record=record??draft;
                   yield* Effect.promise(()=>harness.workflows!.putCode!(harness.owner,record!));
                 }
-                if(!record||record.owner!==harness.owner||!new Validator(record.inputSchema as any).validate(args.input).valid)throw new Error("Workflow unavailable or input schema mismatch");
+                if(!record||record.owner!==harness.owner||codeWorkflowDigest(record)!==record.digest||!new Validator(record.inputSchema as any).validate(args.input).valid)throw new Error("Workflow unavailable or input schema mismatch");
                 for(const d of record.dependencies)if(digest(harness.native.get(d.name)?.spec.inputSchema)!==d.schemaDigest)throw new Error("Workflow dependency changed; validate a new version");
                 harness.workflowRuns.set(execId,{record,input:harness.put(`workflow-input:${execId}`,args.input)});
                 return [{type:"AikoCodeWorkflowPrepared",execId,workflowId:record.id,digest:record.digest,turn:call.turn,at:Date.now()},codeDispatched({execId,code:record.code,turn:call.turn,epoch:call.epoch,at:Date.now()})];

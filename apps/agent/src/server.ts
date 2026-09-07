@@ -26,7 +26,10 @@ import { automationEventKey } from "./automations.ts";
 import { createToolRouterActor, routerEventKey } from "./tool-router.ts";
 import { routerCaller, validateRouterInput } from "./connector-router-host.ts";
 import { ConnectorEngine } from "./connectors.ts";
-import { FileConnectorStore } from "./connectors-store.ts";
+import {
+  FileConnectorStore,
+  PostgresConnectorStore,
+} from "./connectors-store.ts";
 import { FilePasswordManagerHost } from "./password-managers.ts";
 import {
   WorkflowController,
@@ -177,9 +180,10 @@ export async function createService(
     enabled: config.replyStyle !== "direct" && config.voiceEnabled,
     fetch: overrides.voiceFetch,
   });
-  const connectorStore = new FileConnectorStore(
-    join(config.stateDir, "connectors"),
-  );
+  const connectorStore =
+    config.mode === "live" && config.connectorStorage === "postgres"
+      ? new PostgresConnectorStore()
+      : new FileConnectorStore(join(config.stateDir, "connectors"));
   const connectorEngines = new Map<string, ConnectorEngine>();
   const connectorsFor = (owner: string) => {
     let engine = connectorEngines.get(owner);

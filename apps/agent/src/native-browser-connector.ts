@@ -43,6 +43,7 @@ export function nativeBrowserConnector(
         emit,
         signal,
       });
+      if (driver.readConnectionPage) return driver.readConnectionPage(destination,linkOffset,signal);
       const check = async () => {
         const result = (await driver.execute({ action: "url" }, signal)) as {
           url?: string;

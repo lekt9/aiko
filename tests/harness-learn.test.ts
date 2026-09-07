@@ -25,7 +25,8 @@ describe("harness-learn miner", () => {
           attempt: 2,
         })}\n${JSON.stringify({ ev: "retry", reason: "timeout" })}\n`,
       );
-      execFileSync("node", ["scripts/harness-learn.mjs", "--logs", path.join(root, "graff"), "--out", path.join(root, "out"), "--since-days", "14"], { cwd: process.cwd() });
+      // Keep this fixture independent of the operator's live accounts and local logs.
+      execFileSync("node", ["scripts/harness-learn.mjs", "--logs", path.join(root, "graff"), "--out", path.join(root, "out"), "--since-days", "14", "--no-remote", "--tardigrade", path.join(root, "tardigrade")], { cwd: process.cwd(), timeout: 15_000 });
       const lessonsFile = fs
         .readdirSync(path.join(root, "out"))
         .filter((f) => f.startsWith("lessons-") && f.endsWith(".json"))

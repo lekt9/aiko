@@ -90,9 +90,16 @@ export function NativeLoginPanel({
           );
           return;
         }
+        const automatic =
+          "username" in fields &&
+          "password" in fields &&
+          !!fields.username &&
+          !!fields.password;
         const input = Object.fromEntries(
-          Object.entries(fields).filter(([name]) =>
-            ready!.fields!.includes(name),
+          Object.entries(fields).filter(
+            ([name]) =>
+              (automatic && ["username", "password"].includes(name)) ||
+              ready!.fields!.includes(name),
           ),
         );
         if (!Object.keys(input).length) {
@@ -108,7 +115,7 @@ export function NativeLoginPanel({
         // Submit once. Polling below never resends credentials, including after uncertain responses.
         await request<View>(
           "/native",
-          { connectionId, action, ...input },
+          { connectionId, action: automatic ? "login" : action, ...input },
           abort.signal,
         );
         fields = {};

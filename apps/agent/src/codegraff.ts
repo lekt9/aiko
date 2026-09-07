@@ -108,12 +108,14 @@ export const RUNNER_ROOT = "/home/daytona/aiko";
 
 /** One instance belongs to one authenticated account DO; callers cannot select a VM ID. */
 export class CodegraffSandbox {
+  private maintaining = false;
   private waking?: Promise<string>;
   private stopping?: Promise<boolean>;
   private activeOperations = 0;
   get busy() {
     return (
       this.activeOperations > 0 ||
+      this.maintaining ||
       this.waking !== undefined ||
       this.stopping !== undefined
     );
@@ -146,6 +148,7 @@ export class CodegraffSandbox {
     );
   }
   async ensure(signal?: AbortSignal): Promise<string> {
+    if (this.maintaining) throw new Error("Sandbox maintenance in progress");
     if (this.stopping) await this.stopping;
     if (this.waking) return this.waking;
     this.waking = this.wake(signal).finally(() => {
@@ -372,6 +375,7 @@ export class CodegraffSandbox {
     }
   }
   async stop() {
+    if (this.maintaining) return false;
     if (this.stopping) return this.stopping;
     if (this.activeOperations || this.waking) return false;
     this.stopping = this.stopNow().finally(() => {
@@ -820,7 +824,9 @@ export class CodegraffSandbox {
     id: string,
     request: Record<string, unknown>,
     callSignal?: AbortSignal,
+    maintenance = false,
   ) {
+    if (this.maintaining && !maintenance) throw new Error("Sandbox maintenance in progress");
     const operationSignal = callSignal;
     const operation = crypto.randomUUID();
     this.activeOperations++;
@@ -897,6 +903,62 @@ export class CodegraffSandbox {
       throw new Error("Transient browser replay unavailable");
     return value;
   }
+  /** Owner-scoped maintenance. Secret state uses the existing encrypted VM
+   * channel; stdout, uploaded commands and actor events contain metadata only. */
+  async backup<T>(consume:(source:import("./cloud-backup.ts").BackupSource)=>Promise<T>, signal?:AbortSignal):Promise<T> {
+    if(this.busy) throw Error("Sandbox is busy");
+    const id=await this.ensure(signal);
+    // Archive after pending observations have reached the authoritative log.
+    // The restored runner starts a new operation journal, so an unacknowledged
+    // event must not exist only in the archived runner SQLite file.
+    const pending=runnerReply(await this.exec(id,`cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js drain`,signal));
+    await this.flushBrowserEvents(id,pending,event=>this.options.emit(event as Record<string,unknown>),signal);
+    if(this.busy) throw Error("Sandbox is busy");
+    this.maintaining=true;
+    const snapshotId=crypto.randomUUID();
+    const invoke=(input:Record<string,unknown>)=>this.invokePrivate(id,{operation:"backup",snapshotId,...input},signal,true);
+    try {
+      const manifest=await invoke({action:"prepare"});
+      if(manifest?.owner!==this.options.owner || manifest.version!==1) throw Error("VM backup owner mismatch");
+      return await consume({files:manifest.files,read:async(path,offset,length)=>{
+        const bytes=await invoke({action:"read",path,offset,length});
+        if(typeof bytes!=="string" || bytes.length>4*Math.ceil(length/3)) throw Error("Invalid VM backup transfer");
+        return new Uint8Array(Buffer.from(bytes,"base64"));
+      }});
+    } finally {
+      await invoke({action:"discard"}).catch(()=>undefined);
+      try {await this.exec(id,`cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js close`,AbortSignal.timeout(15000));}
+      finally {this.maintaining=false;}
+    }
+  }
+  async restore<T>(produce:(sink:import("./cloud-backup.ts").BackupSink)=>Promise<T>,allowed:{id:string;domain:string;revision:number}[],signal?:AbortSignal):Promise<T> {
+    if(this.busy) throw Error("Sandbox is busy");
+    const id=await this.ensure(signal);
+    if(this.busy) throw Error("Sandbox is busy");
+    this.maintaining=true;
+    const snapshotId=crypto.randomUUID();
+    const invoke=(input:Record<string,unknown>)=>this.invokePrivate(id,{operation:"backup",snapshotId,...input},signal,true);
+    let stopped=false;
+    try {
+      await invoke({action:"pause"});
+      const result=await produce({
+        write:async(path,offset,bytes)=>{await invoke({action:"write",path,offset,bytes:Buffer.from(bytes).toString("base64")});},
+        abort:async()=>{await invoke({action:"discard"});},
+        commit:async manifest=>{
+          await invoke({action:"verify",owner:this.options.owner,files:manifest.files});
+          await this.upload(id,`${RUNNER_ROOT}/backups/${snapshotId}/allowed.json`,JSON.stringify(allowed),signal);
+          await this.exec(id,`cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js close`,signal);
+          stopped=true;
+          const published=runnerReply(await this.exec(id,`cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js restore ${snapshotId}`,signal));
+          if(published.restored!==true) throw Error("VM restoration unconfirmed");
+        },
+      });
+      return result;
+    } finally {
+      try {if(!stopped)await this.exec(id,`cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js close`,AbortSignal.timeout(15000));}
+      finally {this.maintaining=false;}
+    }
+  }
   browserFactory(): BrowserDriverFactory {
     return async ({ emit, signal, owner }) => {
       if (owner && owner !== this.options.owner)
@@ -906,7 +968,15 @@ export class CodegraffSandbox {
         request: Record<string, unknown>,
         callSignal?: AbortSignal,
       ) => this.invokePrivate(id, request, callSignal ?? signal);
+      const readAndFlush = async (request: Record<string, unknown>, callSignal?: AbortSignal) => {
+        try { return await invoke(request, callSignal); }
+        finally {
+          const batch = runnerReply(await this.exec(id, `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js drain`, callSignal ?? signal));
+          await this.flushBrowserEvents(id, batch, emit, callSignal ?? signal);
+        }
+      };
       return {
+        readConnectionPage: (url, linkOffset = 0, signal) => readAndFlush({operation:"connection-page",url,linkOffset},signal),
         sessionContext: async () => {
           const result = runnerReply(
             await this.exec(
@@ -932,16 +1002,17 @@ export class CodegraffSandbox {
           await invoke({ operation: "session-clear", scope }, signal);
         },
         requestTransport: {
-          send: (request) => invoke({ operation: "send", request }),
+          send: (request) => readAndFlush({ operation: "send", request }),
         },
         requestSearch: (query, limit = 5, signal) =>
           invoke({ operation: "search", query, limit }, signal),
         requestRehydrate: (pointerId, inputs = {}, signal) =>
-          invoke({ operation: "hydrate", pointerId, inputs }, signal),
+          readAndFlush({ operation: "hydrate", pointerId, inputs }, signal),
         close: async () => {
           await this.stop();
         },
         execute: async (action, signal) => {
+          if (this.maintaining) throw new Error("Sandbox maintenance in progress");
           this.activeOperations++;
           const operation = crypto.randomUUID();
           try {

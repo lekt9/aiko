@@ -1,4 +1,19 @@
 import pg from "pg";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const supabaseCa = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../certs/supabase-prod-ca-2021.crt"),
+  "utf8",
+);
+
+function tlsFor(host: string) {
+  if (["localhost", "127.0.0.1", "[::1]"].includes(host)) return false;
+  if (host.endsWith(".supabase.co") || host.endsWith(".pooler.supabase.com"))
+    return { rejectUnauthorized: true, ca: supabaseCa };
+  return { rejectUnauthorized: true };
+}
 export interface Sql {
   query<T extends Record<string, unknown> = Record<string, unknown>>(
     text: string,
@@ -25,9 +40,7 @@ export function postgres(url: string): Database {
     max: 10,
     statement_timeout: 15_000,
     connectionTimeoutMillis: 10_000,
-    ssl: ["localhost", "127.0.0.1", "[::1]"].includes(host)
-      ? false
-      : { rejectUnauthorized: true },
+    ssl: tlsFor(host),
   });
   pool.on("error", () => {
     /* Request/worker health reflects failures; never log connection strings. */

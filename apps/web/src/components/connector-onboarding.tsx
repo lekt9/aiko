@@ -330,8 +330,10 @@ export function ConnectorOnboarding() {
   async function refresh() {
     const result = await request<{
       connections: ConnectorConnection[];
+      nativeInline?: boolean;
     }>("/connections");
     setConnections(result.connections);
+    setNativeInline(result.nativeInline === true);
     return result.connections;
   }
   async function openApp(app: DrawerApp) {

@@ -27,6 +27,29 @@ export function browserMemoryGraph(rows: readonly { seq: number; event: Event }[
     if (!edges.some(e => e.from === from && e.to === to && e.relation === relation)) edges.push({ from, to, relation });
   };
   const events = rows.map(row => row.event);
+  for (const { event: e } of rows) {
+    if (e.type === "AikoToolDefinitionRecorded" && digest(e.digest) && digest(e.schemaDigest)) {
+      const id = `artifact:${e.digest}`, schema = `artifact:${e.schemaDigest}`;
+      add({id,kind:"tool-definition",label:String(e.tool).slice(0,128),status:"recorded",details:{digest:e.digest}});
+      add({id:schema,kind:"tool-schema",label:"Input schema",status:"recorded",details:{digest:e.schemaDigest}});
+      edge(id,schema,"depends_on");
+    }
+    if (e.type === "AikoCodeWorkflowSaved" && digest(e.digest) && Array.isArray(e.dependencies)) {
+      const id = `artifact:${e.digest}`;
+      add({id,kind:"code-workflow",label:String(e.workflowId).slice(0,128),status:"verified run recorded",details:{digest:e.digest,execId:String(e.execId),availability:"recheck current tools"}});
+      for (const d of e.dependencies.slice(0,32)) if (d && digest(d.digest)) {
+        const child = `artifact:${d.digest}`;
+        add({id:child,kind:"tool-schema",label:String(d.tool).slice(0,128),status:"referenced",details:{digest:d.digest}});
+        edge(id,child,"depends_on");
+      }
+    }
+    if (e.type === "AikoNetworkRequestSettled" && digest(e.requestDigest) && digest(e.definitionDigest)) {
+      const id = `artifact:${e.requestDigest}`, parent = `artifact:${e.definitionDigest}`;
+      add({id:parent,kind:"request-definition",label:"Request DAG",status:"referenced",details:{digest:e.definitionDigest}});
+      add({id,kind:"request",label:String(e.method).slice(0,10),status:"checked",details:{checkedAt:Number(e.at),status:Number(e.status),changed:e.changed===true}});
+      edge(id,parent,"executed_from");
+    }
+  }
   const definitions = ownedNetworkDefinitions(events);
   if (events.some(e => e.type === "BrowserNetworkToolPrepared" && !definitions.some(d => d.toolDigest === e.toolDigest))) reasons.add("definition_evidence_outside_window_or_invalid");
   // Definition order is deterministic; latest prepared definitions get the bounded diagram space first.
@@ -81,5 +104,5 @@ export function browserMemoryGraph(rows: readonly { seq: number; event: Event }[
 
 /** Keep only native structural events; never recursively mine model messages/tool returns for authority. */
 export function browserGraphEvent(event: Event): boolean {
-  return ["NetworkFactObserved", "NetworkGraphCheckpointPrepared", "BrowserNetworkToolPrepared", "AikoRequestMemoryIndexed", "AikoRequestMemoryIndexUnavailable", "AikoBrowserLearningPending"].includes(event.type) || event.type.startsWith("Har");
+  return ["AikoToolDefinitionRecorded", "AikoCodeWorkflowSaved", "AikoNetworkRequestSettled", "NetworkFactObserved", "NetworkGraphCheckpointPrepared", "BrowserNetworkToolPrepared", "AikoRequestMemoryIndexed", "AikoRequestMemoryIndexUnavailable", "AikoBrowserLearningPending"].includes(event.type) || event.type.startsWith("Har");
 }

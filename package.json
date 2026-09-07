@@ -32,12 +32,17 @@
     "format:check": "prettier --check 'apps/web/src/**/*.{ts,tsx,css}' 'packages/sdk/src/*.ts' 'packages/protocol/src/*.ts' 'apps/server/src/*.ts' 'tests/**/*.ts' tokens.css",
     "harness:learn": "node scripts/harness-learn.mjs",
     "harness:selflearn": "bash scripts/harness-selflearn.sh",
-    "harness:watch": "node scripts/harness-watch.mjs"
+    "harness:watch": "node scripts/harness-watch.mjs",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+    "db:migrate": "bun --env-file=.env scripts/migrate-unlock.ts",
+    "db:verify": "bun --env-file=.env scripts/verify-supabase.ts"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
     "@unlock/protocol": "workspace:*",
     "axe-core": "^4.13.0",
+    "drizzle-kit": "^0.31.10",
     "prettier": "^3.9.6",
     "tough-cookie": "6.0.2",
     "typescript": "^5.9.3",
@@ -45,6 +50,8 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "@unbrowse/browser-harness": "link:../unbrowse-playground/runtime"
+    "@unbrowse/browser-harness": "link:../unbrowse-playground/runtime",
+    "drizzle-orm": "^0.45.2",
+    "postgres": "^3.4.9"
   }
 }

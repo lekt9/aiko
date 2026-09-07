@@ -7,7 +7,7 @@ import {
   NativeLoginVault,
   nativeLoginCipher,
 } from "../src/native-login-vault.ts";
-import { renewNativeLogin } from "../src/native-login-renewal.ts";
+import { renewNativeLogin, submitNativeLogin } from "../src/native-login-renewal.ts";
 
 const id = "12345678-1234-1234-1234-123456789abc";
 const cleanup: (() => Promise<unknown>)[] = [];
@@ -446,4 +446,27 @@ test("disconnected or replaced generations cannot use saved passwords for renewa
     f.vault.renew({ ...f.state, revision: f.state.revision + 1 }, use),
   ).rejects.toThrow("changed");
   expect(used).toBe(false);
+});
+
+test("one initial credential submission spans username and password pages without resubmission",async()=>{
+  const f=await fixture();let sent=0;
+  const base=f.dependencies.cdp.send;
+  f.dependencies.cdp.send=async(method,params)=>{
+    if(method === "Input.insertText")sent++;
+    if(method === "Runtime.evaluate") {
+      if(params.expression.startsWith("Boolean(document.querySelector"))return {result:{value:sent===2}};
+      if(params.expression.includes("Object.keys(f).filter"))return {result:{value:[sent===0?"username":"password"]}};
+    }
+    return base(method,params);
+  };
+  const result=await submitNativeLogin({connectionId:id,domain:"service.net",action:"login",username:"fixture-user",password:"fixture-password"},f.dependencies,f.vault,undefined,async()=>{});
+  expect(result.status).toBe("connected");expect(result.credentialsSaved).toBe(true);expect(sent).toBe(2);
+});
+
+test("a pre-existing signed-in page cannot verify an unsubmitted new password",async()=>{
+  const f=await fixture();f.authenticate();
+  const result=await submitNativeLogin({connectionId:id,domain:"service.net",action:"login",username:"unused-user",password:"unused-password"},f.dependencies,f.vault,undefined,async()=>{});
+  expect(result.status).toBe("connected");expect(result.credentialsSaved).toBe(false);
+  const row=f.db.query("SELECT envelope FROM native_vault WHERE id=?").get(id) as {envelope:string};
+  expect(await f.cipher.open<any>(`unlock:native-login:v1:123:${id}:service.net`,JSON.parse(row.envelope))).not.toHaveProperty("credentials");
 });

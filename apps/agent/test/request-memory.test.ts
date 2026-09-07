@@ -149,3 +149,31 @@ test("invalid URL/auth definitions and failed prerequisite responses never hydra
  const p=await m.index(f.selected.toolDigest,["catalog"]);const result=await m.hydrate(p.pointerId,f.inputs);
  expect(result.status).not.toBe("completed");expect(calls).toBe(1);expect(f.consumed).toHaveLength(0);
 });
+
+test("request cache recalls provenance and records durable update checks without retaining values",async()=>{
+ const f=await fixture();const emitted:Event[]=[];
+ let body={item:"private-one"};
+ const memory=new RequestMemory({...f.binding,record:async e=>{emitted.push(e)},transport:{send:async()=>({status:200,headers:{},classification:"application",body})}});
+ const saved=await memory.index(f.selected.toolDigest,["catalog"]);
+ expect((await memory.search("catalog")).items[0]).toMatchObject({pointerId:saved.pointerId,toolDigest:f.selected.toolDigest,sourceTraceDigest:f.selected.sourceTraceDigest,freshness:"requires-check"});
+ const first=await memory.hydrate(saved.pointerId,f.inputs);expect(first.changed).toBeNull();
+ const reopened=new RequestMemory(memory.binding);
+ const second=await reopened.hydrate(saved.pointerId,f.inputs);expect(second.changed).toBe(false);
+ body={item:"private-two"};
+ const third=await reopened.hydrate(saved.pointerId,f.inputs);expect(third.changed).toBe(true);
+ const check=reopened.memory.get(third.observationId!)!.observation;
+ expect(check.supports).toEqual([saved.pointerId]);expect(check.dependsOn).toEqual([saved.pointerId]);
+ expect(reopened.memory.history(check.subject)).toHaveLength(3);
+ expect(emitted).toHaveLength(3);expect(emitted[2]).toMatchObject({type:"AikoRequestMemoryChecked",observationId:third.observationId,changed:true});
+ expect(JSON.stringify(reopened.memory.exportArchive())+JSON.stringify(emitted)).not.toMatch(/private-one|private-two/);
+});
+
+test("unchanged request contracts reuse their durable cache without re-embedding",async()=>{
+ const f=await fixture();let embeds=0;
+ const binding={...f.binding,embedding:{...embedding,embed:async(texts:readonly string[])=>{embeds++;return texts.map(()=>[1,0,0])}}};
+ const first=await new RequestMemory(binding).index(f.selected.toolDigest,["weather"]);
+ const second=await new RequestMemory(binding).index(f.selected.toolDigest,["weather"]);
+ expect(first.cached).toBe(false);expect(second).toMatchObject({pointerId:first.pointerId,cached:true});expect(embeds).toBe(1);
+ await new RequestMemory({...binding,embedding:{...binding.embedding,model:"version-two"}}).index(f.selected.toolDigest,["weather"]);
+ expect(embeds).toBe(2);
+});

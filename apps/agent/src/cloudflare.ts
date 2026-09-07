@@ -129,6 +129,8 @@ import {
 } from "./promises.ts";
 import { CONSOLE_HTML } from "./console.ts";
 import type { AikoConfig } from "./config.ts";
+import { CloudBackups } from "./cloud-backup.ts";
+import { backupApi, type AccountBackup } from "./backup-api.ts";
 import {
   parseConnectUrl,
   parseManagerKey,
@@ -136,6 +138,8 @@ import {
 } from "./password-managers.ts";
 
 export interface AikoCloudflareEnv {
+  AIKO_BACKUPS?: R2Bucket;
+  AIKO_BACKUP_KEY?: string;
   CONNECTOR_ASSETS?: Fetcher;
   AIKO_ACCOUNTS: DurableObjectNamespace<AikoAccountDO>;
   AIKO_REGISTRY: DurableObjectNamespace<AikoRegistryDO>;
@@ -528,6 +532,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                 host.self(`user-${owner}`),
                 record as Event,
               );
+              if (record.type === "AikoNativeLoginStatus" && record.owner === owner && typeof record.connectionId === "string")
+                await connectors.completeAuth(record.connectionId);
             },
           })
         : undefined;
@@ -647,6 +653,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       redact,
       readOwnedEvents: () => host.read(`user-${owner}`),
       listWorkflows: () => workflows.engine.list(),
+      listCodeWorkflows: () => workflowStore.listCode!(owner),
+      codeToolSpecs: () => codeHarnesses.get(`user-${owner}`)?.toolSpecs() ?? [],
       vaultDomains: async () =>
         Object.keys(config.connectorVault?.accounts[owner]?.connections ?? {}),
     };
@@ -1209,7 +1217,45 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     if (/^\/(?:api|v1)\/secretary(?:\/|$)/.test(url.pathname))
       return this.serialize(() => secretaryApi(request, owner, host, redact));
     if (/^\/(?:api|v1)\/connectors(?:\/|$)/.test(url.pathname))
-      return connectorApi(request, connectors, route);
+      return this.serialize(() => connectorApi(request, connectors, route));
+    if (["/api/control/backup","/api/control/backups","/api/control/restore"].includes(url.pathname)) {
+      if (!principal.operator) return json({error:"forbidden"},403);
+      if (!this.env.AIKO_BACKUPS || !this.env.AIKO_BACKUP_KEY || !capabilities) return json({error:"backup_not_configured"},503);
+      return this.serialize(async () => {
+        const account = async ():Promise<AccountBackup> => {
+          const memory=openMemory(binding(`user-${owner}`));
+          try {
+            const snapshot=this.ctx.storage.transactionSync(()=>({threads:host.exportHistory(),memory:memory.exportArchive()}));
+            const state=[...(await this.ctx.storage.list()).entries()].filter(([key])=>!key.startsWith("backup:")&&!key.startsWith("codegraff:"));
+            return {version:1,owner,...snapshot,state};
+          } finally {memory.close();}
+        };
+        try {
+          return await backupApi(request,{
+            owner,backups:new CloudBackups(this.env.AIKO_BACKUPS!,this.env.AIKO_BACKUP_KEY!),sandbox:capabilities.sandbox,
+            resting:()=>host.resting(),account,
+            list:async()=>[...(await this.ctx.storage.list({prefix:"backup:"})).values()],
+            record:async manifest=>{await this.ctx.storage.put(`backup:${manifest.id}`,{id:manifest.id,at:manifest.at,files:manifest.files.length,bytes:manifest.files.reduce((n,f)=>n+f.bytes,0)});},
+            importAccount:async(id,archive)=>{
+              if(!Array.isArray(archive.threads))throw Error("Invalid account history");
+              // The native importer only accepts a fresh account or an exact
+              // retry. Existing history and credential metadata are preserved.
+              for(const [key,value] of archive.state) {
+                if(typeof key!=="string"||key.startsWith("codegraff:")||key.startsWith("backup:"))throw Error("Invalid account state key");
+                const current=await this.ctx.storage.get(key);
+                if(current!==undefined && JSON.stringify(current)!==JSON.stringify(value))throw Error("Account state conflict");
+              }
+              const memory=openMemory(binding(`user-${owner}`));
+              try {
+                await host.importHistory(`backup:${id}`,archive.threads as {thread:string;events:Event[]}[],{fingerprint:createHash("sha256").update(JSON.stringify(archive.memory)).digest("hex"),import:()=>{memory.importArchive(archive.memory);}});
+              } finally {memory.close();}
+              await this.ctx.storage.put(Object.fromEntries(archive.state));
+              await this.ctx.storage.sync();
+            },
+          });
+        } catch {return json({error:"backup_or_restore_unavailable"},409);}
+      });
+    }
     if (
       url.pathname === "/api/control/sandbox/reconcile" &&
       request.method === "POST"

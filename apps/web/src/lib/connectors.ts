@@ -124,7 +124,8 @@ export async function connectorRequest<T>(
   if (body) headers["Content-Type"] = "application/json";
   // Requests always settle: a stalled server surfaces as a retryable error,
   // never an indefinite spinner.
-  const timeout = AbortSignal.timeout(20_000);
+  const privateSignIn = ["/native", "/browser", "/password-managers/fill"].includes(path);
+  const timeout = AbortSignal.timeout(privateSignIn ? 120_000 : 20_000);
   const settled = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const response = await fetch(
     path.startsWith("/secretary") || path.startsWith("/approvals")

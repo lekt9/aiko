@@ -1,6 +1,6 @@
 /** Private browser control. Only the authenticated owner API can call this, never an actor tool. */
 import { publicTarget } from "./browser-proxy.ts";
-export type NativeLoginInput = { connectionId: string; domain: string; action: "renew" | "begin" | "status" | "form" | "credentials" | "view" | "click" | "type" | "key" | "scroll" | "finish" | "disconnect" | "navigate" | "allow_origin"; url?: string; username?: string; password?: string; code?: string; x?: number; y?: number; text?: string; key?: string; delta?: number };
+export type NativeLoginInput = { connectionId: string; domain: string; action: "login" | "renew" | "begin" | "status" | "form" | "credentials" | "view" | "click" | "type" | "key" | "scroll" | "finish" | "disconnect" | "navigate" | "allow_origin"; url?: string; username?: string; password?: string; code?: string; x?: number; y?: number; text?: string; key?: string; delta?: number };
 export type NativeLoginState = { connectionId: string; domain: string; targetId?: string; preserveTargetIds?: string[]; approvedOrigins?: string[]; status: "pending" | "connected" | "disconnected"; expiresAt: number; revision: number; credentialsSaved?: boolean; verifiedSession?: { expiresAt: number; revision: number; credentialsSaved?: boolean } };
 export type NativeLoginView = { status: NativeLoginState["status"]; domain: string; currentHost?: string; requiresOrigin?: string; fields?: string[]; screenshot?: string; width?: number; height?: number; expiresAt: number; revision: number; credentialsSaved?: boolean };
 export type PrivateCdp = {send(method:string,params:object,sessionId?:string):Promise<any>;close():void};
@@ -12,7 +12,7 @@ export async function prepareNativeLogin(input: NativeLoginInput, states: Native
     await disconnect({connectionId: state.connectionId, domain: state.domain, action: "disconnect"});
 }
 export function validateNativeInput(input: NativeLoginInput) {
-  if (!input || !/^[a-f0-9-]{36}$/.test(input.connectionId) || !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/.test(input.domain) || !["renew","begin","status","form","credentials","view","click","type","key","scroll","finish","disconnect","navigate","allow_origin"].includes(input.action)) throw Error("Invalid private sign-in request");
+  if (!input || !/^[a-f0-9-]{36}$/.test(input.connectionId) || !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/.test(input.domain) || !["login","renew","begin","status","form","credentials","view","click","type","key","scroll","finish","disconnect","navigate","allow_origin"].includes(input.action)) throw Error("Invalid private sign-in request");
   if (["navigate","allow_origin"].includes(input.action)) {
     const url=publicTarget(input.url??"");
     if(url.protocol!=="https:"||url.href.length>2048||url.username||url.password)throw Error("Use a public HTTPS sign-in address");
@@ -30,7 +30,7 @@ export function validateNativeInput(input: NativeLoginInput) {
 const loginPaths: Record<string,string> = {"linkedin.com":"/login", "instagram.com":"/accounts/login/", "facebook.com":"/login", "x.com":"/i/flow/login", "github.com":"/login", "notion.so":"/login", "slack.com":"/signin", "spotify.com":"/login"};
 export async function nativeLogin(input:NativeLoginInput, dependencies:{cdp:PrivateCdp; read():NativeLoginState|undefined; save(state:NativeLoginState):void; credentials?(state:NativeLoginState,input:NativeLoginInput):void; verified?(state:NativeLoginState,cookies:unknown[]):Promise<boolean>}):Promise<NativeLoginView> {
   validateNativeInput(input);
-  if(input.action === "renew") throw Error("Use the private vault renewal operation");
+  if(["login","renew"].includes(input.action)) throw Error("Use the private vault renewal operation");
   const {cdp}=dependencies; let state = dependencies.read();
   // A verified login awaiting cleanup cannot be replaced by a retried begin.
   if(input.action === "begin" && state?.status === "pending" && state.verifiedSession)
@@ -172,7 +172,8 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{cdp:Priv
     const authenticated=await evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)})) && !document.querySelector('input[type="password"]')`);
     const cookies=await cdp.send("Network.getCookies",{urls:[`https://${hostname}/`]},sessionId);
     if(!authenticated || !(cookies.cookies ?? []).some((c:any)=>c.httpOnly && c.secure && c.value)) throw Error("Signed-in session could not be verified");
-    const verified:NativeLoginState = {...state,status:"connected",expiresAt:Date.now()+7*86400_000,revision:state.revision+1};
+    const cookieExpiry=(cookies.cookies as any[]).filter(c=>c.httpOnly && c.secure && c.value && typeof c.expires === "number" && c.expires>0).map(c=>Math.floor(c.expires*1000));
+    const verified:NativeLoginState = {...state,status:"connected",expiresAt:Math.min(Date.now()+7*86400_000,...cookieExpiry),revision:state.revision+1};
     if (dependencies.verified) verified.credentialsSaved = await dependencies.verified(verified,cookies.cookies);
     // Persist only verification metadata before cleanup. A retry can close any
     // remaining pages even when the original login target has already gone.

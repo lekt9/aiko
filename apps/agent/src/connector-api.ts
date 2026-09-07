@@ -45,7 +45,7 @@ export async function connectorApi(
         return json(await engine.search(url.searchParams.get("query") ?? ""));
       }
       if (path === "/api/connectors/connections")
-        return json({ connections: await engine.connections() });
+        return json({ connections: await engine.connections(), nativeInline: (await engine.apps()).nativeInline });
       if (path === "/api/connectors/password-managers")
         return json({ managers: await engine.managers() });
       return json({ error: "not_found" }, 404);
@@ -162,7 +162,7 @@ export async function connectorApi(
     if (path.endsWith("/disconnect"))
       return json(await engine.disconnect(body.connectionId));
     if (path.endsWith("/browser"))
-      return json(await engine.connectBrowser(body.domain));
+      return json({ ...await engine.connectBrowser(body.domain), nativeInline: (await engine.apps()).nativeInline });
     if (path.endsWith("/discover")) {
       if (
         body.evidenceUrls !== undefined &&

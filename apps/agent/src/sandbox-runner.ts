@@ -11,6 +11,7 @@ import {
 import { BrowserEventQueue } from "./browser-event-queue.ts";
 import { runCodeSegment } from "./code-sandbox-runner.ts";
 import { resolveOnePassword } from "./onepassword-core.ts";
+import { snapshotVm, readVmSnapshot, discardVmSnapshot, writeVmRestore, verifyVmRestore, publishVmRestore } from "./vm-backup.ts";
 import {
   agentBrowserAgentActionOf,
   AgentBrowserClientError,
@@ -184,13 +185,28 @@ if (mode === "install") {
           // No operation result or plaintext request is journaled. Retrying requires a new read.
           try {
             const output =
-              value.operation === "code"
+              value.operation === "backup"
+                ? await (async () => {
+                    if(value.action === "prepare" || value.action === "pause") {
+                      await driver.close();
+                      if(value.action === "pause") return {paused:true};
+                      return snapshotVm(root,value.snapshotId);
+                    }
+                    if(value.action === "read") return readVmSnapshot(root,value.snapshotId,value.path,value.offset,value.length);
+                    if(value.action === "write") return writeVmRestore(root,value.snapshotId,value.path,value.offset,value.bytes).then(()=>({written:true}));
+                    if(value.action === "verify") return verifyVmRestore(root,value.snapshotId,value.owner,value.files);
+                    if(value.action === "discard") return discardVmSnapshot(root,value.snapshotId).then(()=>({discarded:true}));
+                    throw Error("Unknown backup action");
+                  })()
+              : value.operation === "code"
                 ? await runCodeSegment(value.input, cancellation.signal)
                 : value.operation === "manager-resolve"
                   ? await resolveOnePassword(
                       (value.input as { token?: unknown })?.token,
                       (value.input as { reference?: unknown })?.reference,
                     )
+                  : value.operation === "connection-page" && driver.readConnectionPage
+                    ? await driver.readConnectionPage(value.url,value.linkOffset,cancellation.signal)
                   : value.operation === "native-auth" && driver.nativeAuth
                     ? await driver.nativeAuth(value.input, cancellation.signal)
                     : value.operation === "session-install" &&
@@ -378,6 +394,14 @@ if (mode === "install") {
   }
   if (!stopped) throw new Error("Browser runner did not stop");
   console.log(result);
+} else if (mode === "restore") {
+  const id=process.argv[3];
+  if(!/^[a-f0-9-]{36}$/.test(id)) throw Error("Invalid restore identity");
+  const active=await fetch(`${endpoint}/health`).then(()=>true).catch(()=>false);
+  if(active) throw Error("Restore requires a stopped runner");
+  const owner=JSON.parse(await readFile(`${root}/owner.json`,"utf8")).owner;
+  const allowed=JSON.parse(await readFile(`${root}/backups/${id}/allowed.json`,"utf8"));
+  console.log(JSON.stringify(await publishVmRestore(root,id,owner,allowed)));
 } else if (mode === "drain") {
   const res = await fetch(`${endpoint}/drain`);
   if (!res.ok) throw new Error("Trace drain failed");

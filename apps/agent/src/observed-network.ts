@@ -15,7 +15,7 @@ import { validateRouterInput } from "./connector-router-host.ts";
 import type { CapabilityBuilderBinding } from "./capability-builder.ts";
 import { actionApprovalEventKey, createActionApprovals } from "./action-approval.ts";
 import type { UnlockSessionGrant } from "./unlock-session.ts";
-import { sha256 } from "@unbrowse/browser-harness/har";
+import { canonicalStringify, sha256 } from "@unbrowse/browser-harness/har";
 
 export interface ObservedNetworkBinding extends CapabilityBuilderBinding {
   /** Test/host override. Production uses pinned public DNS. */
@@ -38,6 +38,8 @@ const challengedResponse = (response: HarnessTransportResponse): { status: numbe
   return flagged ? { status: response.status, headerNames: names.sort() } : undefined;
 };
 export function observedActionEventKey(event: Event) {
+  if (["AikoNetworkRequestStarted", "AikoNetworkRequestSettled"].includes(event.type) && typeof event.id === "string")
+    return `aiko-observed-action:${event.type}:${event.id}`;
   if (event.type === "AikoObservedActionStarted" && typeof event.owner === "string" && typeof event.key === "string")
     return `aiko-observed-action:${event.owner}:${event.key}`;
   return actionApprovalEventKey(event);
@@ -248,9 +250,18 @@ export function createObservedNetworkTools(binding: ObservedNetworkBinding): Nat
           resolve: origin => ({ origin, cookies: grant.cookies, revision: grant.revision }),
         } : undefined;
         let challenge: { status: number; headerNames: readonly string[] } | undefined;
+        const definitionDigest = read?.toolDigest ?? action!.artifactDigest;
         const send: HarnessTransport["send"] = async request => {
+          const id = crypto.randomUUID();
+          const requestDigest = sha256(canonicalStringify({owner:binding.owner,definitionDigest,step:request.stepId,method:request.method,url:request.url,body:request.body ?? null,revision:grant?.revision ?? null}));
+          const metadata = {id,owner:binding.owner,definitionDigest,requestDigest,method:request.method};
+          await Effect.runPromise(log.append([{type:"AikoNetworkRequestStarted",...metadata,at:Date.now()}]));
           const response = binding.send ? await binding.send(request) : await sendObservedHttp(request, context.signal);
           challenge ??= challengedResponse(response);
+          const responseDigest = sha256(canonicalStringify({owner:binding.owner,status:response.status,body:response.body ?? null}));
+          const previous = events.findLast(e=>e.type==="AikoNetworkRequestSettled"&&e.owner===binding.owner&&e.requestDigest===requestDigest);
+          await Effect.runPromise(log.append([{type:"AikoNetworkRequestSettled",...metadata,status:response.status,responseDigest,
+            changed:previous ? previous.responseDigest!==responseDigest : null,at:Date.now()}]));
           return response;
         };
         const run = async () => {

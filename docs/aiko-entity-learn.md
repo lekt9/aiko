@@ -18,6 +18,16 @@ Aiko now uses the actual **entity-learn 0.2.0** engine from `/home/deck/work/ent
 
 The library's bundled `memoryPackage` adapter targets Tardie **0.5** and is **not exported** from this workspace copy (`entity-learn/tardigrade` does not resolve). Aiko mounts the version-independent core and `tardigradeLogSource` through **0.22 native tools**. Dependency inspection confirms Tardie **0.22.0** and Effect **4.0.0-rc.110**.
 
+## Tool artifacts and request cache
+
+Code-mode tool calls record the current tool-definition and input-schema hashes in native Tardigrade events. Verified code-workflow saves record the source digest, dependency hashes and successful execution reference. The log follower imports bounded structural receipts into entity-learn and writes content-addressed artifact references with exact observation dependencies. The existing graph endpoint includes tool, schema and code-workflow nodes. Source code remains in the owner workflow store and native code-dispatch history; execution inputs and results remain transient.
+
+The Cloudflare code-mode router now discovers mounted native tools and verified saved code workflows. It returns the exact `tools.call` or `code_workflow_run` invocation mapping. Route status checks include current contracts; changed dependency schemas and tampered saved source exclude workflows from the shortlist. Execution still rechecks the owner and current tool schemas.
+
+Observed network requests are reusable cached tool definitions. Re-indexing an unchanged definition, structural evidence and embedding model reuses its immutable entity-learn pointer without another embedding call. Search returns the tool digest, source trace, observation time and `requires-check` freshness. Hydration performs a fresh read and writes an immutable, cited update check with an owner-scoped response fingerprint and `changed` (`null` on the first check). Check history survives reopening the store. Host HTTP replay also logs individual request starts and settlements, tied to their learned DAG and prior response fingerprints.
+
+This cache retains request contracts, structural evidence, embeddings and check receipts. It does not retain raw response bodies or substitute historical responses for live reads. Capture applies to the existing browser-learning and observed HTTP paths; it is not a process-wide interceptor for provider SDK or arbitrary network traffic. No deployment or retrospective import of earlier omitted tool metadata is implied.
+
 ## Reproducible dependency
 
 - Current package: `packages/entity-learn`, resolved by `workspace:*`, with native Node and `workerd` entry points only.

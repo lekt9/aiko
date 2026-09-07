@@ -12,9 +12,9 @@ import { Self } from "tardie/core/runtime";
 import type { Event } from "tardie/core/event";
 import type { ConnectorEngine } from "./connectors.ts";
 import { replayCapabilities } from "./capability-builder.ts";
-import { validateWorkflowDefinition, type WorkflowRecord } from "./tool-workflows.ts";
+import { codeSchemaDigest, codeWorkflowDigest, validateWorkflowDefinition, type CodeWorkflowRecord, type WorkflowRecord } from "./tool-workflows.ts";
 
-export const ROUTER_VERSION = "aiko-tool-router/8";
+export const ROUTER_VERSION = "aiko-tool-router/9";
 export type RouterMethod = "discover" | "describe" | "route" | "status";
 export type RouteState = "ready" | "needs_connection" | "needs_discovery" | "catalog_unavailable";
 export type AtomicTask = { id: string; query: string; domain?: string; arguments?: Record<string, unknown> };
@@ -24,12 +24,15 @@ export interface ToolRouterBinding {
   /** Trusted host reads exactly this owner's foreground log. Text/nested tool results are never authoritative history. */
   readOwnedEvents?: () => Promise<readonly Event[]>;
   listWorkflows?: () => Promise<WorkflowRecord[]>;
+  listCodeWorkflows?: () => Promise<CodeWorkflowRecord[]>;
+  /** Live tool contracts from this owner's mounted code harness, never historical receipts. */
+  codeToolSpecs?: () => readonly { name: string; description?: string; inputSchema: unknown }[];
   /** Host-approved Unlock vault domains for this owner. Never session material. */
   vaultDomains?: () => Promise<readonly string[]>;
   redact?: (text: string) => string;
 }
 type Candidate = {
-  id: string; name: string; description: string; parent: string; provider: "arcade" | "generated" | "observed" | "workflow"; reviewRequired?: boolean;
+  id: string; name: string; description: string; parent: string; provider: "arcade" | "generated" | "observed" | "workflow" | "native"; reviewRequired?: boolean;
   domains: string[]; inputSchema: Record<string, unknown>; requirements: Record<string, unknown>;
   connectionId?: string; connected: boolean; evidenceId?: string;
 };
@@ -65,6 +68,10 @@ function tokens(text: string) {
 function historyFor(owner: string, events: readonly Event[]) {
   const history = new Map<string, "succeeded" | "failed" | "unknown">();
   for (const e of events) if (e.type === "AikoConnectorExecutionSettled" && e.owner === owner && typeof e.toolId === "string" && typeof e.callId === "string" && ["succeeded", "failed", "unknown"].includes(String(e.status))) history.set(e.toolId, e.status as "succeeded" | "failed" | "unknown");
+  for (const e of events) if (e.owner === owner && typeof e.tool === "string") {
+    if (e.type === "AikoCodeToolStarted") history.set(`native:${e.tool}`,"unknown");
+    if (e.type === "AikoCodeToolSettled") history.set(`native:${e.tool}`,e.succeeded===true?"succeeded":"failed");
+  }
   return history;
 }
 /** Multi-view lexical baseline: fine-grained names + descriptions + exact schemas, with explicit parent traversal.
@@ -190,6 +197,30 @@ async function snapshot(binding: ToolRouterBinding) {
     candidates.push(candidate);
   }
   const history = historyFor(binding.owner, events);
+  const native = new Map((binding.codeToolSpecs?.() ?? []).map(spec => [spec.name, spec]));
+  for (const spec of native.values()) {
+    if (!object(spec.inputSchema)) continue;
+    const candidate: Candidate = {id:`native:${spec.name}`,name:spec.name,description:spec.description ?? spec.name,
+      parent:"mounted-native-tools",provider:"native",domains:[],inputSchema:spec.inputSchema,connected:true,
+      requirements:{executeWith:"tools.call",merkle:`sha256:${codeSchemaDigest(spec)}`,schemaDigest:`sha256:${codeSchemaDigest(spec.inputSchema)}`,reauthorizeEveryRun:true,
+        execution:{tool:"tools.call",arguments:{name:spec.name},inputParameter:"arguments",inputEncoding:"json"}}};
+    if (redact(JSON.stringify(candidate)) === JSON.stringify(candidate)) candidates.push(candidate);
+  }
+  for (const record of await binding.listCodeWorkflows?.() ?? []) {
+    if (record.owner !== binding.owner || !record.reusable || record.provenance?.harness !== "aiko-code/1" || !record.provenance.execId) continue;
+    try { if (codeWorkflowDigest(record) !== record.digest) continue; } catch { continue; }
+    if (record.dependencies.some(d => !native.has(d.name) || codeSchemaDigest(native.get(d.name)!.inputSchema) !== d.schemaDigest)) continue;
+    const candidate: Candidate = {
+      id: `code-workflow:${record.id}`, name: record.id,
+      description: `${record.description}; ${record.dependencies.map(d => native.get(d.name)!.description ?? d.name).join("; ")}`,
+      parent: "owned-code-workflow", provider: "workflow", domains: [], inputSchema: record.inputSchema,
+      requirements: { executeWith: "code_workflow_run", merkle: `sha256:${record.digest}`, reauthorizeEveryRun: true,
+        dependencySchemasChecked: true, stepToolNames: record.dependencies.map(d => d.name).join(" "),
+        provenance: record.provenance, execution: { tool: "code_workflow_run", arguments: { id: record.id }, inputParameter: "input", inputEncoding: "json" } },
+      connected: true, evidenceId: record.digest,
+    };
+    if (redact(JSON.stringify(candidate)) === JSON.stringify(candidate)) candidates.push(candidate);
+  }
   for(const record of await binding.listWorkflows?.()??[]) {
     if(record.owner!==binding.owner||record.reusable!==true||!record.provenance?.runId)continue;
     try { if(hashCanonicalWorkflow(record.definition)!==record.digest)continue; } catch { continue; }
@@ -208,7 +239,7 @@ async function snapshot(binding: ToolRouterBinding) {
   }
   // Observed capabilities are established by the owner's verified network graph,
   // independently of Arcade. A missing catalog still grants no discovery fallback.
-  if (!catalogAvailable && !observed.length && !candidates.some(c => c.provider === "observed")) throw new Error("Catalog unavailable");
+  if (!catalogAvailable && !observed.length && !candidates.some(c => c.provider === "observed" || c.provider === "native" || c.parent === "owned-code-workflow")) throw new Error("Catalog unavailable");
   return { candidates, generated, observed, history, catalogAvailable, version: hash([ROUTER_VERSION, catalogAvailable, catalog.map(c => [c.id, c.toolkit, c.metadata]).sort((a,b) => String(a[0]).localeCompare(String(b[0]))), [...candidates].sort((a, b) => a.id.localeCompare(b.id)), generated, observed, [...history].sort(), [...vaultDomains].sort()]) };
 }
 async function searchAuthority(binding: ToolRouterBinding, domain: string) {

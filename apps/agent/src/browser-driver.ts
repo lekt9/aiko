@@ -1,6 +1,6 @@
 import { nativeLogin, prepareNativeLogin, type NativeLoginInput, type NativeLoginState, type NativeLoginView } from "./native-login.ts";
 import { NativeLoginVault, nativeLoginCipher } from "./native-login-vault.ts";
-import { renewNativeLogin } from "./native-login-renewal.ts";
+import { renewNativeLogin, submitNativeLogin } from "./native-login-renewal.ts";
 import { Database } from "bun:sqlite";
 import { nodeStorage } from "../../../packages/entity-learn/lib/storage-node.ts";
 import type { Event } from "tardie/core/event";
@@ -22,8 +22,10 @@ import {
 import { CdpNetworkListener } from "@unbrowse/browser-harness/network-listener";
 import { BrowserLearning } from "./browser-learning.ts";
 import { createPublicProxy, publicTarget } from "./browser-proxy.ts";
+import { connectionRoute, CONNECTION_LINK_LIMIT } from "./connection-index.ts";
 
 export interface BrowserDriver {
+  readConnectionPage?(url: string, linkOffset?: number, signal?: AbortSignal): Promise<{url:string;text:string;links:string[];linksTruncated:boolean;nextLinkOffset?:number}>;
   nativeAuth?(input: NativeLoginInput, signal?: AbortSignal): Promise<NativeLoginView>;
   execute(
     action: AgentBrowserAgentAction,
@@ -355,9 +357,23 @@ export function browserDriverFactory(
     };
     const requestTransport: HarnessTransport = {
       send: async (request) => {
-        if (privateLogin() || closed || !opened || !replayEndpoint || !targetOrigin)
+        if (privateLogin() || closed)
           throw new Error("Owned browser session unavailable");
-        return sessions.run(request.url, () =>
+        if (!["GET","HEAD"].includes(request.method) || request.body !== undefined || request.redirect !== "manual" || Object.keys(request.headers).length)
+          throw Error("Only observed read requests can restore a browser session");
+        const target = publicTarget(request.url);
+        const state = nativeStates().find(s => s.status === "connected" && (target.hostname === s.domain || target.hostname.endsWith(`.${s.domain}`)));
+        let renewedForRead = false;
+        if (!opened || !replayEndpoint || targetOrigin !== target.origin) {
+          if (!state) throw Error("Reconnect this app before restoring its request session");
+          if (state.expiresAt <= Date.now()) {
+            const renewed = await driver.nativeAuth!({connectionId:state.connectionId,domain:state.domain,action:"renew"}, lifetime.signal);
+            if (renewed.status !== "connected") throw Error("Private sign-in requires owner input");
+            renewedForRead = true;
+          }
+          await driver.execute({action:"navigate",url:target.origin},lifetime.signal);
+        }
+        const read = () => sessions.run(request.url, () =>
           replayBrowserRequest(
             replayEndpoint!,
             targetOrigin!,
@@ -365,6 +381,15 @@ export function browserDriverFactory(
             lifetime.signal,
           ),
         );
+        const result = await read();
+        if (result.classification !== "browser_session_required" || renewedForRead) return result;
+        if (!state) return result;
+        const renewed = await driver.nativeAuth!({connectionId:state.connectionId,domain:state.domain,action:"renew"}, lifetime.signal);
+        if (renewed.status !== "connected") return result;
+        await driver.execute({action:"navigate",url:target.origin},lifetime.signal);
+        // Only the read-only replay seam reaches this branch. A mutation is
+        // never retried when its outcome is unknown.
+        return read();
       },
     };
     memory = new RequestMemory({
@@ -379,18 +404,31 @@ export function browserDriverFactory(
             .all() as { event: string }[]
         ).map((row) => JSON.parse(row.event) as Event),
       embedding: createRequestEmbedding(join(directory, "models")),
+      record: emit,
       embedResponseValues: true,
       transport: requestTransport,
-      authorizeSession: async (requirements) =>
-        !!replayEndpoint &&
-        !closed &&
-        requirements.every((id) => id === "implicit-browser-session-v1"),
+      authorizeSession: async (requirements, origins) =>
+        !closed && !privateLogin() &&
+        requirements.every((id) => id === "implicit-browser-session-v1") &&
+        origins.every(origin => (opened && targetOrigin === origin) || nativeStates().some(state => {
+          const hostname = publicTarget(origin).hostname;
+          return state.status === "connected" && (hostname === state.domain || hostname.endsWith(`.${state.domain}`));
+        })),
       consume: async (response) => {
         hydrationBody = response.body;
       },
     });
     let hydrating = false;
-    return {
+    const driver: BrowserDriver = {
+      readConnectionPage: async (url, linkOffset = 0, signal) => {
+        await driver.execute({action:"navigate",url},signal);
+        const page = await readBrowserConnectionPage(replayEndpoint!,publicTarget(url).origin,linkOffset,signal);
+        // Settle the native observation window before its event queue is drained.
+        const current = await driver.execute({action:"url"},signal) as {url?:string};
+        if (typeof current.url !== "string" || connectionRoute(current.url,publicTarget(url).hostname) !== page.url)
+          throw Error("Connection page changed during discovery");
+        return page;
+      },
       nativeAuth: async (input, signal) => {
         if (nativeBusy) throw Error("Private sign-in busy");
         nativeBusy = true;
@@ -422,15 +460,17 @@ export function browserDriverFactory(
               };
               return request.action === "renew"
                 ? renewNativeLogin(request, dependencies, nativeVault, signal)
-                : nativeLogin(request, dependencies);
+                : request.action === "login" ? submitNativeLogin(request, dependencies, nativeVault, signal) : nativeLogin(request, dependencies);
             };
             stage = "expired-cleanup";
             await prepareNativeLogin(input, nativeStates(), run);
             stage = "sign-in-action";
-            return await run(input);
+            const view = await run(input);
+            if (input.action === "renew") await emit({type:"AikoNativeLoginStatus",id:crypto.randomUUID(),owner:principal,connectionId:input.connectionId,at:Date.now()});
+            return view;
           } finally { cdp.close(); }
         } catch(error) {
-          if (input.action === "credentials") nativeVault.discard(input.connectionId);
+          if (["credentials","login"].includes(input.action)) nativeVault.discard(input.connectionId);
           // Fixed stages/method names only: never credentials, URLs or raw CDP errors.
           console.warn("private_login_failed",stage);
           throw error;
@@ -573,7 +613,31 @@ export function browserDriverFactory(
           },
         ),
     };
+    return driver;
   };
+}
+
+/** Fixed CDP program; callers cannot select JavaScript, CDP methods or another page origin. */
+export async function readBrowserConnectionPage(endpoint:string,origin:string,linkOffset=0,signal?:AbortSignal) {
+  const target=publicTarget(origin);
+  if(!Number.isSafeInteger(linkOffset)||linkOffset<0)throw Error("Invalid link offset");
+  const cdp=await openPrivateBrowserCdp(endpoint,signal);
+  try {
+    const targets=await cdp.send("Target.getTargets",{});
+    const pages=targets.targetInfos.filter((t:any)=>t.type==="page"&&(()=>{try{return new URL(t.url).origin===target.origin;}catch{return false;}})());
+    if(pages.length!==1)throw Error("Ambiguous owned page");
+    const {sessionId}=await cdp.send("Target.attachToTarget",{targetId:pages[0].targetId,flatten:true});
+    // A single fixed DOM read preserves document order across parent elements.
+    // Native selectors do not implement Playwright's `>> nth=` syntax.
+    const expression=`(() => {if(location.origin!==${JSON.stringify(target.origin)}||document.querySelector('input[type="password"]'))throw Error('Sign-in context unavailable');const links=Array.from(document.querySelectorAll('a[href]'));return {url:location.href,text:(document.body?.innerText??'').slice(0,12000),links:links.slice(${linkOffset},${linkOffset+CONNECTION_LINK_LIMIT}).map(a=>a.href),count:links.length};})()`;
+    const result=await cdp.send("Runtime.evaluate",{expression,returnByValue:true},sessionId);
+    const page=result.result?.value;
+    if(result.exceptionDetails||!page||typeof page.text!=="string"||!Array.isArray(page.links)||!Number.isSafeInteger(page.count))throw Error("Connection context unavailable");
+    const url=connectionRoute(page.url,target.hostname);
+    if(!url)throw Error("Connection context left its domain");
+    const links=[...new Set<string>(page.links.flatMap((href:unknown)=>typeof href==="string"?(connectionRoute(href,target.hostname,url)??[]):[]))];
+    return {url,text:JSON.stringify({visibleText:page.text}).slice(0,16000),links,linksTruncated:page.count>linkOffset+CONNECTION_LINK_LIMIT,...(page.count>linkOffset+CONNECTION_LINK_LIMIT?{nextLinkOffset:linkOffset+CONNECTION_LINK_LIMIT}:{})};
+  } finally {cdp.close();}
 }
 
 /** Fixed CDP program; callers cannot select JavaScript, CDP methods or another page origin. */
@@ -614,7 +678,12 @@ export async function replayBrowserRequest(
       targetId: pages[0].targetId,
       flatten: true,
     });
-    const expression = `(async () => { const r = ${JSON.stringify({ url: target.href, method: request.method, origin })}; if (location.origin !== r.origin) throw Error("Origin changed"); const response = await fetch(r.url, {method:r.method,credentials:"same-origin",redirect:"manual",cache:"no-store",signal:AbortSignal.timeout(15000)}); if(response.type === "opaqueredirect") throw Error("Redirect blocked"); const text = await response.text(); if(text.length > 1000000) throw Error("Response too large"); const type = response.headers.get("content-type") || ""; return {status:response.status,headers:{"content-type":type},classification:response.status===401||response.status===403?"browser_session_required":type.includes("application/json")?"application":"site_control",body:type.includes("application/json")&&text?JSON.parse(text):undefined}; })()`;
+    const expression = `(async () => { const r = ${JSON.stringify({ url: target.href, method: request.method, origin })}; if (location.origin !== r.origin) throw Error("Origin changed"); const response = await fetch(r.url, {method:r.method,credentials:"same-origin",redirect:"manual",cache:"no-store",signal:AbortSignal.timeout(15000)}); if(response.type === "opaqueredirect") throw Error("Redirect blocked"); const text = await response.text(); if(text.length > 1000000) throw Error("Response too large"); const type = (response.headers.get("content-type") || "").toLowerCase();
+      const html = type.includes("text/html") ? new DOMParser().parseFromString(text,"text/html") : undefined;
+      const challenge = response.headers.get("cf-mitigated") === "challenge" || !!html?.querySelector('iframe[src*="captcha"],iframe[src*="challenges.cloudflare.com"],script[src*="/cdn-cgi/challenge-platform/"],.g-recaptcha,.h-captcha') || !!html && /just a moment|attention required|verify you are human|security verification|checking your browser/i.test(html.title);
+      const login = !!html?.querySelector('input[type="password"]');
+      const classification = challenge ? "site_control" : response.status===401||response.status===403||login ? "browser_session_required" : type.includes("application/json") || html && response.ok || r.method === "HEAD" && response.ok ? "application" : "site_control";
+      return {status:response.status,headers:{"content-type":type},classification,body:classification === "application" && text ? type.includes("application/json") ? JSON.parse(text) : text : undefined}; })()`;
     const result = await rpc(
       "Runtime.evaluate",
       { expression, awaitPromise: true, returnByValue: true },

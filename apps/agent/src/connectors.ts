@@ -410,6 +410,7 @@ export class ConnectorEngine {
         ![
           "form",
           "credentials",
+          "login",
           "view",
           "click",
           "type",
@@ -421,7 +422,7 @@ export class ConnectorEngine {
         ].includes(input.action)
       )
         throw Error("Private sign-in unavailable");
-      if (input.action === "credentials")
+      if (["credentials", "login"].includes(input.action))
         await this.recordEvent(row, "AikoLoginSubmitted");
       let result;
       try {
@@ -430,7 +431,7 @@ export class ConnectorEngine {
           input,
         );
       } catch (error) {
-        if (input.action === "credentials")
+        if (["credentials", "login"].includes(input.action))
           await this.recordEvent(row, "AikoLoginAttemptFailed");
         throw error;
       }
@@ -509,7 +510,7 @@ export class ConnectorEngine {
       let result;
       try {
         result = await this.options.secureBrowser.control(binding, {
-          action: "credentials",
+          action: this.options.secureBrowser.native ? "login" : "credentials",
           username,
           password,
         });
@@ -708,7 +709,8 @@ export class ConnectorEngine {
     const prior = (await this.options.store.get(
       `${this.prefix}connection:${row.id}`,
     )) as StoredConnection | undefined;
-    if (this.options.onEvent && prior?.status !== row.status)
+    if (this.options.onEvent && (prior?.status !== row.status ||
+        (row.status === "connected" && prior?.browserVerification?.revision !== row.browserVerification?.revision)))
       row.pendingEvents = [
         ...(row.pendingEvents ?? []),
         this.eventFor(row, "AikoConnectionChanged"),
@@ -894,6 +896,7 @@ export class ConnectorEngine {
     };
   }
   private async completeBrowser(row: StoredConnection): Promise<Connection> {
+    const wasConnected = row.status === "connected";
     if (row.status !== "pending" && row.status !== "connected")
       return this.view(row);
     const renewing = row.status === "connected" && this.view(row).status === "failed" && this.options.secureBrowser?.native === true;
@@ -933,7 +936,7 @@ export class ConnectorEngine {
     } else {
       row.status = result.status;
       delete row.browserVerification;
-      if (row.status === "pending" && renewing) {
+      if (row.status === "pending" && wasConnected && adapter.native) {
         row.expiresAt = Date.now() + 30 * 60_000;
         row.authorizationUrl = authUrl((await adapter.begin(binding)).authorizationUrl);
       } else if (row.status !== "pending") delete row.authorizationUrl;

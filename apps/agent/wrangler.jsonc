@@ -6,6 +6,7 @@
   "account_id": "6d81c1b653effb2e0eac5ee071107122",
   "compatibility_date": "2026-09-06",
   "compatibility_flags": ["nodejs_compat"],
+  "r2_buckets": [{"binding":"AIKO_BACKUPS","bucket_name":"aiko-state-backups"}],
   "durable_objects": {
     "bindings": [
       { "name": "AIKO_ACCOUNTS", "class_name": "AikoAccountDO" },

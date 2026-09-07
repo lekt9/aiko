@@ -60,7 +60,7 @@ const fakeBrowser = (
     authorizationUrl: "https://t.me/aiko_bot?start=fixture",
   }),
   control: async (_binding, input) => {
-    if (input.action === "credentials") {
+    if (input.action === "login") {
       submitted.push({ username: input.username, password: input.password });
       return {
         status: "connected",
@@ -617,7 +617,7 @@ test("a sandbox resolver overrides only its kind, like the deployed VM path", as
 
 test("the embedded wasm build initializes the 1Password core end to end", async () => {
   const wasm = await Bun.file(
-    "node_modules/@1password/sdk-core/nodejs/core_bg.wasm",
+    new URL("../node_modules/@1password/sdk-core/nodejs/core_bg.wasm", import.meta.url),
   ).arrayBuffer();
   const b64 = Buffer.from(wasm).toString("base64");
   const entry = `${import.meta.dir}/fixture-op-entry.mjs`;

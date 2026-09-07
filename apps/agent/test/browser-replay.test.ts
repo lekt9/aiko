@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { replayBrowserRequest } from "../src/browser-driver.ts";
+import { replayBrowserRequest, readBrowserConnectionPage } from "../src/browser-driver.ts";
 import {
   replayKeys,
   wrapReplay,
@@ -112,6 +112,13 @@ test("fixed CDP replay targets one current owned page and returns response only 
 });
 
 const endpoint = process.env.AIKO_REPLAY_TEST_CDP;
+(endpoint ? test : test.skip)("real Chrome reads navigation links in one DOM batch and excludes sign-out",async()=>{
+ const page=await readBrowserConnectionPage(endpoint!,"https://replay-fixture.aiko.ai");
+ expect(page.links).toEqual(["https://replay-fixture.aiko.ai/projects","https://replay-fixture.aiko.ai/projects?id=12"]);
+ expect(page.linksTruncated).toBe(false);
+ expect(page.text).toContain("Project review");
+ await expect(readBrowserConnectionPage(endpoint!,"https://replay-fixture.aiko.ai",-1)).rejects.toThrow("offset");
+});
 (endpoint ? test : test.skip)(
   "real Chromium preserves HttpOnly browser session and blocks redirects/auth failures",
   async () => {

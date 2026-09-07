@@ -295,8 +295,8 @@ function itemText(hit: MemoryHit): string {
   } | null;
   const recordedText =
     o.producer.kind === "tool" &&
-    episode?.projection === "aiko-user-messages-v1" &&
-    typeof episode.data?.text === "string"
+    ["aiko-user-messages-v1", "aiko-tool-memory-v2"].includes(episode?.projection ?? "") &&
+    typeof episode?.data?.text === "string"
       ? episode.data.text
       : undefined;
   const detail =

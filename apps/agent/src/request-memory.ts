@@ -23,11 +23,13 @@ export interface RequestMemoryBinding {
   embedding: RequestEmbeddingProvider;
   /** Host-bound transport MUST enforce SSRF/DNS policy, owner session isolation and manual redirects. */
   transport: HarnessTransport;
-  authorizeSession?(requirements: readonly string[]): Promise<boolean>;
+  authorizeSession?(requirements: readonly string[], origins: readonly string[]): Promise<boolean>;
   /** Explicit opt-in: only configure with a trusted local embedding provider. */
   embedResponseValues?: boolean;
   /** Transient analysis sink. Do not append bodies or value-derived summaries to pointer memory/tool logs. */
   consume?(response: { pointerId: string; stepId: string; body: HarnessJsonValue | undefined }, signal?: AbortSignal): Promise<void>;
+  /** Durable native log bridge. Contains hashes and status only, never response values. */
+  record?(event: Event): Promise<void>;
 }
 type Shape = { path: string; type: string };
 type Pointer = { version: 1; owner: string; definition: NetworkToolDefinition; concepts: string[]; shapes: Record<string, Shape[]>; model: string; embedding: number[] };
@@ -77,7 +79,7 @@ export class RequestMemory {
     const observed = ownedNetworkDefinitions(await this.binding.readOwnedEvents()).find(e => e.toolDigest === digest);
     if (!observed) throw new Error("Owned network evidence unavailable");
     artifact(observed.definition);
-    if (observed.definition.sessionRequirements.length && !await this.binding.authorizeSession?.(observed.definition.sessionRequirements)) throw new Error("Session replay unavailable");
+    if (observed.definition.sessionRequirements.length && !await this.binding.authorizeSession?.(observed.definition.sessionRequirements,[...new Set(observed.definition.steps.map(step=>step.origin))])) throw new Error("Session replay unavailable");
     return observed.definition;
   }
   /** Host ingestion API: optional bodies exist only during type extraction, never in the journal. */
@@ -94,13 +96,23 @@ export class RequestMemory {
     validateNoSecrets(structural);
     const document = canonicalStringify({concepts:structural.concepts,shapes,inputs:definition.inputs}).slice(0,3500);
     const transient = this.binding.embedResponseValues ? Object.values(responses).map(responseDocument).join("\n").slice(0,12000) : "";
+    // Reuse the indexed request contract before spending another embedding call. Response values
+    // contribute only an owner-scoped fingerprint when explicitly using local response embeddings.
+    const indexDigest = sha256(canonicalStringify({owner:this.binding.owner,structural,model:this.binding.embedding.model,
+      dimensions:this.binding.embedding.dimensions,responseDigest:sha256(canonicalStringify({owner:this.binding.owner,transient}))}));
+    const subject = `request:${indexDigest}`;
+    const head = this.memory.journal.head(this.memory.scope,subject);
+    if (head) {
+      const cached = this.memory.get(head.id);
+      if (!cached) throw new Error("Request pointer is suppressed");
+      return {pointerId:cached.observation.id,requestIds:definition.evidence.map(e=>e.requestId),model:this.binding.embedding.model,cached:true};
+    }
     // Small encoders truncate by tokens: response semantics must precede verbose DAG/schema metadata.
     const vectors = await this.binding.embedding.embed([`${structural.concepts.join(" ")}\n${transient}\n${document}`], signal);
     if (vectors.length !== 1) throw new Error("Embedding count mismatch");
     const payload: Pointer = { version: 1, owner: this.binding.owner, ...structural, model: this.binding.embedding.model, embedding: vector(vectors[0]!, this.binding.embedding.dimensions) };
-    const identity = sha256(canonicalStringify(payload));
-    const saved = this.memory.remember({ subject: `request:${identity}`, title: concepts.join(" "), type: "request-pointer", payload: payload as unknown as Json }, { key: `index:${identity}`, producer: { kind: "tool", reference: toolDigest } });
-    return { pointerId: saved.id, requestIds: definition.evidence.map(e => e.requestId), model: payload.model };
+    const saved = this.memory.remember({ subject, title: structural.concepts.join(" "), type: "request-pointer", payload: payload as unknown as Json }, { key: `index:${indexDigest}`, producer: { kind: "tool", reference: toolDigest } });
+    return { pointerId: saved.id, requestIds: definition.evidence.map(e => e.requestId), model: payload.model, cached:false };
   }
   private pointer(id: string): Pointer {
     const hit = this.memory.get(id);
@@ -121,7 +133,7 @@ export class RequestMemory {
     return this.memory.journal.read(() => {
       const reasons = new Set<string>();
       let after: string | undefined, scanned = 0, corpusBytes = 0;
-      type Item = { pointerId: string; score: number; concepts: string[]; shapes: Record<string, Shape[]>; requestIds: string[]; inputs: NetworkToolDefinition["inputs"] };
+      type Item = { pointerId: string; toolDigest: string; sourceTraceDigest: string; observedAt: number; freshness: "requires-check"; score: number; concepts: string[]; shapes: Record<string, Shape[]>; requestIds: string[]; inputs: NetworkToolDefinition["inputs"] };
       let items: Item[] = [];
       do {
         signal?.throwIfAborted();
@@ -136,7 +148,8 @@ export class RequestMemory {
             if (!definitions.has(networkToolDigest(p.definition))) { reasons.add("evidence_unavailable"); continue; }
             if (p.model !== this.binding.embedding.model || p.embedding.length !== q.length) { reasons.add("embedding_space_mismatch"); continue; }
             const v = vector(p.embedding, q.length);
-            items.push({ pointerId: hit.observation.id, score: q.reduce((sum,x,i) => sum + x*v[i]!, 0), concepts: p.concepts, shapes: p.shapes, requestIds: p.definition.evidence.map(e => e.requestId), inputs: p.definition.inputs });
+            items.push({ pointerId: hit.observation.id, toolDigest: networkToolDigest(p.definition), sourceTraceDigest:p.definition.sourceTraceDigest,
+              observedAt:hit.observation.observedAt, freshness:"requires-check", score: q.reduce((sum,x,i) => sum + x*v[i]!, 0), concepts: p.concepts, shapes: p.shapes, requestIds: p.definition.evidence.map(e => e.requestId), inputs: p.definition.inputs });
           } catch { reasons.add("invalid_pointer"); }
         }
         // Keep only the best requested candidates in memory, not the entire corpus/vector array.
@@ -156,6 +169,9 @@ export class RequestMemory {
     const p = this.pointer(id);
     await this.definition(networkToolDigest(p.definition)); // Revoked/missing source evidence fails closed.
     validateNoSecrets(inputs);
+    const requestDigest = sha256(canonicalStringify({owner:this.binding.owner,toolDigest:networkToolDigest(p.definition),inputs}));
+    const subject = `request-check:${requestDigest}`;
+    const prior = this.memory.recall({subject,type:"request-check",includeStale:true,limit:1}).items[0]?.observation;
     let terminal: { stepId: string; body: HarnessJsonValue | undefined } | undefined;
     const result = await executeHarnessAction({ artifact: artifact(p.definition), actionId: p.definition.actionId, input: inputs,
       adapters: { clock: { now: () => new Date() }, uuid: { next: () => crypto.randomUUID() }, transport: { send: async request => {
@@ -166,8 +182,22 @@ export class RequestMemory {
         terminal = { stepId: request.stepId, body: response.body };
         return response;
       } } } });
-    if (result.status === "completed" && terminal && this.binding.consume) await this.binding.consume({ pointerId: id, ...terminal }, signal);
-    return { pointerId: id, status: result.status, code: result.code, counts: result.counts, consumed: result.status === "completed" && !!this.binding.consume };
+    let check: { observationId: string; checkedAt: number; changed: boolean | null } | undefined;
+    if (result.status === "completed" && terminal) {
+      signal?.throwIfAborted();
+      const checkedAt = Date.now();
+      const responseDigest = sha256(canonicalStringify({owner:this.binding.owner,body:terminal.body ?? null}));
+      const changed = prior ? (prior.payload as Record<string, Json>).responseDigest !== responseDigest : null;
+      const observation = this.memory.remember({subject,title:p.concepts.join(" ")+" request update check",type:"request-check",kind:"episode",
+        payload:{pointerId:id,toolDigest:networkToolDigest(p.definition),requestDigest,responseDigest,changed,checkedAt},
+        observedAt:checkedAt,ttlSeconds:300,supports:[id],dependsOn:[id],...(prior?{supersedes:prior.id}:{})},
+        {key:`check:${crypto.randomUUID()}`,producer:{kind:"tool",reference:networkToolDigest(p.definition)}});
+      check = {observationId:observation.id,checkedAt,changed};
+      await this.binding.record?.({type:"AikoRequestMemoryChecked",id:crypto.randomUUID(),owner:this.binding.owner,
+        pointerId:id,toolDigest:networkToolDigest(p.definition),requestDigest,responseDigest,...check,at:checkedAt});
+      if (this.binding.consume) await this.binding.consume({ pointerId: id, ...terminal }, signal);
+    }
+    return { pointerId: id, status: result.status, code: result.code, counts: result.counts, ...check, consumed: result.status === "completed" && !!this.binding.consume };
   }
 }
 

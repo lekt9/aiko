@@ -7,6 +7,8 @@
   },
   "include": [
     "src",
+    "connector-site",
+    "vite.connectors.config.ts",
     "vite.config.ts"
   ]
 }
