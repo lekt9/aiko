@@ -403,7 +403,7 @@ describe("native production browser answers", () => {
     expect(clicks).toBe(1);
     expect(closes).toBe(1);
     expect(app.browser.status("123").sessionActive).toBe(false);
-    expect(app.sent.at(-1)).toContain("unconfirmed");
+    expect(app.sent.at(-1)).toContain("couldn’t confirm the results");
     expect(app.sent.at(-1)).not.toContain("Everything succeeded");
   });
 });
@@ -589,8 +589,8 @@ describe("Aiko native browser integration", () => {
         }
       )?.text,
     );
-    expect(reply).toContain("At least one browser outcome is unconfirmed");
-    expect(reply).toContain("some results are omitted");
+    expect(reply).toContain("couldn’t confirm the results");
+    expect(reply).not.toContain("some results are omitted");
     expect(reply.length).toBeLessThan(4_000);
   });
 

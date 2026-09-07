@@ -86,6 +86,8 @@ type Speech = {
   chat?: string;
   context?: { replyTo?: number; messageThreadId?: number };
 };
+/** Legacy hosts (no model-authored browser answers) deliver bounded receipt
+ * summaries; production hosts answer in prose and never dump receipts. */
 function receiptSummary(
   receipts: readonly { text: string }[],
   omitted: boolean,
@@ -283,14 +285,14 @@ export function voiceAndOutbox(
                     : {
                         kind: "task",
                         receipt: receipts.length
-                          ? (state.browserAttempts.get(String(e.turn)) ===
-                            "uncertain"
-                              ? "At least one browser outcome is unconfirmed. Do not assume all actions completed.\n\n"
-                              : "") +
-                            receiptSummary(
-                              receipts,
-                              state.omittedReceipts.has(String(e.turn)),
-                            )
+                          ? state.browserAttempts.get(String(e.turn)) === "uncertain"
+                            ? "I ran that in the browser but couldn’t confirm the results — ask me to retry."
+                            : policy?.browserAnswers
+                              ? "I finished the steps but couldn’t produce a confirmed answer. Please try again."
+                              : receiptSummary(
+                                  receipts,
+                                  state.omittedReceipts.has(String(e.turn)),
+                                )
                           : policy?.live
                             ? "I couldn’t confirm a usable answer. Please try again. Connected-account actions are not available; no app action was verified."
                             : "No tool-backed result was confirmed. Try sample apps, sample issues, scoped memory, or Access status to inspect available capabilities.",
