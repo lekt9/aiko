@@ -32,6 +32,7 @@ import {
   workflowDispatcher,
 } from "./workflow-host.ts";
 import { ConnectorEngine } from "./connectors.ts";
+import { createCartesiaTts } from "./cartesia-tts.ts";
 import { FilePasswordManagerHost } from "./password-managers.ts";
 import { connectorApi } from "./connector-api.ts";
 import { DurableObject } from "cloudflare:workers";
@@ -80,6 +81,7 @@ import {
   serializeTelegramInbound,
   type TelegramInbound,
 } from "./telegram.ts";
+import { readReactionFor } from "./telegram-reactions.ts";
 import {
   createTelegramTools,
   createTelegramTyping,
@@ -142,6 +144,9 @@ export interface AikoCloudflareEnv {
   AIKO_CONVERSATION_PROVIDER?: string;
   AIKO_CONVERSATION_MODEL?: string;
   ARCADE_API_KEY?: string;
+  AIKO_CARTESIA_KEY?: string;
+  AIKO_CARTESIA_VOICE_ID?: string;
+  AIKO_CARTESIA_MODEL?: string;
   AIKO_CODE_MODE?: string;
   AIKO_CONNECTOR_VAULT_JSON?: string;
   AIKO_MANAGER_KEY?: string;
@@ -228,6 +233,9 @@ function configOf(env: AikoCloudflareEnv): AikoConfig {
       },
     ),
     arcadeKey: env.ARCADE_API_KEY,
+    cartesiaKey: env.AIKO_CARTESIA_KEY,
+    cartesiaVoiceId: env.AIKO_CARTESIA_VOICE_ID,
+    cartesiaModel: env.AIKO_CARTESIA_MODEL,
     codeMode: env.AIKO_CODE_MODE === "true",
     connectorVault: parseConnectorVault(env.AIKO_CONNECTOR_VAULT_JSON),
     managerKey: parseManagerKey(env.AIKO_MANAGER_KEY),
@@ -367,6 +375,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     capabilities?: ReturnType<typeof createCloudflareCapabilities>;
     connectors: ConnectorEngine;
     route: ReturnType<typeof routerCaller>;
+    telegram: ReturnType<typeof telegramOf>;
   }>;
   private admission = Promise.resolve();
   private failures = 0;
@@ -475,6 +484,9 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
             owner,
             onApprovalsChanged: (_owner, count) => updateApprovalMenu(count),
             env: { CODEGRAFF_API_KEY: config.modelKey! },
+            tts: config.cartesiaKey && config.cartesiaVoiceId
+              ? createCartesiaTts({ key: config.cartesiaKey, voiceId: config.cartesiaVoiceId, model: config.cartesiaModel })
+              : undefined,
             storage: this.ctx.storage,
             memory: binding(`user-${owner}`),
             unlock: { config: config.connectorVault, engine: () => connectors },
@@ -866,7 +878,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
           : base;
       },
     });
-    return { host, config, binding, redact, capabilities, connectors, route };
+    return { host, config, binding, redact, capabilities, connectors, route, telegram };
   }
   private serialize<T>(operation: () => Promise<T>): Promise<T> {
     const next = this.admission.then(operation);
@@ -921,7 +933,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     inbound?: TelegramInbound,
   ) {
     return this.serialize(async () => {
-      const { host, config, redact } = await this.open(owner);
+      const { host, config, redact, telegram } = await this.open(owner);
       if (!validOwner(config, owner))
         throw new Error("Account is not authorized");
       if (inbound?.secretary) {
@@ -954,6 +966,23 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         host.self(thread),
         event("AikoHooksActivated", { id: "background-v1" }),
       );
+      // Acknowledge ingestion immediately: a content-matched reaction shows
+      // the message was read while the turn is still starting. Best effort —
+      // a failed or rate-limited reaction must never break the turn.
+      if (
+        source === "telegram" &&
+        telegram &&
+        normalized?.messageId &&
+        (!normalized.kind || normalized.kind === "message")
+      )
+        void telegram
+          .react(
+            owner,
+            normalized.messageId,
+            readReactionFor(text, Boolean(normalized.media?.length)),
+            new AbortController().signal,
+          )
+          .catch(() => {});
       if (
         source === "telegram" &&
         !normalized?.media?.length &&

@@ -40,6 +40,9 @@ export type AikoConfig = {
   cerebrasKey?: string;
   modelRouting?: ModelRoutingConfig;
   arcadeKey?: string;
+  cartesiaKey?: string;
+  cartesiaVoiceId?: string;
+  cartesiaModel?: string;
   codeMode?: boolean;
   connectorVault?: ConnectorVaultConfig;
   /** Base64 32-byte AES key that seals password manager tokens at rest. Omitting it keeps the feature off. */
@@ -338,6 +341,9 @@ export async function loadConfig(
       ),
     ),
     arcadeKey: get("ARCADE_API_KEY"),
+    cartesiaKey: get("AIKO_CARTESIA_KEY"),
+    cartesiaVoiceId: get("AIKO_CARTESIA_VOICE_ID"),
+    cartesiaModel: get("AIKO_CARTESIA_MODEL"),
     codeMode: get("AIKO_CODE_MODE") === "true",
     connectorVault: parseConnectorVault(get("AIKO_CONNECTOR_VAULT_JSON")),
     managerKey: parseManagerKey(get("AIKO_MANAGER_KEY")),

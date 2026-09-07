@@ -127,6 +127,7 @@ export class CodegraffSandbox {
       runnerBundle: string;
       bootstrap: string;
       mediaScript?: string;
+  tts?: (text: string, signal: AbortSignal) => Promise<Uint8Array>;
     },
   ) {}
   private async record() {
@@ -652,12 +653,32 @@ export class CodegraffSandbox {
         this.options.mediaScript,
         signal,
       );
-      await this.upload(
-        id,
-        `${RUNNER_ROOT}/operations/${operation}.media.json`,
-        JSON.stringify({ mode: "speak", text }),
-        signal,
-      );
+      if (this.options.tts) {
+        // Provider audio is synthesized in the Worker; the sandbox never sees
+        // the TTS credential and only converts the waveform for Telegram.
+        const wav = await this.options.tts(text, signal);
+        await this.options.gateway.request(
+          `/v1/sandboxes/${idOf(id)}/upload`,
+          {
+            path: `${RUNNER_ROOT}/operations/${operation}.media`,
+            contentBase64: Buffer.from(wav).toString("base64"),
+          },
+          signal,
+        );
+        await this.upload(
+          id,
+          `${RUNNER_ROOT}/operations/${operation}.media.json`,
+          JSON.stringify({ mode: "speech-convert" }),
+          signal,
+        );
+      } else {
+        await this.upload(
+          id,
+          `${RUNNER_ROOT}/operations/${operation}.media.json`,
+          JSON.stringify({ mode: "speak", text }),
+          signal,
+        );
+      }
       const result = await this.mediaResult(
         id,
         operation,

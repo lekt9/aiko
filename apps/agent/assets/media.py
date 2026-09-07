@@ -22,6 +22,8 @@ def run(args):
 def process_media():
     if config.get("mode") == "speak":
         return speak()
+    if config.get("mode") == "speech-convert":
+        return speech_convert()
     mime = config.get("mimeType", "")
     if mime == "application/pdf":
         output = root / (operation + ".extracted.txt")
@@ -55,6 +57,15 @@ def process_media():
         return {"status":"processed", "text":"\n".join(parts)[:64000], "truncated":remaining<=0,
                 "reason":"office_text_and_cell_values_only_no_macros_or_external_links"}
     return audiovisual()
+
+def speech_convert():
+    # Provider-synthesized waveform (no credentials here); Telegram voice needs OGG/opus.
+    ogg = root / (operation + ".ogg")
+    try:
+        run(["ffmpeg", "-v", "error", "-y", "-i", str(source), "-c:a", "libopus", "-b:a", "64k", str(ogg)])
+        return {"status":"processed", "mimeType":"audio/ogg", "data":base64.b64encode(ogg.read_bytes()).decode()}
+    finally:
+        ogg.unlink(missing_ok=True)
 
 def speak():
     text = str(config["text"])

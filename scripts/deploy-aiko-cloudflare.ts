@@ -69,6 +69,9 @@ const secrets = {
     ? { AIKO_ONEPASSWORD_CONNECT_URL: config.onePasswordConnectUrl }
     : {}),
   ...(config.voiceKey ? { AIKO_VOICE_KEY: config.voiceKey } : {}),
+  ...(config.cartesiaKey ? { AIKO_CARTESIA_KEY: config.cartesiaKey } : {}),
+  ...(config.cartesiaVoiceId ? { AIKO_CARTESIA_VOICE_ID: config.cartesiaVoiceId } : {}),
+  ...(config.cartesiaModel ? { AIKO_CARTESIA_MODEL: config.cartesiaModel } : {}),
 };
 const redact = redactor([...Object.values(secrets), state.AIKO_E2E_TOKEN]);
 async function run(args: string[], input?: string) {
