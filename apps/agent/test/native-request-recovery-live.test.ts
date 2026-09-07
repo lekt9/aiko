@@ -3,6 +3,26 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { browserDriverFactory } from "../src/browser-driver.ts";
 const chrome=process.env.AIKO_NATIVE_SESSION_CHROME;
 const domain=process.env.AIKO_NATIVE_LOGIN_TEST_DOMAIN;
+(chrome&&domain?test:test.skip)("pending sign-in reopens its form after the browser driver restarts",async()=>{
+ if(domain!=="unlock-login-canary.lewis-6d8.workers.dev")throw Error("Use only the synthetic public canary");
+ const directory=await mkdtemp("/tmp/unlock-pending-login-");
+ const open=()=>browserDriverFactory(chrome!,{persistentDirectory:directory})({owner:"pending_login_fixture",domains:["*"],emit:async()=>{}});
+ let driver=await open();
+ const input={connectionId:crypto.randomUUID(),domain:domain!,action:"form" as const};
+ try {
+  const first=await driver.nativeAuth!(input);
+  expect(first.status).toBe("pending");
+  await driver.close();driver=await open();
+  let reopened=await driver.nativeAuth!(input);
+  for(let attempt=0;attempt<20&&!reopened.fields?.includes("password");attempt++){
+   await Bun.sleep(100);reopened=await driver.nativeAuth!(input);
+  }
+  expect(reopened.status).toBe("pending");
+  expect(reopened.revision).toBe(first.revision+1);
+  expect(reopened.fields).toEqual(["username","password"]);
+  expect(reopened.credentialsSaved).not.toBe(true);
+ } finally {await driver.close();await rm(directory,{recursive:true,force:true});}
+},90000);
 (chrome&&domain?test:test.skip)("real native browser reopens saved session for a request after driver restart",async()=>{
  if(domain!=="unlock-login-canary.lewis-6d8.workers.dev")throw Error("Use only the synthetic public canary");
  const directory=await mkdtemp("/tmp/unlock-cold-request-");
