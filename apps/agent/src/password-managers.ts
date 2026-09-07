@@ -254,6 +254,8 @@ export class FilePasswordManagerHost implements ManagerHost {
       key?: string;
       vault?: { address?: string; namespace?: string };
       onePasswordConnectUrl?: string;
+      /** Runtime-provided resolvers that win over the defaults for their kind (used where the SDK cannot run). */
+      sandboxResolvers?: Partial<ManagerResolvers>;
       resolvers?: ManagerResolvers;
     },
   ) {
@@ -272,14 +274,15 @@ export class FilePasswordManagerHost implements ManagerHost {
     return key;
   }
   private resolvers() {
-    return (
-      this.options.resolvers ??
-      defaultResolvers(
+    return {
+      ...defaultResolvers(
         this.options.vault?.address,
         this.options.vault?.namespace,
         this.options.onePasswordConnectUrl,
-      )
-    );
+      ),
+      ...this.options.sandboxResolvers,
+      ...this.options.resolvers,
+    };
   }
   private async load(id: string): Promise<ManagerRecord> {
     if (!/^[a-f0-9-]{36}$/.test(id))

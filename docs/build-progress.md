@@ -106,3 +106,26 @@ Initial architecture: synthetic in-memory web demo and its original SDK. The lat
 - New test: Connect resolver round trip against a stubbed server (vault/item
   lookups, field extraction, fail-closed on unknown vault and without operator
   configuration).
+
+### Tenant 1Password fills resolve on the owner's VM · same day
+
+- The `onepassword` kind is the tenant model (each account connects its own
+  1Password service account token); its SDK core is a 14 MB Rust/WASM binary
+  that cannot run in workerd, so production fills failed closed. Fills now
+  resolve on the owner's own Codegraff VM through the existing encrypted
+  private seam: a scoped `manager-resolve` replay operation runs the SDK in
+  the VM's Bun runtime and returns the secret only to the resolve call. The
+  token travels only inside that per-operation envelope (never journaled) and
+  stays sealed at rest in the DO.
+- The runner build embeds the wasm core (base64 build define) and satisfies
+  the glue's `fs.readFileSync` through the CJS module object, keeping the
+  upstream SDK unpatched; the bundle stays a single file (~20 MB, within the
+  asset limit) and local dev still reads node_modules directly.
+- `FilePasswordManagerHost` gained `sandboxResolvers` (partial, per-kind
+  overrides that win over defaults); the Worker wires `onepassword` to the
+  VM, the local Bun composition keeps the direct SDK. Fail-closed behaviour
+  is unchanged when no VM is available.
+- New tests: the sandbox override fills end-to-end through the engine, and a
+  subprocess test runs the actual embedded bundle and confirms the Rust core
+  initializes and validates a token (proving the wasm bridge survives the
+  embed).

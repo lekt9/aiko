@@ -198,7 +198,11 @@ export class CodegraffSandbox {
       return String(current.state ?? current.status).toLowerCase();
     };
     let state = await readState();
-    for (let poll = 0; /^(stopping|starting|archiving|restoring)$/.test(state); poll++) {
+    for (
+      let poll = 0;
+      /^(stopping|starting|archiving|restoring)$/.test(state);
+      poll++
+    ) {
       if (poll >= 60) throw new Error("sandbox_transition_timeout");
       await delay(1000, undefined, { signal: startupSignal });
       state = await readState();
@@ -209,18 +213,29 @@ export class CodegraffSandbox {
           await gateway.request(`${prefix}/start`, {}, startupSignal);
           break;
         } catch (error) {
-          if (attempt >= 2 || !(error instanceof Error) || !/^codegraff_http_50[234]$/.test(error.message)) throw error;
+          if (
+            attempt >= 2 ||
+            !(error instanceof Error) ||
+            !/^codegraff_http_50[234]$/.test(error.message)
+          )
+            throw error;
           // A failed response can hide a successful start. Reconcile before retrying.
           state = await readState();
           if (/^(started|running|starting)$/.test(state)) break;
           if (!/^(stopped|archived)$/.test(state)) throw error;
-          await delay(1000 * (attempt + 1), undefined, { signal: startupSignal });
+          await delay(1000 * (attempt + 1), undefined, {
+            signal: startupSignal,
+          });
         }
       }
       for (let poll = 0; ; poll++) {
         state = await readState();
         if (/^(started|running)$/.test(state)) break;
-        if (poll >= 60 || !/^(stopped|archived|starting|restoring)$/.test(state)) throw new Error("sandbox_start_unconfirmed");
+        if (
+          poll >= 60 ||
+          !/^(stopped|archived|starting|restoring)$/.test(state)
+        )
+          throw new Error("sandbox_start_unconfirmed");
         await delay(1000, undefined, { signal: startupSignal });
       }
     }
@@ -345,7 +360,12 @@ export class CodegraffSandbox {
     } catch (error) {
       if (signal?.aborted)
         await this.options.gateway
-          .request(`${prefix}/${execId}`, undefined, AbortSignal.timeout(5000), "DELETE")
+          .request(
+            `${prefix}/${execId}`,
+            undefined,
+            AbortSignal.timeout(5000),
+            "DELETE",
+          )
           .catch(() => undefined);
       throw error;
     }
@@ -830,16 +850,37 @@ export class CodegraffSandbox {
       this.activeOperations--;
     }
   }
-  async codeSegment(input: import("./code-sandbox-protocol.ts").CodeSegment, signal: AbortSignal): Promise<import("./code-sandbox-protocol.ts").CodeSegmentResult> {
+  async codeSegment(
+    input: import("./code-sandbox-protocol.ts").CodeSegment,
+    signal: AbortSignal,
+  ): Promise<import("./code-sandbox-protocol.ts").CodeSegmentResult> {
     const id = await this.ensure(signal);
     return this.invokePrivate(id, { operation: "code", input }, signal);
+  }
+  /** Resolve a tenant password-manager reference on this owner's own VM; only the encrypted private envelope carries the token. */
+  async managerResolve(
+    input: { token: string; reference: string },
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const id = await this.ensure(signal);
+    const value = await this.invokePrivate(
+      id,
+      { operation: "manager-resolve", input },
+      signal,
+    );
+    if (typeof value !== "string" || !value)
+      throw new Error("Transient browser replay unavailable");
+    return value;
   }
   browserFactory(): BrowserDriverFactory {
     return async ({ emit, signal, owner }) => {
       if (owner && owner !== this.options.owner)
         throw new Error("Browser request-memory owner mismatch");
       const id = await this.ensure(signal);
-      const invoke = (request: Record<string, unknown>, callSignal?: AbortSignal) => this.invokePrivate(id, request, callSignal ?? signal);
+      const invoke = (
+        request: Record<string, unknown>,
+        callSignal?: AbortSignal,
+      ) => this.invokePrivate(id, request, callSignal ?? signal);
       return {
         sessionContext: async () => {
           const result = runnerReply(
@@ -858,7 +899,8 @@ export class CodegraffSandbox {
             throw new Error("Private browser context unavailable");
           return context;
         },
-        nativeAuth: (input, signal) => invoke({ operation: "native-auth", input }, signal),
+        nativeAuth: (input, signal) =>
+          invoke({ operation: "native-auth", input }, signal),
         installSession: (input, signal) =>
           invoke({ operation: "session-install", input }, signal),
         clearSession: async (scope, signal) => {
@@ -892,8 +934,14 @@ export class CodegraffSandbox {
             );
             const result = JSON.parse(raw.trim());
             await this.flushBrowserEvents(id, result, emit, signal);
-            if (result.status === "failed" && result.reason === "element_not_found")
-              throw new AgentBrowserClientError("element_not_found", "The browser element was not found; refresh the snapshot before another read");
+            if (
+              result.status === "failed" &&
+              result.reason === "element_not_found"
+            )
+              throw new AgentBrowserClientError(
+                "element_not_found",
+                "The browser element was not found; refresh the snapshot before another read",
+              );
             if (result.status !== "completed")
               throw new Error("sandbox_browser_outcome_unknown");
             return result.output;
@@ -903,15 +951,25 @@ export class CodegraffSandbox {
                 // The caller is cancelled; cleanup needs its own bounded signal and
                 // must wait for the remote action plus its failed evidence to settle.
                 const cleanupSignal = AbortSignal.timeout(35_000);
-                const cancelled = runnerReply(await this.exec(
+                const cancelled = runnerReply(
+                  await this.exec(
+                    id,
+                    `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js cancel ${operation}`,
+                    cleanupSignal,
+                  ),
+                );
+                if (cancelled.settled !== true)
+                  throw new Error("sandbox_browser_cancellation_unconfirmed");
+                await this.flushBrowserEvents(
                   id,
-                  `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js cancel ${operation}`,
+                  cancelled,
+                  emit,
                   cleanupSignal,
-                ));
-                if (cancelled.settled !== true) throw new Error("sandbox_browser_cancellation_unconfirmed");
-                await this.flushBrowserEvents(id, cancelled, emit, cleanupSignal);
+                );
               }
-            } finally { this.activeOperations--; }
+            } finally {
+              this.activeOperations--;
+            }
           }
         },
       };
@@ -1161,19 +1219,65 @@ export class PrivateOperationFence {
 /** WebCrypto keeps the private transport interoperable between workerd and Bun. */
 export async function wrapReplayPortable(value: unknown, publicKey: string) {
   const text = JSON.stringify(value);
-  if (Buffer.byteLength(text) > 1_100_000) throw Error("Private replay request too large");
+  if (Buffer.byteLength(text) > 1_100_000)
+    throw Error("Private replay request too large");
   const key = crypto.getRandomValues(new Uint8Array(32));
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const publicBytes = Uint8Array.from(Buffer.from(publicKey.replace(/-----[^-]+-----|\s/g, ""), "base64"));
-  const rsa = await crypto.subtle.importKey("spki", publicBytes, {name:"RSA-OAEP",hash:"SHA-256"}, false, ["encrypt"]);
-  const aes = await crypto.subtle.importKey("raw", key, "AES-GCM", false, ["encrypt"]);
-  const encrypted = new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv}, aes, new TextEncoder().encode(text)));
-  return {key, envelope:{key:Buffer.from(await crypto.subtle.encrypt("RSA-OAEP",rsa,key)).toString("base64"),iv:Buffer.from(iv).toString("base64"),data:Buffer.from(encrypted.subarray(0,-16)).toString("base64"),tag:Buffer.from(encrypted.subarray(-16)).toString("base64")}};
+  const publicBytes = Uint8Array.from(
+    Buffer.from(publicKey.replace(/-----[^-]+-----|\s/g, ""), "base64"),
+  );
+  const rsa = await crypto.subtle.importKey(
+    "spki",
+    publicBytes,
+    { name: "RSA-OAEP", hash: "SHA-256" },
+    false,
+    ["encrypt"],
+  );
+  const aes = await crypto.subtle.importKey("raw", key, "AES-GCM", false, [
+    "encrypt",
+  ]);
+  const encrypted = new Uint8Array(
+    await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      aes,
+      new TextEncoder().encode(text),
+    ),
+  );
+  return {
+    key,
+    envelope: {
+      key: Buffer.from(
+        await crypto.subtle.encrypt("RSA-OAEP", rsa, key),
+      ).toString("base64"),
+      iv: Buffer.from(iv).toString("base64"),
+      data: Buffer.from(encrypted.subarray(0, -16)).toString("base64"),
+      tag: Buffer.from(encrypted.subarray(-16)).toString("base64"),
+    },
+  };
 }
-export async function openReplayPortable(value: ReturnType<typeof sealReplay>, key: Uint8Array) {
-  if (!value || typeof value.data !== "string" || value.data.length > 3_000_000) throw Error("Invalid private replay envelope");
-  const aes = await crypto.subtle.importKey("raw", Uint8Array.from(key), "AES-GCM", false, ["decrypt"]);
-  const iv=Uint8Array.from(Buffer.from(value.iv,"base64"));
-  const bytes=Uint8Array.from(Buffer.concat([Buffer.from(value.data,"base64"),Buffer.from(value.tag,"base64")]));
-  return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM",iv},aes,bytes)));
+export async function openReplayPortable(
+  value: ReturnType<typeof sealReplay>,
+  key: Uint8Array,
+) {
+  if (!value || typeof value.data !== "string" || value.data.length > 3_000_000)
+    throw Error("Invalid private replay envelope");
+  const aes = await crypto.subtle.importKey(
+    "raw",
+    Uint8Array.from(key),
+    "AES-GCM",
+    false,
+    ["decrypt"],
+  );
+  const iv = Uint8Array.from(Buffer.from(value.iv, "base64"));
+  const bytes = Uint8Array.from(
+    Buffer.concat([
+      Buffer.from(value.data, "base64"),
+      Buffer.from(value.tag, "base64"),
+    ]),
+  );
+  return JSON.parse(
+    new TextDecoder().decode(
+      await crypto.subtle.decrypt({ name: "AES-GCM", iv }, aes, bytes),
+    ),
+  );
 }

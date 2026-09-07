@@ -10,6 +10,7 @@ import {
 } from "./codegraff.ts";
 import { BrowserEventQueue } from "./browser-event-queue.ts";
 import { runCodeSegment } from "./code-sandbox-runner.ts";
+import { resolveOnePassword } from "./onepassword-core.ts";
 import {
   agentBrowserAgentActionOf,
   AgentBrowserClientError,
@@ -58,7 +59,9 @@ if (mode === "install") {
   );
   const replayIdentity = replayKeys();
   const privateOperations = new PrivateOperationFence();
-  const runnerDigest = createHash("sha256").update(await readFile(`${root}/runner.js`)).digest("hex");
+  const runnerDigest = createHash("sha256")
+    .update(await readFile(`${root}/runner.js`))
+    .digest("hex");
   let closing = false;
   let busy = false;
   const active = new Map<string, AbortController>();
@@ -109,13 +112,26 @@ if (mode === "install") {
         if (typeof input?.id !== "string" || !/^[a-f0-9-]{36}$/.test(input.id))
           return new Response("Invalid operation", { status: 400 });
         // Fence a cancellation that arrives before the execution request itself.
-        db.query("INSERT OR IGNORE INTO operations(id,status,result) VALUES(?,'unknown',?)")
-          .run(input.id, JSON.stringify({status: "unknown", reason: "cancelled_before_start"}));
+        db.query(
+          "INSERT OR IGNORE INTO operations(id,status,result) VALUES(?,'unknown',?)",
+        ).run(
+          input.id,
+          JSON.stringify({
+            status: "unknown",
+            reason: "cancelled_before_start",
+          }),
+        );
         active.get(input.id)?.abort();
         const deadline = performance.now() + 30_000;
-        while (active.has(input.id) && performance.now() < deadline) await Bun.sleep(25);
-        if (active.has(input.id)) return new Response("Cancellation unsettled", {status: 409});
-        return Response.json({ cancellationRequested: true, settled: true, ...batch() });
+        while (active.has(input.id) && performance.now() < deadline)
+          await Bun.sleep(25);
+        if (active.has(input.id))
+          return new Response("Cancellation unsettled", { status: 409 });
+        return Response.json({
+          cancellationRequested: true,
+          settled: true,
+          ...batch(),
+        });
       }
       if (url.pathname === "/capture" && request.method === "POST") {
         if (busy || !driver.screenshot)
@@ -154,8 +170,12 @@ if (mode === "install") {
             replayIdentity.privateKey,
           );
           privateOperations.consume(value.id);
-          if (value.operation !== "code") {
-            if (busy || !driver.requestTransport) return new Response("Unavailable", { status: 409 });
+          if (
+            value.operation !== "code" &&
+            value.operation !== "manager-resolve"
+          ) {
+            if (busy || !driver.requestTransport)
+              return new Response("Unavailable", { status: 409 });
             busy = true;
             ownsBrowser = true;
           }
@@ -166,31 +186,44 @@ if (mode === "install") {
             const output =
               value.operation === "code"
                 ? await runCodeSegment(value.input, cancellation.signal)
-                : value.operation === "native-auth" && driver.nativeAuth
-                ? await driver.nativeAuth(value.input, cancellation.signal)
-                : value.operation === "session-install" && driver.installSession
-                ? await driver.installSession(value.input, cancellation.signal)
-                : value.operation === "session-clear" && driver.clearSession
-                  ? await driver
-                      .clearSession(value.scope, cancellation.signal)
-                      .then(() => ({ cleared: true }))
-                  : value.operation === "search" && driver.requestSearch
-                    ? await driver.requestSearch(
-                        value.query,
-                        value.limit,
-                        cancellation.signal,
-                      )
-                    : value.operation === "hydrate" && driver.requestRehydrate
-                      ? await driver.requestRehydrate(
-                          value.pointerId,
-                          value.inputs,
+                : value.operation === "manager-resolve"
+                  ? await resolveOnePassword(
+                      (value.input as { token?: unknown })?.token,
+                      (value.input as { reference?: unknown })?.reference,
+                    )
+                  : value.operation === "native-auth" && driver.nativeAuth
+                    ? await driver.nativeAuth(value.input, cancellation.signal)
+                    : value.operation === "session-install" &&
+                        driver.installSession
+                      ? await driver.installSession(
+                          value.input,
                           cancellation.signal,
                         )
-                      : value.operation === "send"
-                        ? await driver.requestTransport!.send(value.request)
-                        : (() => {
-                            throw new Error("Unknown replay operation");
-                          })();
+                      : value.operation === "session-clear" &&
+                          driver.clearSession
+                        ? await driver
+                            .clearSession(value.scope, cancellation.signal)
+                            .then(() => ({ cleared: true }))
+                        : value.operation === "search" && driver.requestSearch
+                          ? await driver.requestSearch(
+                              value.query,
+                              value.limit,
+                              cancellation.signal,
+                            )
+                          : value.operation === "hydrate" &&
+                              driver.requestRehydrate
+                            ? await driver.requestRehydrate(
+                                value.pointerId,
+                                value.inputs,
+                                cancellation.signal,
+                              )
+                            : value.operation === "send"
+                              ? await driver.requestTransport!.send(
+                                  value.request,
+                                )
+                              : (() => {
+                                  throw new Error("Unknown replay operation");
+                                })();
             return Response.json(sealReplay({ output }, key));
           } catch {
             return Response.json(
@@ -214,12 +247,19 @@ if (mode === "install") {
           cleaned = true;
           return Response.json({ closed: true });
         } catch {
-          return Response.json({ closed: false, reason: "cleanup_failed" }, { status: 500 });
+          return Response.json(
+            { closed: false, reason: "cleanup_failed" },
+            { status: 500 },
+          );
         } finally {
           // A failed flush must not strand a resident process permanently in closing.
           setTimeout(() => {
-            try { server.stop(true); db.close(); }
-            finally { process.exit(cleaned ? 0 : 1); }
+            try {
+              server.stop(true);
+              db.close();
+            } finally {
+              process.exit(cleaned ? 0 : 1);
+            }
           }, 200);
         }
       }
@@ -246,8 +286,11 @@ if (mode === "install") {
       // The control plane already decoded the tool into the closed action union.
       // Wait variants share action:"wait" and are not model function names.
       let action;
-      try { action = agentBrowserAgentActionOf(body.action, ["*"]); }
-      catch { return new Response("Invalid action", { status: 400 }); }
+      try {
+        action = agentBrowserAgentActionOf(body.action, ["*"]);
+      } catch {
+        return new Response("Invalid action", { status: 400 });
+      }
       busy = true;
       const cancellation = new AbortController();
       active.set(body.id, cancellation);
@@ -264,13 +307,17 @@ if (mode === "install") {
       } catch (error) {
         // Only the client's settled, telemetry-corroborated failed read is
         // recoverable. The driver has flushed its evidence before throwing.
-        const outcome = error instanceof AgentBrowserClientError && error.code === "element_not_found"
-          ? { status: "failed", reason: "element_not_found" }
-          : { status: "unknown" };
+        const outcome =
+          error instanceof AgentBrowserClientError &&
+          error.code === "element_not_found"
+            ? { status: "failed", reason: "element_not_found" }
+            : { status: "unknown" };
         const result = JSON.stringify(outcome);
-        db.query(
-          "UPDATE operations SET status=?,result=? WHERE id=?",
-        ).run(outcome.status, result, body.id);
+        db.query("UPDATE operations SET status=?,result=? WHERE id=?").run(
+          outcome.status,
+          result,
+          body.id,
+        );
         return Response.json({ ...outcome, ...batch() });
       } finally {
         busy = false;
@@ -298,8 +345,13 @@ if (mode === "install") {
     }
   }
   if (!ready) throw new Error("Browser runner did not start");
-  const health = await (await fetch(`${endpoint}/health`)).json() as { ready?: boolean; runnerDigest?: string };
-  const expected = createHash("sha256").update(await readFile(`${root}/runner.js`)).digest("hex");
+  const health = (await (await fetch(`${endpoint}/health`)).json()) as {
+    ready?: boolean;
+    runnerDigest?: string;
+  };
+  const expected = createHash("sha256")
+    .update(await readFile(`${root}/runner.js`))
+    .digest("hex");
   if (health.ready !== true || health.runnerDigest !== expected)
     throw new Error("Browser runner bundle mismatch");
   console.log(JSON.stringify(health));
@@ -312,9 +364,17 @@ if (mode === "install") {
   const deadline = performance.now() + 10_000;
   while (!stopped && performance.now() < deadline) {
     await Bun.sleep(100);
-    stopped = await fetch(`${endpoint}/health`, { signal: AbortSignal.timeout(1000) })
-      .then(async r => { await r.body?.cancel(); return false; })
-      .catch(error => error?.code === "ConnectionRefused" || error?.code === "ECONNREFUSED");
+    stopped = await fetch(`${endpoint}/health`, {
+      signal: AbortSignal.timeout(1000),
+    })
+      .then(async (r) => {
+        await r.body?.cancel();
+        return false;
+      })
+      .catch(
+        (error) =>
+          error?.code === "ConnectionRefused" || error?.code === "ECONNREFUSED",
+      );
   }
   if (!stopped) throw new Error("Browser runner did not stop");
   console.log(result);

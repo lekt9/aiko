@@ -11,6 +11,7 @@ import { turnEpochOf, turnTerminalOf } from "tardie/code/execution/turns";
 import { validateActor } from "tardie/core/actor";
 import { withRequiredResponse } from "./channel-response.ts";
 import { nativeBrowserConnector } from "./native-browser-connector.ts";
+import { browserOperation } from "./connectors-browser.ts";
 import {
   acceptSecretary,
   createSecretaryActor,
@@ -530,6 +531,17 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
             key: config.managerKey,
             vault: config.hashicorpVault,
             onePasswordConnectUrl: config.onePasswordConnectUrl,
+            sandboxResolvers: capabilities
+              ? {
+                  onepassword: (token: string, reference: string) =>
+                    browserOperation((signal) =>
+                      capabilities.sandbox.managerResolve(
+                        { token, reference },
+                        signal,
+                      ),
+                    ),
+                }
+              : undefined,
           })
         : undefined,
       onEvent: async (e) => {

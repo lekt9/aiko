@@ -576,3 +576,78 @@ test("onepassword-connect resolves references through the Connect REST API", asy
     globalThis.fetch = originalFetch;
   }
 });
+
+test("a sandbox resolver overrides only its kind, like the deployed VM path", async () => {
+  const store = new Store();
+  const submitted: { username?: string; password?: string }[] = [];
+  let sandboxCalls = 0;
+  const host = new FilePasswordManagerHost({
+    store,
+    owner: alice,
+    key: KEY,
+    sandboxResolvers: {
+      onepassword: async (token: string, reference: string) => {
+        sandboxCalls++;
+        expect(token).toBe("synthetic-op-service-token");
+        return "SANDBOX-RESOLVED-PASSWORD";
+      },
+    },
+  });
+  const manager = await host.add(onePasswordAdd);
+  const engine = engineWith({
+    store,
+    browser: fakeBrowser(submitted),
+    managers: host,
+  });
+  await engine.importLogins([
+    { name: "GitHub", website: "https://github.com", username: "octocat" },
+  ]);
+  const connection = (await engine.connections()).find(
+    (c) => c.connectorId === "browser:github.com",
+  )!;
+  const result = await engine.fillFromManager({
+    connectionId: connection.id,
+    managerId: manager.id,
+    reference: "op://Vault/GitHub/password",
+  });
+  expect(sandboxCalls).toBe(1);
+  expect(submitted[0]?.password).toBe("SANDBOX-RESOLVED-PASSWORD");
+  expect(result.status).toBe("connected");
+});
+
+test("the embedded wasm build initializes the 1Password core end to end", async () => {
+  const wasm = await Bun.file(
+    "node_modules/@1password/sdk-core/nodejs/core_bg.wasm",
+  ).arrayBuffer();
+  const b64 = Buffer.from(wasm).toString("base64");
+  const entry = `${import.meta.dir}/fixture-op-entry.mjs`;
+  await Bun.write(
+    entry,
+    `import { resolveOnePassword } from ${JSON.stringify(
+      new URL("../src/onepassword-core.ts", import.meta.url).pathname,
+    )};
+try {
+  await resolveOnePassword("ops_definitely_not_a_real_token", "op://Vault/Item/password");
+  console.log("UNEXPECTED-RESOLVE");
+} catch (error) {
+  console.log("CORE-ERROR:", String(error.message).slice(0, 60));
+}`,
+  );
+  const build = await Bun.build({
+    entrypoints: [entry],
+    target: "bun",
+    minify: false,
+    define: { OP_WASM_B64: JSON.stringify(b64) },
+  });
+  expect(build.success).toBe(true);
+  const artifact = `${import.meta.dir}/fixture-op-bundle.mjs`;
+  await Bun.write(artifact, build.outputs[0]!);
+  const proc = Bun.spawnSync(["bun", artifact], { cwd: import.meta.dir });
+  const out = proc.stdout.toString();
+  expect(out).not.toContain("UNEXPECTED-RESOLVE");
+  // The Rust core parsed the token shape: the wasm bridge works in the embedded build.
+  expect(out).toContain("CORE-ERROR:");
+  expect(out.toLowerCase()).toContain("service account token");
+  await rm(entry, { force: true });
+  await rm(artifact, { force: true });
+});
