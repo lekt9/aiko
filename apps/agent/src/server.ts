@@ -198,6 +198,7 @@ export async function createService(
               owner,
               key: config.managerKey,
               vault: config.hashicorpVault,
+              onePasswordConnectUrl: config.onePasswordConnectUrl,
               resolvers: overrides.managerResolvers,
             })
           : undefined,

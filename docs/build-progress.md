@@ -89,3 +89,20 @@ Initial architecture: synthetic in-memory web demo and its original SDK. The lat
   with the canary account: add → sealed listing → foreign-reference fill
   refusal → removal, asserting the provider token never appears in a response.
 - Tagged `aiko-20260907`; branch `native-aiko-20260906` pushed.
+
+### 1Password Connect kind · same day
+
+- Added the `onepassword-connect` manager kind: fills resolve through the
+  operator's self-hosted 1Password Connect server REST API (pure `fetch`, runs
+  in the Worker), looking up vault by name or UUID, item by title or UUID and
+  the field by label. The Connect base URL is operator configuration
+  (`AIKO_ONEPASSWORD_CONNECT_URL`, origin-only HTTPS) and joins the deployment
+  secrets when configured.
+- Installed the missing `@1password/sdk-core` (the `onepassword` SDK's 14 MB
+  Rust/WASM core): service-account fills now work on Bun-capable hosts locally;
+  the Worker keeps failing closed for that kind and resolves 1Password through
+  Connect instead. The computed-specifier import keeps the WASM out of the
+  workerd bundle.
+- New test: Connect resolver round trip against a stubbed server (vault/item
+  lookups, field extraction, fail-closed on unknown vault and without operator
+  configuration).

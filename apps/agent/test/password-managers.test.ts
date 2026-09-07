@@ -8,6 +8,7 @@ import {
   type SecureBrowserAdapter,
 } from "../src/connectors.ts";
 import {
+  defaultResolvers,
   FilePasswordManagerHost,
   parseManagerAdd,
   openManagerToken,
@@ -111,6 +112,15 @@ test("manager reference validation matches each provider's syntax", () => {
   ).toBe(true);
   expect(validReference("onepassword", "op://Vault/Item")).toBe(false);
   expect(
+    validReference("onepassword-connect", "op://Vault/Item/password"),
+  ).toBe(true);
+  expect(
+    validReference("onepassword-connect", "op://Vault/Item/Section/password"),
+  ).toBe(true);
+  expect(validReference("onepassword-connect", "doppler://API_KEY")).toBe(
+    false,
+  );
+  expect(
     validReference("keeper", "keeper://abcdefghijklmnopqrstuv/field/password"),
   ).toBe(true);
   expect(validReference("keeper", "keeper://short/field/password")).toBe(false);
@@ -130,6 +140,9 @@ test("manager reference validation matches each provider's syntax", () => {
   expect(() =>
     parseManagerAdd({ ...onePasswordAdd, kind: "bitwarden" }),
   ).toThrow();
+  expect(
+    parseManagerAdd({ ...onePasswordAdd, kind: "onepassword-connect" }).kind,
+  ).toBe("onepassword-connect");
   expect(() => parseManagerAdd({ ...onePasswordAdd, entries: [] })).toThrow();
   expect(() =>
     parseManagerAdd({
@@ -484,4 +497,82 @@ test("password manager routes authenticate and round-trip through the connector 
   expect(((await fill.json()) as { status: string }).status).toBe("connected");
   expect(submitted[0]?.password).toBe("SYNTHETIC-RESOLVED-PASSWORD");
   expect(JSON.stringify(submitted)).not.toContain("synthetic-op-service-token");
+});
+
+test("onepassword-connect resolves references through the Connect REST API", async () => {
+  const calls: string[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    calls.push(url);
+    expect(new Headers(init?.headers).get("Authorization")).toBe(
+      "Token connect-credentials-token",
+    );
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    if (
+      url.endsWith(`/v1/vaults?filter=${encodeURIComponent('name eq "Vault"')}`)
+    )
+      return json([
+        { id: "11111111-1111-4111-8111-111111111111", name: "Vault" },
+      ]);
+    if (
+      url.includes(
+        "/v1/vaults/11111111-1111-4111-8111-111111111111/items?filter=",
+      )
+    )
+      return json([
+        { id: "22222222-2222-4222-8222-222222222222", title: "GitHub" },
+      ]);
+    if (
+      url.endsWith(
+        "/v1/vaults/11111111-1111-4111-8111-111111111111/items/22222222-2222-4222-8222-222222222222",
+      )
+    )
+      return json({
+        fields: [
+          { label: "username", type: "TEXT", value: "canary" },
+          {
+            label: "password",
+            type: "CONCEALED",
+            value: "SYNTHETIC-CONNECT-PASSWORD",
+          },
+        ],
+      });
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+  try {
+    const resolvers = defaultResolvers(
+      undefined,
+      undefined,
+      "https://connect.aiko-check.net",
+    );
+    const value = await resolvers["onepassword-connect"](
+      "connect-credentials-token",
+      "op://Vault/GitHub/password",
+    );
+    expect(value).toBe("SYNTHETIC-CONNECT-PASSWORD");
+    expect(calls.length).toBe(3);
+    await expect(
+      resolvers["onepassword-connect"](
+        "connect-credentials-token",
+        "op://Missing/Item/password",
+      ),
+    ).rejects.toThrow("Could not reach onepassword-connect");
+    // Without operator configuration the kind fails closed without touching the network.
+    await expect(
+      defaultResolvers()["onepassword-connect"](
+        "connect-credentials-token",
+        "op://Vault/GitHub/password",
+      ),
+    ).rejects.toThrow("Could not reach onepassword-connect");
+    // The missing vault performed one lookup before failing closed; the
+    // offline check (no operator URL) touched the network zero times.
+    expect(calls.length).toBe(4);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

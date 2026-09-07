@@ -65,6 +65,9 @@ const secrets = {
           : {}),
       }
     : {}),
+  ...(config.onePasswordConnectUrl
+    ? { AIKO_ONEPASSWORD_CONNECT_URL: config.onePasswordConnectUrl }
+    : {}),
   ...(config.voiceKey ? { AIKO_VOICE_KEY: config.voiceKey } : {}),
 };
 const redact = redactor([...Object.values(secrets), state.AIKO_E2E_TOKEN]);

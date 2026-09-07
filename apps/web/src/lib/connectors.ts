@@ -27,7 +27,11 @@ export type ConnectorConnection = {
 export type ConnectorConnect = ConnectorConnection;
 
 export type ManagerKind =
-  "onepassword" | "keeper" | "hashicorp-vault" | "doppler";
+  | "onepassword"
+  | "onepassword-connect"
+  | "keeper"
+  | "hashicorp-vault"
+  | "doppler";
 export type ManagerEntry = {
   reference: string;
   label: string;
@@ -42,6 +46,7 @@ export type PasswordManager = {
 };
 export const managerKindLabels: Record<ManagerKind, string> = {
   onepassword: "1Password",
+  "onepassword-connect": "1Password Connect",
   keeper: "Keeper",
   "hashicorp-vault": "HashiCorp Vault",
   doppler: "Doppler",
@@ -49,6 +54,8 @@ export const managerKindLabels: Record<ManagerKind, string> = {
 export const managerKindHints: Record<ManagerKind, string> = {
   onepassword:
     "Service account token · references like op://Vault/Item/password",
+  "onepassword-connect":
+    "Connect credentials token · fills resolve through the operator's Connect server",
   keeper:
     "One-line config · references like keeper://RECORD_UID/field/password",
   "hashicorp-vault":

@@ -18,11 +18,13 @@ resolve the saved reference server-side and submit it into the owner's private
 sign-in session; the password never reaches the Mini App, chat, model prompts
 or logs. Provider tokens are sealed at rest under `AIKO_MANAGER_KEY`.
 
-Runtime boundaries: Vault, Doppler and Keeper resolve inside the Worker;
-1Password's SDK requires the local desktop app, so its fills fail closed in the
-Worker until resolution moves to a Bun-capable host. Live provider validation,
-the real Telegram media test-chat, and per-app verified sign-ins remain open
-acceptance gates; none of these onboarding gates is claimed as passed.
+Runtime boundaries: Vault, Doppler, Keeper and 1Password Connect resolve inside
+the Worker; the `onepassword` kind uses the official SDK with a service account
+token, whose 14 MB Rust/WASM core only runs on Bun-capable hosts, so its fills
+fail closed in the Worker (use the `onepassword-connect` kind there). Live
+provider validation, the real Telegram media test-chat, and per-app verified
+sign-ins remain open acceptance gates; none of these onboarding gates is
+claimed as passed.
 
 Historical rollout requirements that shaped the implementation:
 

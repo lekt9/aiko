@@ -11,9 +11,13 @@ import { normalizeAgentBrowserAllowedDomains } from "@unbrowse/browser-harness/c
 import { parsePlaneCredentials, type PlaneCredential } from "./plane-auth.ts";
 import { DEFAULT_MODEL_LIMITS, type ModelLimits } from "./model-budget.ts";
 import { safeUserId } from "./security.ts";
-import { parseManagerKey, parseVaultAddress } from "./password-managers.ts";
+import {
+  parseConnectUrl,
+  parseManagerKey,
+  parseVaultAddress,
+} from "./password-managers.ts";
 
-export { parseManagerKey, parseVaultAddress };
+export { parseManagerKey, parseVaultAddress, parseConnectUrl };
 
 export const PERSONA = "3c36e929-50ac-4971-919f-70e6fc6273b7";
 export type AikoConfig = {
@@ -42,6 +46,8 @@ export type AikoConfig = {
   managerKey?: string;
   /** Operator-level HashiCorp Vault cluster for the hashicorp-vault manager kind. */
   hashicorpVault?: { address: string; namespace?: string };
+  /** Operator-level 1Password Connect server for the onepassword-connect manager kind. */
+  onePasswordConnectUrl?: string;
   voiceKey?: string;
   persona: string;
   voiceEnabled: boolean;
@@ -87,8 +93,6 @@ export async function privateEnv(
   }
   return result;
 }
-
-
 
 export async function loadConfig(
   env: NodeJS.ProcessEnv = process.env,
@@ -341,6 +345,7 @@ export async function loadConfig(
       get("AIKO_HASHICORP_VAULT_ADDRESS"),
       get("AIKO_HASHICORP_VAULT_NAMESPACE"),
     ),
+    onePasswordConnectUrl: parseConnectUrl(get("AIKO_ONEPASSWORD_CONNECT_URL")),
     voiceKey,
     persona: get("THINKFEEL_PERSONA_ID") ?? PERSONA,
     voiceEnabled,

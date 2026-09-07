@@ -23,13 +23,10 @@ export function parseManagerKey(value?: string) {
 }
 
 /** HashiCorp Vault cluster address: origin-only HTTPS, optional namespace. */
-export function parseVaultAddress(address?: string, namespace?: string) {
-  if (!address) {
-    if (namespace)
-      throw new Error("AIKO_HASHICORP_VAULT_NAMESPACE requires an address");
-    return undefined;
-  }
-  const url = new URL(address);
+/** Origin-only HTTPS base URL for operator-hosted infrastructure (no credentials in the URL). */
+function originOnlyHttps(value: string | undefined, envName: string) {
+  if (!value) return undefined;
+  const url = new URL(value);
   if (
     url.protocol !== "https:" ||
     url.username ||
@@ -38,16 +35,30 @@ export function parseVaultAddress(address?: string, namespace?: string) {
     url.hash ||
     (url.pathname && url.pathname !== "/")
   )
-    throw new Error(
-      "AIKO_HASHICORP_VAULT_ADDRESS must be an origin-only HTTPS address",
-    );
+    throw new Error(`${envName} must be an origin-only HTTPS address`);
+  return value.replace(/\/+$/, "");
+}
+
+export function parseVaultAddress(address?: string, namespace?: string) {
+  if (!address) {
+    if (namespace)
+      throw new Error("AIKO_HASHICORP_VAULT_NAMESPACE requires an address");
+    return undefined;
+  }
+  const url = originOnlyHttps(address, "AIKO_HASHICORP_VAULT_ADDRESS");
   if (namespace && (namespace.length > 200 || /\p{C}/u.test(namespace)))
     throw new Error("Invalid AIKO_HASHICORP_VAULT_NAMESPACE");
-  return { address, ...(namespace ? { namespace } : {}) };
+  return { address: url!, ...(namespace ? { namespace } : {}) };
+}
+
+/** 1Password Connect server base URL (operator configuration). */
+export function parseConnectUrl(value?: string) {
+  return originOnlyHttps(value, "AIKO_ONEPASSWORD_CONNECT_URL");
 }
 
 export const managerKinds = [
   "onepassword",
+  "onepassword-connect",
   "keeper",
   "hashicorp-vault",
   "doppler",
@@ -71,6 +82,8 @@ export type SealedToken = { v: 1; iv: string; data: string; tag: string };
 export const MANAGER_KIND_HELP: Record<ManagerKind, string> = {
   onepassword:
     "1Password service account token; references like op://Vault/Item/password",
+  "onepassword-connect":
+    "1Password Connect credentials token; resolves through the operator's Connect server",
   keeper:
     "Keeper Secrets Manager one-line config; references like keeper://RECORD_UID/field/password",
   "hashicorp-vault":
@@ -80,6 +93,7 @@ export const MANAGER_KIND_HELP: Record<ManagerKind, string> = {
 
 const referencePatterns: Record<ManagerKind, RegExp> = {
   onepassword: /^op:\/\/[^/?#]+\/[^/?#]+(?:\/[^/?#]+)?\/[^/?#]+$/,
+  "onepassword-connect": /^op:\/\/[^/?#]+\/[^/?#]+(?:\/[^/?#]+)?\/[^/?#]+$/,
   keeper:
     /^keeper:\/\/[A-Za-z0-9_-]{22}\/(?:field|custom_field)\/[A-Za-z0-9_.-]+$/,
   "hashicorp-vault":
@@ -239,6 +253,7 @@ export class FilePasswordManagerHost implements ManagerHost {
       owner: string;
       key?: string;
       vault?: { address?: string; namespace?: string };
+      onePasswordConnectUrl?: string;
       resolvers?: ManagerResolvers;
     },
   ) {
@@ -262,6 +277,7 @@ export class FilePasswordManagerHost implements ManagerHost {
       defaultResolvers(
         this.options.vault?.address,
         this.options.vault?.namespace,
+        this.options.onePasswordConnectUrl,
       )
     );
   }
@@ -351,6 +367,7 @@ const providerError = (kind: ManagerKind) =>
 export function defaultResolvers(
   vaultAddress?: string,
   vaultNamespace?: string,
+  onePasswordConnectUrl?: string,
 ): ManagerResolvers {
   return {
     async onepassword(token, reference) {
@@ -426,6 +443,67 @@ export function defaultResolvers(
         return value;
       } catch {
         throw providerError("hashicorp-vault");
+      }
+    },
+    async "onepassword-connect"(token, reference) {
+      const match = reference.match(
+        /^op:\/\/([^/?#]+)\/([^/?#]+)(?:\/[^/?#]+)?\/([^/?#]+)$/,
+      );
+      if (!match) throw providerError("onepassword-connect");
+      try {
+        if (!onePasswordConnectUrl) throw new Error();
+        const base = onePasswordConnectUrl.replace(/\/+$/, "");
+        const headers = {
+          Authorization: `Token ${token}`,
+          Accept: "application/json",
+        };
+        const uuid =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const getJson = async <T>(path: string): Promise<T> => {
+          const response = await fetch(base + path, {
+            headers,
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!response.ok) throw new Error();
+          return (await response.json()) as T;
+        };
+        let vaultId = match[1]!;
+        if (!uuid.test(vaultId)) {
+          const filter = encodeURIComponent(
+            `name eq "${vaultId.replace(/"/g, '\\"')}"`,
+          );
+          const vaults = await getJson<Array<{ id?: string; name?: string }>>(
+            `/v1/vaults?filter=${filter}`,
+          );
+          vaultId =
+            vaults.find((v) => v.name?.toLowerCase() === vaultId.toLowerCase())
+              ?.id ?? "";
+          if (!vaultId) throw new Error();
+        }
+        let itemId = match[2]!;
+        if (!uuid.test(itemId)) {
+          const filter = encodeURIComponent(
+            `title eq "${itemId.replace(/"/g, '\\"')}"`,
+          );
+          const items = await getJson<Array<{ id?: string; title?: string }>>(
+            `/v1/vaults/${vaultId}/items?filter=${filter}`,
+          );
+          itemId =
+            items.find((i) => i.title?.toLowerCase() === itemId.toLowerCase())
+              ?.id ?? "";
+          if (!itemId) throw new Error();
+        }
+        const item = await getJson<{
+          fields?: Array<{ label?: string; id?: string; value?: unknown }>;
+        }>(`/v1/vaults/${vaultId}/items/${itemId}`);
+        const field = (item.fields ?? []).find(
+          (f) => f.label === match[3] || f.id === match[3],
+        );
+        const value = field?.value;
+        if (typeof value !== "string" || !value) throw new Error();
+        return value;
+      } catch {
+        throw providerError("onepassword-connect");
       }
     },
     async doppler(token, reference) {
