@@ -1006,6 +1006,16 @@ export function createTelegramTyping(
           epoch: 0,
           messageThreadId: e.telegram?.messageThreadId,
         });
+      // A requested cancellation ends the indicator at once: typing keep-alives
+      // would otherwise churn ahead of the cancellation terminal and starve it.
+      if (e.type === "CancellationRequested") {
+        const cancelled = String(
+          (e as { invocation?: { method?: unknown; id?: unknown } }).invocation?.id ?? "",
+        );
+        const entry = state.get(cancelled);
+        if (entry && !entry.done)
+          state.set(cancelled, { ...entry, done: true });
+      }
       const current = state.get(String(e.turn));
       if (current) {
         if (e.type === "TurnResumed") {
@@ -1032,10 +1042,15 @@ export function createTelegramTyping(
       }
       return state;
     },
-    output: (state) => ({
+    output: (state) => {
+      // Only the foreground head earns a fresh indicator; queued messages wait
+      // silently. Started turns still receive their Stopped cleanup below.
+      const head = [...state].find(([, v]) => !v.done && !v.stopped)?.[0];
+      return {
       view: undefined,
       transitions: [...state].flatMap(([turn, value]) => {
-        if ((value.done && !value.started) || value.stopped) return [];
+        if (value.stopped) return [];
+        if (turn !== head && !value.started) return [];
         const type = value.done
           ? "AikoTelegramTypingStopped"
           : "AikoTelegramTypingStarted";
@@ -1093,7 +1108,8 @@ export function createTelegramTyping(
           }),
         ];
       }),
-    }),
+      };
+    },
   });
   return { component: lifecycle, close };
 }

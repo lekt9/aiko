@@ -770,6 +770,39 @@ test("typing lifecycle closes on failure, cancellation and explicit host shutdow
   }
 });
 
+test("typing stays on the foreground head and a pending cancellation stops it at once", async () => {
+  let started = 0, stopped = 0;
+  const typing = createTelegramTyping("123", {
+    typing: () => { started++; return async () => { stopped++; }; },
+  });
+  cleanup.push(typing.close);
+  const machine = typing.component.machine;
+  let state = machine.step(machine.initial(), incoming());
+  state = machine.step(state, incoming("turn-2"));
+  const first = machine.output(state).transitions;
+  expect(first).toHaveLength(1);
+  expect(String(first[0]!.key)).toContain("turn-1");
+  if (first[0]?.kind !== "effect") throw new Error("expected native effect");
+  const startEvents = await Effect.runPromise(first[0].act(first[0].input, signal()) as Effect.Effect<readonly AikoEvent[]>);
+  for (const e of startEvents) state = machine.step(state, e);
+  state = machine.step(state, {type:"CancellationRequested",invocation:{method:"message",id:"turn-1",epoch:0},request:'cancel:["message","turn-1",0]',cause:"requested",at:0} as unknown as AikoEvent);
+  const stop = machine.output(state).transitions;
+  // The cancelled head receives its Stopped cleanup while the queued turn, now
+  // the head, starts its own indicator.
+  expect(stop).toHaveLength(2);
+  const stopTransition = stop.find((t) => t.kind === "effect" && String(t.key).includes("TypingStopped"));
+  expect(stopTransition).toBeDefined();
+  if (stopTransition?.kind !== "effect") throw new Error("expected native stop");
+  const stopEvents = await Effect.runPromise(stopTransition.act(stopTransition.input, signal()) as Effect.Effect<readonly AikoEvent[]>);
+  for (const e of stopEvents) state = machine.step(state, e);
+  expect(started).toBe(1);
+  expect(stopped).toBe(1);
+  const next = machine.output(state).transitions;
+  expect(next).toHaveLength(1);
+  expect(String(next[0]!.key)).toContain("turn-2");
+  await typing.close();
+});
+
 test("strict-provider null optional arguments do not reject a normal final reply", async () => {
   const f = fixture(true, async text => ({status:"ready",text,persona:"fixture"}));
   expect(await f.run("send_message", {kind:"text",text:"Hello",replyTo:null,buttons:null,caption:null,fileId:null,fileIds:null,final:true})).toMatchObject({status:"delivered",final:true});
