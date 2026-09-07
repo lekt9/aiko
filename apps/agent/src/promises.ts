@@ -519,7 +519,7 @@ export function promiseTools(
       Effect.gen(function* () {
         const self = yield* Self,
           log = yield* EventLog;
-        if (self.actor !== "aiko" || self.thread !== `user-${owner}`)
+        if (self.thread !== `user-${owner}`)
           return { status: "rejected", reason: "owner_scope" };
         let a = raw as Record<string, any>;
         if (
@@ -659,7 +659,7 @@ export function promiseComponent(owner: string, executors: PromiseExecutors) {
           act: () =>
             Effect.gen(function* () {
               const self = yield* Self;
-              if (self.actor !== "aiko" || self.thread !== `user-${owner}`) return [];
+              if (self.thread !== `user-${owner}`) return [];
               const log = yield* EventLog;
               const readCurrent = () =>
                 Effect.gen(function* () {
