@@ -85,6 +85,8 @@ type Speech = {
   delivery?: DeliveryResult;
   chat?: string;
   context?: { replyTo?: number; messageThreadId?: number };
+  /** Technical fallback decisions are tracked but never sent. */
+  silent?: boolean;
 };
 /** Legacy hosts (no model-authored browser answers) deliver bounded receipt
  * summaries; production hosts answer in prose and never dump receipts. */
@@ -114,6 +116,7 @@ type SpeechState = {
   browserAttempts: Map<string, "started" | "uncertain">;
   omittedReceipts: Set<string>;
   nudged: Set<string>;
+  silent?: boolean;
   telegramFinal: Map<string, TelegramReceipt>;
 };
 
@@ -172,6 +175,7 @@ export function voiceAndOutbox(
         browserAttempts: new Map(previous.browserAttempts),
         omittedReceipts: new Set(previous.omittedReceipts),
         nudged: new Set(previous.nudged),
+        silent: previous.silent,
         telegramFinal: new Map(previous.telegramFinal),
       };
       if (e.type === "AikoTelegramActionSettled") {
@@ -258,6 +262,28 @@ export function voiceAndOutbox(
                 policy.redact,
               )
             : undefined;
+        const decision =
+          e.type === "TurnFailed"
+            ? "turn_failed"
+            : e.type === "TurnCancelled"
+              ? "cancelled"
+              : answer !== undefined
+                ? "model_answer"
+                : receipts.length
+                  ? state.browserAttempts.get(String(e.turn)) === "uncertain"
+                    ? "browser_uncertain"
+                    : policy?.browserAnswers
+                      ? "missing_answer"
+                      : "receipt_summary"
+                  : isGreeting(message?.text ?? "")
+                    ? "greeting"
+                    : "no_result";
+        // Production technical fallbacks are never sent; silence beats plumbing
+        // text. Legacy/demo modes keep their human-readable receipt confirmations.
+        const silent =
+          decision === "browser_uncertain" ||
+          decision === "missing_answer" ||
+          (decision === "no_result" && policy?.live === true);
         const input: VoiceInput =
           e.type === "AikoResponseRequested" && e.outcome === "blocked"
             ? {kind:"task",receipt:String(e.output)}
@@ -314,22 +340,6 @@ export function voiceAndOutbox(
                             ? "I couldn’t confirm a usable answer. Please try again. Connected-account actions are not available; no app action was verified."
                             : "No tool-backed result was confirmed. Try sample apps, sample issues, scoped memory, or Access status to inspect available capabilities.",
                       };
-        const decision =
-          e.type === "TurnFailed"
-            ? "turn_failed"
-            : e.type === "TurnCancelled"
-              ? "cancelled"
-              : answer !== undefined
-                ? "model_answer"
-                : receipts.length
-                  ? state.browserAttempts.get(String(e.turn)) === "uncertain"
-                    ? "browser_uncertain"
-                    : policy?.browserAnswers
-                      ? "missing_answer"
-                      : "receipt_summary"
-                  : isGreeting(message?.text ?? "")
-                    ? "greeting"
-                    : "no_result";
         report?.("reply.decided", {
           turn: String(e.turn).slice(0, 60),
           decision,
@@ -340,6 +350,7 @@ export function voiceAndOutbox(
           turn: String(e.turn),
           epoch: Number(e.epoch ?? 0),
           input,
+          silent,
           started: false,
           deliveryStarted: false,
           chat: message?.chat,
@@ -373,6 +384,7 @@ export function voiceAndOutbox(
       view: undefined,
       transitions: [...state.replies.entries()].flatMap(([key, reply]) => {
         const stamp = { turn: reply.turn, epoch: reply.epoch };
+        if (reply.silent) return [];
         if (!reply.prepared)
           return [
             effect({

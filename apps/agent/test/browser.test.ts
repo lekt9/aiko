@@ -403,8 +403,8 @@ describe("native production browser answers", () => {
     expect(clicks).toBe(1);
     expect(closes).toBe(1);
     expect(app.browser.status("123").sessionActive).toBe(false);
-    expect(app.sent.at(-1)).toContain("couldn’t confirm the results");
-    expect(app.sent.at(-1)).not.toContain("Everything succeeded");
+    expect((app.sent.at(-1) ?? "").includes("couldn’t confirm the results")).toBe(false);
+    expect(app.sent.at(-1) ?? "").not.toContain("Everything succeeded");
   });
 });
 
@@ -582,16 +582,9 @@ describe("Aiko native browser integration", () => {
     });
     await app.service.host.drive();
     const log = (await app.service.host.read("user-local")) as AikoEvent[];
-    const reply = String(
-      (
-        log.find((e) => e.type === "AikoReplyPrepared")?.result as {
-          text?: string;
-        }
-      )?.text,
-    );
-    expect(reply).toContain("couldn’t confirm the results");
-    expect(reply).not.toContain("some results are omitted");
-    expect(reply.length).toBeLessThan(4_000);
+    // Technical fallbacks are tracked but never sent: no prepared reply, no delivery.
+    expect(log.find((e) => e.type === "AikoReplyPrepared")).toBeUndefined();
+    expect(log.some((e) => e.type === "AikoDeliverySettled")).toBe(false);
   });
 
   test("exact interaction approval precedes execution; restored interrupted native attempts never replay", async () => {
