@@ -1,15 +1,27 @@
 /** Private browser control. Only the authenticated owner API can call this, never an actor tool. */
 import { publicTarget } from "./browser-proxy.ts";
 export type NativeLoginInput = { connectionId: string; domain: string; action: "login" | "renew" | "begin" | "status" | "form" | "credentials" | "view" | "click" | "type" | "key" | "scroll" | "finish" | "disconnect" | "navigate" | "allow_origin"; url?: string; credentialReference?: { managerId: string; reference: string }; username?: string; password?: string; code?: string; x?: number; y?: number; text?: string; key?: string; delta?: number };
-export type NativeLoginState = { connectionId: string; domain: string; targetId?: string; preserveTargetIds?: string[]; approvedOrigins?: string[]; status: "pending" | "connected" | "disconnected"; expiresAt: number; revision: number; credentialsSaved?: boolean; verifiedSession?: { expiresAt: number; revision: number; credentialsSaved?: boolean } };
+export type NativeLoginState = { connectionId: string; domain: string; targetId?: string; preserveTargetIds?: string[]; approvedOrigins?: string[]; status: "pending" | "connected" | "disconnected"; expiresAt: number; revision: number; credentialsSaved?: boolean; expired?: boolean; verifiedSession?: { expiresAt: number; revision: number; credentialsSaved?: boolean } };
 export type NativeLoginView = { status: NativeLoginState["status"]; domain: string; currentHost?: string; requiresOrigin?: string; fields?: string[]; screenshot?: string; width?: number; height?: number; expiresAt: number; revision: number; credentialsSaved?: boolean };
 export type PrivateCdp = {send(method:string,params:object,sessionId?:string):Promise<any>;close():void};
 /** Expired private pages must be cleaned, not merely ignored: they still hold login state. */
-export async function prepareNativeLogin(input: NativeLoginInput, states: NativeLoginState[], disconnect: (input: NativeLoginInput) => Promise<unknown>, now = Date.now()) {
-  if (!["disconnect", "status"].includes(input.action) && states.some(state => state.status === "pending" && state.connectionId !== input.connectionId && state.expiresAt > now))
+export async function prepareNativeLogin(input: NativeLoginInput, states: NativeLoginState[], run: (input: NativeLoginInput, reason?: "expired") => Promise<NativeLoginView | void>, now = Date.now()) {
+  // Explicit cancellation must reach revocation even if verified-page cleanup
+  // failed earlier. Cleanup of unrelated expired forms can wait for inspection.
+  if (input.action === "disconnect") return;
+  if (input.action !== "status" && states.some(state => state.status === "pending" && state.connectionId !== input.connectionId && (state.verifiedSession?.expiresAt ?? state.expiresAt) > now))
     throw Error("Finish the existing private sign-in first");
-  for (const state of states) if (state.status === "pending" && state.expiresAt <= now)
-    await disconnect({connectionId: state.connectionId, domain: state.domain, action: "disconnect"});
+  let recovered: NativeLoginView | undefined;
+  for (const state of states) if (state.status === "pending" && (state.expiresAt <= now || (state.verifiedSession?.expiresAt ?? Infinity) <= now)) {
+    // A verified session has its own deadline; finish closing its pages without
+    // revoking custody merely because the original form deadline elapsed.
+    if (state.verifiedSession && state.verifiedSession.expiresAt > now) {
+      const view = await run({connectionId: state.connectionId, domain: state.domain, action: "finish"});
+      if (state.connectionId === input.connectionId && state.domain === input.domain && view) recovered = view;
+    } else
+      await run({connectionId: state.connectionId, domain: state.domain, action: "disconnect"}, "expired");
+  }
+  return recovered;
 }
 export function validateNativeInput(input: NativeLoginInput) {
   if (!input || !/^[a-f0-9-]{36}$/.test(input.connectionId) || !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/.test(input.domain) || !["login","renew","begin","status","form","credentials","view","click","type","key","scroll","finish","disconnect","navigate","allow_origin"].includes(input.action)) throw Error("Invalid private sign-in request");
@@ -28,10 +40,13 @@ export function validateNativeInput(input: NativeLoginInput) {
   if (input.action === "scroll" && (!Number.isFinite(input.delta) || Math.abs(input.delta!) > 640)) throw Error("Invalid sign-in scroll");
 }
 const loginPaths: Record<string,string> = {"linkedin.com":"/login", "instagram.com":"/accounts/login/", "facebook.com":"/login", "x.com":"/i/flow/login", "github.com":"/login", "notion.so":"/login", "slack.com":"/signin", "spotify.com":"/login"};
-export async function nativeLogin(input:NativeLoginInput, dependencies:{cdp:PrivateCdp; read():NativeLoginState|undefined; save(state:NativeLoginState):void; credentials?(state:NativeLoginState,input:NativeLoginInput):void; verified?(state:NativeLoginState,cookies:unknown[]):Promise<boolean>}):Promise<NativeLoginView> {
+export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMissingTarget?:boolean; cdp:PrivateCdp; read():NativeLoginState|undefined; save(state:NativeLoginState):void; credentials?(state:NativeLoginState,input:NativeLoginInput):void; verified?(state:NativeLoginState,cookies:unknown[]):Promise<boolean>}):Promise<NativeLoginView> {
   validateNativeInput(input);
   if(["login","renew"].includes(input.action)) throw Error("Use the private vault renewal operation");
   const {cdp}=dependencies; let state = dependencies.read();
+  if (state && (state.connectionId !== input.connectionId || state.domain !== input.domain)) throw Error("Private sign-in binding mismatch");
+  if (state?.status === "disconnected" && state.expired && ["form","view"].includes(input.action) && dependencies.reopenMissingTarget !== false)
+    return nativeLogin({...input,action:"begin"},dependencies);
   // A verified login awaiting cleanup cannot be replaced by a retried begin.
   if(input.action === "begin" && state?.status === "pending" && state.verifiedSession)
     return nativeLogin({...input,action:"finish"},dependencies);
@@ -63,7 +78,9 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{cdp:Priv
     const targets=await cdp.send("Target.getTargets",{});
     for(const target of targets.targetInfos ?? []) if(target.type === "page" && !state!.preserveTargetIds?.includes(target.targetId)) await closeTarget(target.targetId);
   };
-  const summary=():NativeLoginView=>({status:state!.status,domain:state!.domain,expiresAt:state!.expiresAt,revision:state!.revision,...(state!.credentialsSaved !== undefined ? {credentialsSaved:state!.credentialsSaved} : {})});
+  // Expired pages are already revoked, but the connector stays pending until
+  // the owner inspects a fresh form. A status poll must not revoke that intent.
+  const summary=():NativeLoginView=>({status:state!.status === "disconnected" && state!.expired && input.action === "status" ? "pending" : state!.status,domain:state!.domain,expiresAt:state!.expiresAt,revision:state!.revision,...(state!.credentialsSaved !== undefined ? {credentialsSaved:state!.credentialsSaved} : {})});
   if (input.action === "disconnect") {
     // Use a page CDP session for Storage/Network commands, including after the login target closed.
     const cleanup = await cdp.send("Target.createTarget", {url:"about:blank"});
@@ -76,10 +93,9 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{cdp:Priv
     if(state.targetId) await closeTarget(state.targetId);
     await closeTarget(cleanup.targetId);
     if (state.status === "pending") await closeLoginTargets();
-    state.status="disconnected"; state.expiresAt=Date.now(); state.revision++; delete state.verifiedSession; if (state.credentialsSaved !== undefined) state.credentialsSaved=false; dependencies.save(state); return summary();
+    state.status="disconnected"; delete state.expired; state.expiresAt=Date.now(); state.revision++; delete state.verifiedSession; if (state.credentialsSaved !== undefined) state.credentialsSaved=false; dependencies.save(state); return summary();
   }
   if (input.action === "status" || state.status !== "pending") return summary();
-  if (state.expiresAt <= Date.now()) throw Error("Sign-in expired. Cancel and start again");
   const completeVerifiedLogin = async () => {
     const verified = state!.verifiedSession!;
     if(verified.revision !== state!.revision + 1 || verified.expiresAt <= Date.now()) throw Error("Sign-in verification expired");
@@ -98,16 +114,19 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{cdp:Priv
     if(["form","view"].includes(input.action)) return {...summary(),fields:[]};
     throw Error("Sign-in verified; finish closing private pages first");
   }
+  if (state.expiresAt <= Date.now()) throw Error("Sign-in expired. Cancel and start again");
   let sessionId: string;
   try { ({sessionId}=await cdp.send("Target.attachToTarget",{targetId:state.targetId,flatten:true})); }
   catch (error) {
     // Chromium target IDs do not survive a browser/VM restart. Only an explicit
     // form/view read may recreate the page; credential and interaction requests
     // must fail rather than run against a different document.
-    if (["form","view"].includes(input.action)) {
+    if (["form","view"].includes(input.action) && dependencies.reopenMissingTarget !== false) {
       const targets=await cdp.send("Target.getTargets",{});
-      if (Array.isArray(targets.targetInfos) && !targets.targetInfos.some((target:any)=>target.targetId===state!.targetId))
+      if (Array.isArray(targets.targetInfos) && !targets.targetInfos.some((target:any)=>target.targetId===state!.targetId)) {
+        await closeLoginTargets();
         return nativeLogin({...input,action:"begin"},dependencies);
+      }
     }
     throw error;
   }

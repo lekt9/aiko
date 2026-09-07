@@ -3,12 +3,14 @@ import {nativeLogin,prepareNativeLogin,validateNativeInput,type NativeLoginState
 const id="12345678-1234-1234-1234-123456789abc";
 test("form reads reopen a missing private target after restart without replaying credentials",async()=>{
  for(const action of ["form","view","credentials"] as const) {
-  let state:NativeLoginState={connectionId:id,domain:"linkedin.com",targetId:"old",status:"pending",expiresAt:Date.now()+60000,revision:3,approvedOrigins:["https://old-sso.example"]};
+  let state:NativeLoginState={connectionId:id,domain:"linkedin.com",targetId:"old",status:"pending",expiresAt:Date.now()+60000,revision:3,preserveTargetIds:["other-page"],approvedOrigins:["https://old-sso.example"]};
   const calls:any[]=[];
+  let popup=true;
   const deps={read:()=>state,save:(next:NativeLoginState)=>{state=next;},cdp:{close(){},async send(method:string,params:any){
    calls.push({method,params});
    if(method==="Target.attachToTarget"){if(params.targetId==="old")throw Error("Missing target");return {sessionId:"new-session"};}
-   if(method==="Target.getTargets")return {targetInfos:[{targetId:"other-page",type:"page"}]};
+   if(method==="Target.getTargets")return {targetInfos:[{targetId:"other-page",type:"page"},...(popup?[{targetId:"abandoned-popup",type:"page"}]:[])]};
+   if(method==="Target.closeTarget"&&params.targetId==="abandoned-popup"){popup=false;return {success:true};}
    if(method==="Target.createTarget")return {targetId:"fresh"};
    if(method==="Runtime.evaluate")return {result:{value:""}};
    return {};
@@ -20,6 +22,8 @@ test("form reads reopen a missing private target after restart without replaying
   } else {
    expect(await result).toMatchObject({status:"pending",revision:4,fields:[]});
    expect(state.targetId).toBe("fresh");
+   expect(popup).toBe(false);
+   expect(state.preserveTargetIds).toEqual(["other-page"]);
    expect(state.approvedOrigins).toBeUndefined();
    expect(calls.find(c=>c.method==="Page.navigate")?.params.url).toBe("https://linkedin.com/login");
   }
@@ -47,6 +51,32 @@ test("expired private locks are cleaned before a new login; live locks still iso
  await expect(prepareNativeLogin(input,[old],async()=>{},99)).rejects.toThrow("Finish the existing");
  await expect(prepareNativeLogin(input,[old],async()=>{throw Error("cleanup failed")},101)).rejects.toThrow("cleanup failed");
  await prepareNativeLogin({...input,action:"disconnect"},[old],async()=>{},99);
+});
+test("expiry cleanup records its reason, while valid verified sessions finish cleanup", async () => {
+ const state:NativeLoginState={connectionId:id,domain:"linkedin.com",status:"pending",expiresAt:100,revision:2};
+ const calls:unknown[]=[];
+ await prepareNativeLogin({connectionId:id,domain:state.domain,action:"status"},[state],async (input,reason)=>{calls.push({action:input.action,reason})},101);
+ expect(calls).toEqual([{action:"disconnect",reason:"expired"}]);
+ calls.length=0;
+ await prepareNativeLogin({connectionId:id,domain:state.domain,action:"form"},[{...state,verifiedSession:{expiresAt:200,revision:3}}],async (input,reason)=>{calls.push({action:input.action,reason})},101);
+ expect(calls).toEqual([{action:"finish",reason:undefined}]);
+ await expect(prepareNativeLogin({connectionId:id,domain:state.domain,action:"form"},[state],async()=>{throw Error("cleanup failed")},101)).rejects.toThrow("cleanup failed");
+});
+test("form reads recover persisted expiration but respect explicit disconnect",async()=>{
+ for(const expired of [true,false]) {
+  let state:NativeLoginState={connectionId:id,domain:"linkedin.com",status:"disconnected",expiresAt:1,revision:3,...(expired?{expired:true}:{})};
+  let created=0;
+  const deps={read:()=>state,save:(next:NativeLoginState)=>{state=next},cdp:{close(){},async send(method:string){
+   if(method==="Target.getTargets")return {targetInfos:[]};
+   if(method==="Target.createTarget"){created++;return {targetId:"fresh"};}
+   if(method==="Target.attachToTarget")return {sessionId:"session"};
+   if(method==="Runtime.evaluate")return {result:{value:""}};
+   return {};
+  }}};
+  expect((await nativeLogin({connectionId:id,domain:state.domain,action:"status"},deps)).status).toBe(expired?"pending":"disconnected");
+  expect((await nativeLogin({connectionId:id,domain:state.domain,action:"form"},deps)).status).toBe(expired?"pending":"disconnected");
+  expect(created).toBe(expired?1:0);expect(state.expired).not.toBe(true);
+ }
 });
 test("an uncommitted navigation returns loading metadata without typing or screenshots", async () => {
  let state:NativeLoginState|undefined;
@@ -126,4 +156,21 @@ test("redirected sign-in providers require consent and cannot verify the origina
  await expect(nativeLogin({connectionId:id,domain:state.domain,action:"finish"},deps)).rejects.toThrow("Return to the selected app");
  for(const url of ["http://example.com/login","https://127.0.0.1/","https://user:password@example.com/"])
    expect(()=>validateNativeInput({connectionId:id,domain:state.domain,action:"navigate",url})).toThrow();
+});
+
+test("expired verified deadline is cleaned before another connection; cancellation bypasses preparation",async()=>{
+ const state:NativeLoginState={connectionId:id,domain:"linkedin.com",status:"pending",expiresAt:200,revision:1,verifiedSession:{expiresAt:100,revision:2}};
+ const calls:unknown[]=[];
+ await prepareNativeLogin({connectionId:"22222222-2222-2222-2222-222222222222",domain:"example.com",action:"form"},[state],async(input,reason)=>{calls.push({action:input.action,reason})},101);
+ expect(calls).toEqual([{action:"disconnect",reason:"expired"}]);
+ await prepareNativeLogin({connectionId:id,domain:state.domain,action:"disconnect"},[state],async()=>{throw Error("Must not block cancellation")},101);
+});
+test("verified cleanup returns the recovered result without redispatching begin or renewal",async()=>{
+ const state:NativeLoginState={connectionId:id,domain:"linkedin.com",status:"pending",expiresAt:100,revision:1,verifiedSession:{expiresAt:200,revision:2}};
+ for(const action of ["begin","renew","form","login"] as const) {
+  const actions:string[]=[];
+  const connected={status:"connected" as const,domain:state.domain,expiresAt:200,revision:2};
+  const result=await prepareNativeLogin({connectionId:id,domain:state.domain,action},[state],async input=>{actions.push(input.action);return connected},101);
+  expect(result).toEqual(connected);expect(actions).toEqual(["finish"]);
+ }
 });

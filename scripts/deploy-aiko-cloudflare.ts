@@ -1,5 +1,7 @@
 import { mkdir, writeFile, rename } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { loadConfig, privateEnv } from "../apps/agent/src/config.ts";
 import { credentialDigest } from "../apps/agent/src/plane-auth.ts";
 import { redactor } from "../apps/agent/src/security.ts";
@@ -95,9 +97,10 @@ const secrets = {
     : {}),
 };
 const redact = redactor([...Object.values(secrets), state.AIKO_E2E_TOKEN]);
+const agentDirectory = fileURLToPath(new URL("../apps/agent/", import.meta.url));
 async function run(args: string[], input?: string) {
   const process = Bun.spawn(args, {
-    cwd: "/home/deck/work/unlock/apps/agent",
+    cwd: agentDirectory,
     stdin: input ? "pipe" : "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -116,14 +119,14 @@ async function run(args: string[], input?: string) {
   return out;
 }
 const runner = await Bun.build({
-  entrypoints: ["/home/deck/work/unlock/apps/agent/src/sandbox-runner.ts"],
+  entrypoints: [join(agentDirectory, "src/sandbox-runner.ts")],
   target: "bun",
   external: ["@huggingface/transformers"],
   minify: true,
 });
 if (!runner.success) throw new Error("Trusted browser runner build failed");
 await Bun.write(
-  "/home/deck/work/unlock/apps/agent/assets/runner.txt",
+  join(agentDirectory, "assets/runner.txt"),
   runner.outputs[0]!,
 );
 await run([

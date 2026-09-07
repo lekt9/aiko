@@ -451,7 +451,13 @@ export class ConnectorEngine {
         const entry = { stage, message, at: Date.now() };
         progress.push(entry);
         await this.options.store.set(key, progress);
-        await this.options.onEvent?.({ type: "AikoLoginProgress", id: `login-progress:${randomUUID()}`, provider: row.provider, status: row.status, owner: this.options.owner, connectionId: id, ...entry });
+        if (this.options.onEvent) {
+          // Progress publication is retryable metadata, not the sign-in result.
+          // Keep it in the existing durable outbox before attempting delivery.
+          row.pendingEvents = [...(row.pendingEvents ?? []), { type: "AikoLoginProgress", id: `login-progress:${randomUUID()}`, provider: row.provider, status: row.status, owner: this.options.owner, connectionId: id, ...entry }];
+          await this.options.store.set(`${this.prefix}connection:${row.id}`, row);
+          await this.publishEvents(row);
+        }
       };
       await report("opening", ["login", "credentials"].includes(input.action) ? "Submitting your sign-in securely…" : input.action === "finish" ? "Checking whether sign-in completed…" : "Opening the website’s sign-in page…");
       deadline.throwIfAborted();

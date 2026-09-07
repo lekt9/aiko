@@ -40,10 +40,11 @@ async function driveLogin(
         ...(input.credentialReference ? { credentialReference: input.credentialReference } : {}),
         ...fields,
       },
-      dependencies,
+      {...dependencies, reopenMissingTarget: false},
     );
   };
   let view = await run(start ? "begin" : "form");
+  if (view.status !== "pending") return view;
   // Full candidates remain transient until this new browser login verifies.
   const stage = () =>
     vault.stage(dependencies.read()!, {

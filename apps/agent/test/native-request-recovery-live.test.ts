@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { browserDriverFactory } from "../src/browser-driver.ts";
+import { Database } from "bun:sqlite";
 const chrome=process.env.AIKO_NATIVE_SESSION_CHROME;
 const domain=process.env.AIKO_NATIVE_LOGIN_TEST_DOMAIN;
 (chrome&&domain?test:test.skip)("pending sign-in reopens its form after the browser driver restarts",async()=>{
@@ -21,6 +22,23 @@ const domain=process.env.AIKO_NATIVE_LOGIN_TEST_DOMAIN;
   expect(reopened.revision).toBe(first.revision+1);
   expect(reopened.fields).toEqual(["username","password"]);
   expect(reopened.credentialsSaved).not.toBe(true);
+  // Exercise the actual persisted expiry path, including private-page cleanup,
+  // rather than testing only the helper's decision to reopen.
+  await driver.close();
+  const db=new Database(`${directory}/request-evidence.sqlite`);
+  try {
+   const row=db.query("SELECT state FROM native_login WHERE id=?").get(input.connectionId) as {state:string};
+   const expired={...JSON.parse(row.state),expiresAt:1};
+   db.query("UPDATE native_login SET state=? WHERE id=?").run(JSON.stringify(expired),input.connectionId);
+  } finally {db.close();}
+  driver=await open();
+  expect((await driver.nativeAuth!({...input,action:"status"})).status).toBe("pending");
+  let refreshed=await driver.nativeAuth!(input);
+  for(let attempt=0;attempt<20&&!refreshed.fields?.includes("password");attempt++){
+   await Bun.sleep(100);refreshed=await driver.nativeAuth!(input);
+  }
+  expect(refreshed).toMatchObject({status:"pending",revision:reopened.revision+2,fields:["username","password"]});
+  expect(refreshed.credentialsSaved).not.toBe(true);
  } finally {await driver.close();await rm(directory,{recursive:true,force:true});}
 },90000);
 (chrome&&domain?test:test.skip)("real native browser reopens saved session for a request after driver restart",async()=>{

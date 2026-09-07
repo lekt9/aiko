@@ -459,11 +459,12 @@ export function browserDriverFactory(
               try {return await cdp.send(method,params,sessionId);}
               catch(error) {console.warn("private_login_cdp_failed",method);throw error;}
             }};
-            const run = async (request: NativeLoginInput) => {
+            const run = async (request: NativeLoginInput, reason?: "expired") => {
               if (request.action === "begin") nativeVault.discard(request.connectionId);
               const dependencies: Parameters<typeof nativeLogin>[1] = { cdp:privateCdp,
               read: () => nativeStates().find(s => s.connectionId === request.connectionId),
               save: state => {
+                if (reason === "expired" && state.status === "disconnected") state = {...state, expired: true};
                 if (state.status === "disconnected") nativeVault.remove(state.connectionId);
                 evidenceDb.query("INSERT INTO native_login(id,state) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state").run(state.connectionId,JSON.stringify(state));
               },
@@ -475,9 +476,9 @@ export function browserDriverFactory(
                 : request.action === "login" ? submitNativeLogin(request, dependencies, nativeVault, signal) : nativeLogin(request, dependencies);
             };
             stage = "expired-cleanup";
-            await prepareNativeLogin(input, nativeStates(), run);
+            const recovered = await prepareNativeLogin(input, nativeStates(), run);
             stage = "sign-in-action";
-            const view = await run(input);
+            const view = recovered ?? await run(input);
             if (input.action === "renew") await emit({type:"AikoNativeLoginStatus",id:crypto.randomUUID(),owner:principal,connectionId:input.connectionId,at:Date.now()});
             return view;
           } finally { cdp.close(); }

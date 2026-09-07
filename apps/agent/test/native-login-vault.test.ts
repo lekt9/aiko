@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtemp, rm, chmod, symlink, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { nativeLogin, type NativeLoginState } from "../src/native-login.ts";
+import { nativeLogin, prepareNativeLogin, type NativeLoginState } from "../src/native-login.ts";
 import {
   NativeLoginVault,
   nativeLoginCipher,
@@ -262,6 +262,13 @@ test("verified login resumes cleanup after its original tab has closed", async (
     f.run("credentials", { password: "replacement" }),
   ).rejects.toThrow("verified");
   failPopup = false;
+  f.dependencies.save({...f.state, expiresAt:1});
+  let removed=false;
+  await prepareNativeLogin({connectionId:id,domain:"service.net",action:"form"},[f.state],async input=>{
+    if(input.action==="disconnect")removed=true;
+    return nativeLogin(input,f.dependencies);
+  });
+  expect(removed).toBe(false);
   expect(await f.run("finish")).toMatchObject({
     status: "connected",
     credentialsSaved: true,
@@ -486,3 +493,25 @@ test("password manager fills persist the reference and session without copying t
   expect(JSON.stringify(saved)).not.toContain("external-password");
   expect(saved.cookies).toEqual([cookie]);
 });
+
+ test("credential workflows never replace missing targets before or after submission",async()=>{
+  for(const failAfter of [0,2]) {
+   const f=await fixture();const send=f.dependencies.cdp.send;
+   let inserted=0,created=0;
+   f.dependencies.cdp.send=async(method,params)=>{
+    if(method==="Target.attachToTarget"&&inserted>=failAfter)throw Error("Missing target");
+    if(method==="Target.createTarget")created++;
+    if(method==="Input.insertText")inserted++;
+    if(method==="Runtime.evaluate"&&params.expression.includes("Object.keys(f)"))return {result:{value:["username","password"]}};
+    return send(method,params);
+   };
+   await expect(submitNativeLogin({connectionId:id,domain:"service.net",action:"login",username:"fixture-user",password:"fixture-password"},f.dependencies,f.vault,undefined,async()=>{})).rejects.toThrow("Missing target");
+   expect(created).toBe(0);expect(inserted).toBe(failAfter);
+  }
+ });
+ test("disconnected login returns without polling or staging credentials",async()=>{
+  const f=await fixture();f.dependencies.save({...f.state,status:"disconnected"});let pauses=0;
+  const view=await submitNativeLogin({connectionId:id,domain:"service.net",action:"login",username:"fixture-user",password:"fixture-password"},f.dependencies,f.vault,undefined,async()=>{pauses++});
+  expect(view.status).toBe("disconnected");expect(pauses).toBe(0);
+  expect(f.db.query("SELECT * FROM native_vault").all()).toEqual([]);
+ });
