@@ -56,6 +56,15 @@ const secrets = {
   AIKO_WEBHOOK_SECRET: config.webhookSecret,
   AIKO_ALLOWED_USERS: [...config.allowedUsers].join(","),
   AIKO_PLANE_CREDENTIALS: JSON.stringify(credentials),
+  ...(config.managerKey ? { AIKO_MANAGER_KEY: config.managerKey } : {}),
+  ...(config.hashicorpVault
+    ? {
+        AIKO_HASHICORP_VAULT_ADDRESS: config.hashicorpVault.address,
+        ...(config.hashicorpVault.namespace
+          ? { AIKO_HASHICORP_VAULT_NAMESPACE: config.hashicorpVault.namespace }
+          : {}),
+      }
+    : {}),
   ...(config.voiceKey ? { AIKO_VOICE_KEY: config.voiceKey } : {}),
 };
 const redact = redactor([...Object.values(secrets), state.AIKO_E2E_TOKEN]);

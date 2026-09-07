@@ -1,9 +1,23 @@
 import { agentKeys } from "tardie/log/events";
-import { cancellationKeys, methodCallKeys, methodResponseKeys, methodTimeoutKeys, methodIngressKeyOf } from "tardie/core/method";
+import {
+  cancellationKeys,
+  methodCallKeys,
+  methodResponseKeys,
+  methodTimeoutKeys,
+  methodIngressKeyOf,
+} from "tardie/core/method";
 import { turnEpochOf, turnTerminalOf } from "tardie/code/execution/turns";
 import { validateActor } from "tardie/core/actor";
 import { withRequiredResponse } from "./channel-response.ts";
-import { acceptSecretary, createSecretaryActor, secretaryApi, secretaryCommand, secretaryEventKey, secretaryThread, withSecretaryHistory } from "./secretary.ts";
+import {
+  acceptSecretary,
+  createSecretaryActor,
+  secretaryApi,
+  secretaryCommand,
+  secretaryEventKey,
+  secretaryThread,
+  withSecretaryHistory,
+} from "./secretary.ts";
 import { secretaryTelegram } from "./secretary-telegram.ts";
 import { createModelRouting } from "./model-routing.ts";
 import { withRoleInference } from "./inference-routing.ts";
@@ -14,7 +28,11 @@ import { routerCaller, validateRouterInput } from "./connector-router-host.ts";
 import { ConnectorEngine } from "./connectors.ts";
 import { FileConnectorStore } from "./connectors-store.ts";
 import { FilePasswordManagerHost } from "./password-managers.ts";
-import { WorkflowController, createWorkflowStore, workflowDispatcher } from "./workflow-host.ts";
+import {
+  WorkflowController,
+  createWorkflowStore,
+  workflowDispatcher,
+} from "./workflow-host.ts";
 import { sqliteWorkflowKV } from "./workflow-store.ts";
 import { withUnlockBrowser } from "./browser-unlock-factory.ts";
 import { connectorApi } from "./connector-api.ts";
@@ -80,7 +98,11 @@ import {
   type TelegramScreenshotCapture,
 } from "./telegram-tools.ts";
 import type { TelegramMediaProcessor } from "./telegram-media.ts";
-import { controlCommand, telegramControl, createControlActor } from "./telegram-control.ts";
+import {
+  controlCommand,
+  telegramControl,
+  createControlActor,
+} from "./telegram-control.ts";
 import {
   boundedText,
   equalSecret,
@@ -109,7 +131,9 @@ export async function createService(
     modelFetch?: HttpFetch;
     embeddingFetch?: HttpFetch;
     connectorFetch?: HttpFetch;
-    connectorBrowser?: (owner:string) => import("./connectors-browser.ts").SecureBrowserAdapter;
+    connectorBrowser?: (
+      owner: string,
+    ) => import("./connectors-browser.ts").SecureBrowserAdapter;
     /** Test seam: deterministic password manager resolution without provider networks. */
     managerResolvers?: import("./password-managers.ts").ManagerResolvers;
     browserFactory?: BrowserDriverFactory;
@@ -127,18 +151,24 @@ export async function createService(
   const redact = redactor([
     config.modelKey ?? "",
     config.memoryEmbedding?.apiKey ?? "",
-      config.cerebrasKey ?? "",
+    config.cerebrasKey ?? "",
     config.arcadeKey ?? "",
-      ...Object.values(config.connectorVault?.accounts ?? {}).map(a => a.token),
+    ...Object.values(config.connectorVault?.accounts ?? {}).map((a) => a.token),
     config.voiceKey ?? "",
     config.operatorToken,
     config.botToken ?? "",
     config.webhookSecret ?? "",
   ]);
-  const requireThinkFeel = config.mode === "live" && config.replyStyle !== "direct";
-  const compose = requireThinkFeel ? createThinkFeelComposer({
-    key: config.voiceKey, persona: config.persona, redact, fetch: overrides.voiceFetch,
-  }) : undefined;
+  const requireThinkFeel =
+    config.mode === "live" && config.replyStyle !== "direct";
+  const compose = requireThinkFeel
+    ? createThinkFeelComposer({
+        key: config.voiceKey,
+        persona: config.persona,
+        redact,
+        fetch: overrides.voiceFetch,
+      })
+    : undefined;
   const voice = createVoice({
     compose,
     required: requireThinkFeel,
@@ -147,29 +177,95 @@ export async function createService(
     enabled: config.replyStyle !== "direct" && config.voiceEnabled,
     fetch: overrides.voiceFetch,
   });
-  const connectorStore = new FileConnectorStore(join(config.stateDir, "connectors"));
+  const connectorStore = new FileConnectorStore(
+    join(config.stateDir, "connectors"),
+  );
   const connectorEngines = new Map<string, ConnectorEngine>();
   const connectorsFor = (owner: string) => {
     let engine = connectorEngines.get(owner);
     if (!engine) {
-      engine = new ConnectorEngine({ owner, secureBrowser: overrides.connectorBrowser?.(owner) ?? connectorVault(config.connectorVault, owner), store: connectorStore, env: { ARCADE_API_KEY: config.arcadeKey }, fetch: overrides.connectorFetch,
-        managers: config.managerKey ? new FilePasswordManagerHost({ store: connectorStore, owner, key: config.managerKey, vault: config.hashicorpVault, resolvers: overrides.managerResolvers }) : undefined,
-        onEvent:async e=>{await host.commitRoot(host.self(`user-${owner}`),event("AikoHooksActivated",{id:"background-v1"}));await host.commitRoot(host.self(`user-${owner}`),e);wake(owner);},
-        readOwnedLogs: async (boundOwner) => (await host.read(`user-${boundOwner}`)).filter(e => e.type === "AikoApiObserved" && e.owner === boundOwner).map(e => ({ owner: boundOwner, id: String(e.id), text: `${e.method} ${e.url}` })),
+      engine = new ConnectorEngine({
+        owner,
+        secureBrowser:
+          overrides.connectorBrowser?.(owner) ??
+          connectorVault(config.connectorVault, owner),
+        store: connectorStore,
+        env: { ARCADE_API_KEY: config.arcadeKey },
+        fetch: overrides.connectorFetch,
+        managers: config.managerKey
+          ? new FilePasswordManagerHost({
+              store: connectorStore,
+              owner,
+              key: config.managerKey,
+              vault: config.hashicorpVault,
+              resolvers: overrides.managerResolvers,
+            })
+          : undefined,
+        onEvent: async (e) => {
+          await host.commitRoot(
+            host.self(`user-${owner}`),
+            event("AikoHooksActivated", { id: "background-v1" }),
+          );
+          await host.commitRoot(host.self(`user-${owner}`), e);
+          wake(owner);
+        },
+        readOwnedLogs: async (boundOwner) =>
+          (await host.read(`user-${boundOwner}`))
+            .filter(
+              (e) => e.type === "AikoApiObserved" && e.owner === boundOwner,
+            )
+            .map((e) => ({
+              owner: boundOwner,
+              id: String(e.id),
+              text: `${e.method} ${e.url}`,
+            })),
       });
       connectorEngines.set(owner, engine);
     }
     return engine;
   };
-  const workflowControllers = new Map<string,WorkflowController>();
-  let workflowDb:Database|undefined;
-  const workflowsFor = (owner:string) => {
-    let controller=workflowControllers.get(owner);
-    if(!controller){controller=new WorkflowController(owner,`user-${owner}`,{store:createWorkflowStore(sqliteWorkflowKV(workflowDb??=new Database(privateDatabaseFile(join(config.stateDir,"workflows.sqlite"))))),dispatcher:workflowDispatcher({owner,engine:connectorsFor(owner),redact,readEvents:()=>host.read(`user-${owner}`),read:overrides.webRead}),guard:validateRouterInput},redact);workflowControllers.set(owner,controller);}
+  const workflowControllers = new Map<string, WorkflowController>();
+  let workflowDb: Database | undefined;
+  const workflowsFor = (owner: string) => {
+    let controller = workflowControllers.get(owner);
+    if (!controller) {
+      controller = new WorkflowController(
+        owner,
+        `user-${owner}`,
+        {
+          store: createWorkflowStore(
+            sqliteWorkflowKV(
+              (workflowDb ??= new Database(
+                privateDatabaseFile(join(config.stateDir, "workflows.sqlite")),
+              )),
+            ),
+          ),
+          dispatcher: workflowDispatcher({
+            owner,
+            engine: connectorsFor(owner),
+            redact,
+            readEvents: () => host.read(`user-${owner}`),
+            read: overrides.webRead,
+          }),
+          guard: validateRouterInput,
+        },
+        redact,
+      );
+      workflowControllers.set(owner, controller);
+    }
     return controller;
   };
-  const routerBinding = (owner: string) => ({ owner, engine: connectorsFor(owner), redact, readOwnedEvents: () => host.read(`user-${owner}`), listWorkflows:()=>workflowsFor(owner).engine.list(), vaultDomains: async () => Object.keys(config.connectorVault?.accounts[owner]?.connections ?? {}) });
-  const routeFor = (owner: string) => routerCaller(routerBinding(owner), () => host);
+  const routerBinding = (owner: string) => ({
+    owner,
+    engine: connectorsFor(owner),
+    redact,
+    readOwnedEvents: () => host.read(`user-${owner}`),
+    listWorkflows: () => workflowsFor(owner).engine.list(),
+    vaultDomains: async () =>
+      Object.keys(config.connectorVault?.accounts[owner]?.connections ?? {}),
+  });
+  const routeFor = (owner: string) =>
+    routerCaller(routerBinding(owner), () => host);
   const telegram =
     config.botToken && config.webhookSecret
       ? createTelegram({
@@ -186,8 +282,9 @@ export async function createService(
         domains: config.browser.domains,
         redact,
         factory: withUnlockBrowser(
-          overrides.browserFactory ?? browserDriverFactory(config.browser.executablePath),
-          {config:config.connectorVault,engine:connectorsFor},
+          overrides.browserFactory ??
+            browserDriverFactory(config.browser.executablePath),
+          { config: config.connectorVault, engine: connectorsFor },
         ),
       })
     : undefined;
@@ -234,18 +331,34 @@ export async function createService(
         ? new ModelBudget(config.stateDir, config.modelLimits)
         : undefined;
     if (config.mode === "live" && config.memoryEmbedding) {
-      const storage = nodeStorage(privateDatabaseFile(join(config.stateDir, "embedding-budget.sqlite")));
-      try { embeddingBudget = new EmbeddingBudget(storage, config.memoryEmbedding.maxUsdPerDay); }
-      catch (error) { storage.close(); throw error; }
+      const storage = nodeStorage(
+        privateDatabaseFile(join(config.stateDir, "embedding-budget.sqlite")),
+      );
+      try {
+        embeddingBudget = new EmbeddingBudget(
+          storage,
+          config.memoryEmbedding.maxUsdPerDay,
+        );
+      } catch (error) {
+        storage.close();
+        throw error;
+      }
     }
   } catch (error) {
-    embeddingBudget?.close(); modelBudget?.close(); lock.close();
+    embeddingBudget?.close();
+    modelBudget?.close();
+    lock.close();
     throw error;
   }
-  const embeddingFor = (owner: string) => embeddingBudget && config.memoryEmbedding?.owners.includes(owner)
-    ? openRouterEmbeddings({ apiKey: () => config.memoryEmbedding!.apiKey, revision: config.memoryEmbedding.revision,
-        admission: embeddingBudget.forOwner(owner), fetch: overrides.embeddingFetch })
-    : undefined;
+  const embeddingFor = (owner: string) =>
+    embeddingBudget && config.memoryEmbedding?.owners.includes(owner)
+      ? openRouterEmbeddings({
+          apiKey: () => config.memoryEmbedding!.apiKey,
+          revision: config.memoryEmbedding.revision,
+          admission: embeddingBudget.forOwner(owner),
+          fetch: overrides.embeddingFetch,
+        })
+      : undefined;
   const host: BunHost = await createBunHost({
     database: join(config.stateDir, "actor.sqlite"),
     threadDatabase: (thread) => accountThreadDatabase(config.stateDir, thread),
@@ -253,7 +366,12 @@ export async function createService(
     actorInstance: config.instanceId ?? config.mode,
     workspaceSql: false,
     keyOf: (e) =>
-      agentKeys.keyOf(e) ?? cancellationKeys.keyOf(e) ?? methodCallKeys.keyOf(e) ?? methodResponseKeys.keyOf(e) ?? methodTimeoutKeys.keyOf(e) ?? methodIngressKeyOf(e) ??
+      agentKeys.keyOf(e) ??
+      cancellationKeys.keyOf(e) ??
+      methodCallKeys.keyOf(e) ??
+      methodResponseKeys.keyOf(e) ??
+      methodTimeoutKeys.keyOf(e) ??
+      methodIngressKeyOf(e) ??
       secretaryEventKey(e) ??
       browserTraceKeys.keyOf(e) ??
       requestMemoryEventKey(e) ??
@@ -313,91 +431,170 @@ export async function createService(
         };
         instance =
           role === "secretary"
-            ? createSecretaryActor({ owner, redact, read: () => host.read(thread), telegram: config.botToken ? secretaryTelegram(config.botToken, overrides.telegramFetch) : undefined })
+            ? createSecretaryActor({
+                owner,
+                redact,
+                read: () => host.read(thread),
+                telegram: config.botToken
+                  ? secretaryTelegram(config.botToken, overrides.telegramFetch)
+                  : undefined,
+              })
             : role === "control"
-            ? createControlActor({ owner, voice, send: telegram?.send, live: requireThinkFeel, redact, publish: rows => host.seed(`user-${owner}`, rows) })
-            : role === "router"
-            ? createToolRouterActor(routerBinding(owner))
-            : role === "indexer"
-            ? createIndexerActor(memory,(id,signal)=>connectorsFor(owner).initialContext(id,signal))
-            : role === "reflection"
-              ? createReflectionActor(memory)
-              : createAikoActor({
+              ? createControlActor({
                   owner,
                   voice,
-                  requireThinkFeel,
-                  browser,
-                  live: config.mode === "live",
-                  publicWeb: config.publicWeb ?? config.mode === "live",
-                  webRead: overrides.webRead,
-                  toolCallLimit: config.toolCallLimit ?? null,
                   send: telegram?.send,
-                  memory,
-                  background: true,
-                  workflow: workflowsFor(owner).component(),
-                  toolRouter: { owner, thread, redact, readRouter: () => host.read(`router-${owner}`) },
-                  capabilityBuilder: { owner, thread, redact, checkArcade: async domain => (await connectorsFor(owner).search(domain)).fallbackAllowed,
-                    session: (origin, signal) => ensureUnlockSession({ owner, origin, config: config.connectorVault, search: domain => connectorsFor(owner).search(domain), signal, renew: true }) },
-                  connectors: { owner, thread, engine: connectorsFor(owner), deliverConnection: async (input, signal) => {
-                    if (!ownedTelegram || input.owner !== owner) return { status: "rejected" as const };
-                    const wording = compose ? await compose(input.text, signal) : undefined;
-                    if (requireThinkFeel && wording?.status !== "ready") return { status: "rejected" as const };
-                    return ownedTelegram.sendRich(owner, { kind: "text", text: wording?.status === "ready" ? wording.text : input.text, buttons: input.buttons }, signal);
-                  } },
-                  ...(ownedTelegram
-                    ? {
-                        extraTools: createTelegramTools({
+                  live: requireThinkFeel,
+                  redact,
+                  publish: (rows) => host.seed(`user-${owner}`, rows),
+                })
+              : role === "router"
+                ? createToolRouterActor(routerBinding(owner))
+                : role === "indexer"
+                  ? createIndexerActor(memory, (id, signal) =>
+                      connectorsFor(owner).initialContext(id, signal),
+                    )
+                  : role === "reflection"
+                    ? createReflectionActor(memory)
+                    : createAikoActor({
+                        owner,
+                        voice,
+                        requireThinkFeel,
+                        browser,
+                        live: config.mode === "live",
+                        publicWeb: config.publicWeb ?? config.mode === "live",
+                        webRead: overrides.webRead,
+                        toolCallLimit: config.toolCallLimit ?? null,
+                        send: telegram?.send,
+                        memory,
+                        background: true,
+                        workflow: workflowsFor(owner).component(),
+                        toolRouter: {
                           owner,
-                          telegram: ownedTelegram,
-                          compose,
+                          thread,
                           redact,
-                          speak: media?.speak,
-                          inspectImages: media?.vision,
-                          captureScreenshot: media?.captureScreenshot,
-                        }),
-                      }
-                    : {}),
-                  ...(telegramTyping ? { telegramTyping } : {}),
-                });
+                          readRouter: () => host.read(`router-${owner}`),
+                        },
+                        capabilityBuilder: {
+                          owner,
+                          thread,
+                          redact,
+                          checkArcade: async (domain) =>
+                            (await connectorsFor(owner).search(domain))
+                              .fallbackAllowed,
+                          session: (origin, signal) =>
+                            ensureUnlockSession({
+                              owner,
+                              origin,
+                              config: config.connectorVault,
+                              search: (domain) =>
+                                connectorsFor(owner).search(domain),
+                              signal,
+                              renew: true,
+                            }),
+                        },
+                        connectors: {
+                          owner,
+                          thread,
+                          engine: connectorsFor(owner),
+                          deliverConnection: async (input, signal) => {
+                            if (!ownedTelegram || input.owner !== owner)
+                              return { status: "rejected" as const };
+                            const wording = compose
+                              ? await compose(input.text, signal)
+                              : undefined;
+                            if (requireThinkFeel && wording?.status !== "ready")
+                              return { status: "rejected" as const };
+                            return ownedTelegram.sendRich(
+                              owner,
+                              {
+                                kind: "text",
+                                text:
+                                  wording?.status === "ready"
+                                    ? wording.text
+                                    : input.text,
+                                buttons: input.buttons,
+                              },
+                              signal,
+                            );
+                          },
+                        },
+                        ...(ownedTelegram
+                          ? {
+                              extraTools: createTelegramTools({
+                                owner,
+                                telegram: ownedTelegram,
+                                compose,
+                                redact,
+                                speak: media?.speak,
+                                inspectImages: media?.vision,
+                                captureScreenshot: media?.captureScreenshot,
+                              }),
+                            }
+                          : {}),
+                        ...(telegramTyping ? { telegramTyping } : {}),
+                      });
         actors.set(thread, validateActor(instance));
       }
       return instance;
     },
     layersFor: (thread) => {
       const address = threadBinding(thread)!;
-      const routing = config.mode === "live" && config.modelRouting ? createModelRouting({owner: address.owner, config: config.modelRouting, env: {CODEGRAFF_API_KEY: config.modelKey, CEREBRAS_API_KEY: config.cerebrasKey, AIKO_ALLOW_PAID_INFERENCE: "true"}, budget: modelBudget, fetch: overrides.modelFetch}) : undefined;
+      const routing =
+        config.mode === "live" && config.modelRouting
+          ? createModelRouting({
+              owner: address.owner,
+              config: config.modelRouting,
+              env: {
+                CODEGRAFF_API_KEY: config.modelKey,
+                CEREBRAS_API_KEY: config.cerebrasKey,
+                AIKO_ALLOW_PAID_INFERENCE: "true",
+              },
+              budget: modelBudget,
+              fetch: overrides.modelFetch,
+            })
+          : undefined;
       const model = withSpokenHistory(
         (address.role === "reflection"
           ? overrides.backgroundModel
           : overrides.model) ??
           (config.mode === "demo"
             ? demoInference
-            : routing ? (address.role === "reflection" ? routing.layer("rag") : withRoleInference(role => routing.layer(role))) : modelInference(
-                {
-                  provider: "codegraff",
-                  baseUrl: "https://gateway.codegraff.com/v1",
-                  apiKey: config.modelKey!,
-                  model: config.model ?? "glm-5.3-flash",
-                  protocol: "openai-chat-completions",
-                  contextWindowTokens: 32_768,
-                  maxOutputTokens: 1_024,
-                  throttleRetryDelaysMs: [],
-                  fetch: modelBudget!.transport(
-                    address.owner,
-                    overrides.modelFetch,
-                  ),
-                  stream: {
-                    firstChunkMs: 20_000,
-                    idleMs: 20_000,
-                    totalMs: 60_000,
+            : routing
+              ? address.role === "reflection"
+                ? routing.layer("rag")
+                : withRoleInference((role) => routing.layer(role))
+              : modelInference(
+                  {
+                    provider: "codegraff",
+                    baseUrl: "https://gateway.codegraff.com/v1",
+                    apiKey: config.modelKey!,
+                    model: config.model ?? "glm-5.3-flash",
+                    protocol: "openai-chat-completions",
+                    contextWindowTokens: 32_768,
+                    maxOutputTokens: 1_024,
+                    throttleRetryDelaysMs: [],
+                    fetch: modelBudget!.transport(
+                      address.owner,
+                      overrides.modelFetch,
+                    ),
+                    stream: {
+                      firstChunkMs: 20_000,
+                      idleMs: 20_000,
+                      totalMs: 60_000,
+                    },
                   },
-                },
-                modelAdapters(openAICompatibleAdapter),
-              )),
+                  modelAdapters(openAICompatibleAdapter),
+                )),
       );
-      if(address.role === "secretary") return withSecretaryHistory(model);
-      if(address.role!=="foreground")return model;
-      return withRequiredResponse(workflowsFor(address.owner).inference(browser ? browser.inference(model,address.owner) : model),redact);
+      if (address.role === "secretary") return withSecretaryHistory(model);
+      if (address.role !== "foreground") return model;
+      return withRequiredResponse(
+        workflowsFor(address.owner).inference(
+          browser ? browser.inference(model, address.owner) : model,
+        ),
+        redact,
+      );
     },
   }).catch((error) => {
     workflowDb?.close();
@@ -487,7 +684,7 @@ export async function createService(
       )
         return "limited";
       if (
-        messages.filter(e => !turnTerminalOf(log, String(e.id))        ).length >= 2
+        messages.filter((e) => !turnTerminalOf(log, String(e.id))).length >= 2
       )
         return "busy";
       await host.commitRoot(
@@ -534,14 +731,26 @@ export async function createService(
   };
   const acceptInbound = async (inbound: TelegramInbound) => {
     const { user, update, text } = inbound;
-    if (inbound.secretary) return serialize(async () => {
-      if (!validOwner(user)) throw new Error("Unauthorized account");
-      const accounts = new Set((await host.threads()).map(t => threadBinding(t)?.owner).filter(Boolean));
-      if (!accounts.has(user) && accounts.size >= (config.maxAccounts ?? 100)) return "limited" as const;
-      const status = await acceptSecretary(host, user, redactTelegramInbound(inbound, redact));
-      void host.wake(secretaryThread(user)).catch(() => { failures++; });
-      return status;
-    });
+    if (inbound.secretary)
+      return serialize(async () => {
+        if (!validOwner(user)) throw new Error("Unauthorized account");
+        const accounts = new Set(
+          (await host.threads())
+            .map((t) => threadBinding(t)?.owner)
+            .filter(Boolean),
+        );
+        if (!accounts.has(user) && accounts.size >= (config.maxAccounts ?? 100))
+          return "limited" as const;
+        const status = await acceptSecretary(
+          host,
+          user,
+          redactTelegramInbound(inbound, redact),
+        );
+        void host.wake(secretaryThread(user)).catch(() => {
+          failures++;
+        });
+        return status;
+      });
     if (inbound.callback && telegram)
       await telegram.answerCallback(
         user,
@@ -571,14 +780,30 @@ export async function createService(
         config.mode === "live",
         config.publicWeb ?? config.mode === "live",
         modelBudget?.status(user),
-        { stoppedDraftId: inbound.stoppedDraftId, messageThreadId: inbound.messageThreadId, secretary: text => secretaryCommand(host, user, text, redact), separateLane: true, media: !!overrides.telegramMedia, voice: false, connectors: connectorsFor(user), connectorsUrl: "https://aiko-agent.lewis-6d8.workers.dev/connect" },
+        {
+          stoppedDraftId: inbound.stoppedDraftId,
+          messageThreadId: inbound.messageThreadId,
+          secretary: (text) => secretaryCommand(host, user, text, redact),
+          separateLane: true,
+          media: !!overrides.telegramMedia,
+          voice: false,
+          connectors: connectorsFor(user),
+          connectorsUrl: "https://aiko-agent.lewis-6d8.workers.dev/connect",
+        },
       );
-      if (status === "accepted") void host.wake(`control-${user}`).catch(() => { failures++; });
+      if (status === "accepted")
+        void host.wake(`control-${user}`).catch(() => {
+          failures++;
+        });
       return status;
     });
   };
   const authenticate = (request: Request) => {
-    const auth = request.headers.get("authorization") ?? (request.headers.has("x-telegram-init-data") ? `tma ${request.headers.get("x-telegram-init-data")}` : "");
+    const auth =
+      request.headers.get("authorization") ??
+      (request.headers.has("x-telegram-init-data")
+        ? `tma ${request.headers.get("x-telegram-init-data")}`
+        : "");
     if (
       auth.startsWith("Bearer ") &&
       equalSecret(auth.slice(7), config.operatorToken)
@@ -833,13 +1058,30 @@ export async function createService(
           observations: [],
         },
       );
-    if (url.pathname === "/api/observed-actions/approval" && request.method === "POST") {
+    if (
+      url.pathname === "/api/observed-actions/approval" &&
+      request.method === "POST"
+    ) {
       const thread = `user-${owner}`;
       const log = withWatermark({
         read: Effect.promise(() => host.read(thread)),
-        append: events => Effect.promise(async () => { for (const event of events) await host.commitRoot(host.self(thread), event); }),
+        append: (events) =>
+          Effect.promise(async () => {
+            for (const event of events)
+              await host.commitRoot(host.self(thread), event);
+          }),
       });
-      return Effect.runPromise(createActionApprovals({ owner, thread }).handleDecision(request, () => Effect.succeed({ owner, subject: `account:${owner}`, authenticated: true as const })).pipe(Effect.provideService(EventLog, log)));
+      return Effect.runPromise(
+        createActionApprovals({ owner, thread })
+          .handleDecision(request, () =>
+            Effect.succeed({
+              owner,
+              subject: `account:${owner}`,
+              authenticated: true as const,
+            }),
+          )
+          .pipe(Effect.provideService(EventLog, log)),
+      );
     }
     if (url.pathname === "/api/browser/approval" && request.method === "POST") {
       if (!request.headers.get("content-type")?.startsWith("application/json"))
@@ -967,9 +1209,14 @@ export async function createService(
         return json({ error: "not_found" }, 404);
       if (turnTerminalOf(log, body.id))
         return json({ error: "already_terminal" }, 409);
-      await host.commitRoot(host.self(`user-${owner}`),
+      await host.commitRoot(
+        host.self(`user-${owner}`),
         cancellationRequested({
-          invocation: { method: "message", id: body.id, epoch: turnEpochOf(log, body.id) },
+          invocation: {
+            method: "message",
+            id: body.id,
+            epoch: turnEpochOf(log, body.id),
+          },
           request: `cancel:${body.id}:${turnEpochOf(log, body.id)}`,
           cause: "requested",
           reason: "Cancelled by the owner",
@@ -1009,7 +1256,7 @@ export async function createService(
         await host.close();
         workflowDb?.close();
         embeddingBudget?.close();
-    modelBudget?.close();
+        modelBudget?.close();
         lock.close();
       }
     },

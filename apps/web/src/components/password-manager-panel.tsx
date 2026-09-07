@@ -28,19 +28,27 @@ export function PasswordManagerPanel({
   const [kind, setKind] = useState<ManagerKind>("onepassword");
   const [name, setName] = useState("");
   const [token, setToken] = useState("");
-  const [entries, setEntries] = useState<EntryDraft[]>([{ label: "", website: "", reference: "" }]);
+  const [entries, setEntries] = useState<EntryDraft[]>([
+    { label: "", website: "", reference: "" },
+  ]);
   const [formError, setFormError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
-  const removing = useRef<string>();
+  const removing = useRef<string | undefined>(undefined);
 
   async function refresh() {
     try {
-      const result = await request<{ managers: PasswordManager[] }>("/password-managers");
+      const result = await request<{ managers: PasswordManager[] }>(
+        "/password-managers",
+      );
       setManagers(result.managers);
       setLoadError("");
     } catch (failure) {
-      setLoadError(failure instanceof Error ? failure.message : "Password managers are unavailable.");
+      setLoadError(
+        failure instanceof Error
+          ? failure.message
+          : "Password managers are unavailable.",
+      );
     }
   }
   useEffect(() => {
@@ -56,14 +64,24 @@ export function PasswordManagerPanel({
   async function save(event: React.FormEvent) {
     event.preventDefault();
     if (saving) return;
-    const trimmed = entries.filter((entry) => entry.reference.trim() || entry.label.trim());
-    if (!name.trim() || !token.trim() || trimmed.some((entry) => !entry.reference.trim() || !entry.label.trim())) {
-      setFormError("Give the connection a name, paste its token, and label every reference.");
+    const trimmed = entries.filter(
+      (entry) => entry.reference.trim() || entry.label.trim(),
+    );
+    if (
+      !name.trim() ||
+      !token.trim() ||
+      trimmed.some((entry) => !entry.reference.trim() || !entry.label.trim())
+    ) {
+      setFormError(
+        "Give the connection a name, paste its token, and label every reference.",
+      );
       return;
     }
     for (const entry of trimmed) {
       if (entry.website.trim() && !websiteDomain(entry.website)) {
-        setFormError("Websites look like github.com — an HTTPS address without login details.");
+        setFormError(
+          "Websites look like github.com — an HTTPS address without login details.",
+        );
         return;
       }
     }
@@ -87,7 +105,11 @@ export function PasswordManagerPanel({
       onChanged?.();
       await refresh();
     } catch (failure) {
-      setFormError(failure instanceof Error ? failure.message : "Could not save this password manager.");
+      setFormError(
+        failure instanceof Error
+          ? failure.message
+          : "Could not save this password manager.",
+      );
     } finally {
       setSaving(false);
     }
@@ -98,11 +120,17 @@ export function PasswordManagerPanel({
     setFormError("");
     try {
       await request("/password-managers/remove", { managerId: id });
-      setNotice("Disconnected. Saved logins from it can no longer fill sign-ins.");
+      setNotice(
+        "Disconnected. Saved logins from it can no longer fill sign-ins.",
+      );
       onChanged?.();
       await refresh();
     } catch (failure) {
-      setFormError(failure instanceof Error ? failure.message : "Could not remove this password manager.");
+      setFormError(
+        failure instanceof Error
+          ? failure.message
+          : "Could not remove this password manager.",
+      );
     } finally {
       removing.current = undefined;
     }
@@ -116,7 +144,10 @@ export function PasswordManagerPanel({
           </span>
           <div>
             <h3>Sign in from your password manager</h3>
-            <p>Connect it once; Aiko can fill app sign-ins from it. Your master password never leaves the app.</p>
+            <p>
+              Connect it once; Aiko can fill app sign-ins from it. Your master
+              password never leaves the app.
+            </p>
           </div>
         </div>
         {loadError && (
@@ -150,14 +181,18 @@ export function PasswordManagerPanel({
               {manager.entries.map((entry) => (
                 <li key={entry.reference}>
                   <span>{entry.label}</span>
-                  <span className="manager-entry-domain">{entry.website ?? "any app"}</span>
+                  <span className="manager-entry-domain">
+                    {entry.website ?? "any app"}
+                  </span>
                 </li>
               ))}
             </ul>
           </article>
         ))}
         {managers && !managers.length && !loadError && (
-          <p className="aiko-fineprint">No password manager connected yet. Add one below.</p>
+          <p className="aiko-fineprint">
+            No password manager connected yet. Add one below.
+          </p>
         )}
         <form className="manager-form" onSubmit={(event) => void save(event)}>
           <h3>Connect a password manager</h3>
@@ -215,11 +250,15 @@ export function PasswordManagerPanel({
                     maxLength={60}
                     placeholder="GitHub login"
                     value={entry.label}
-                    onChange={(event) => setEntry(index, { label: event.target.value })}
+                    onChange={(event) =>
+                      setEntry(index, { label: event.target.value })
+                    }
                   />
                 </div>
                 <div className="credential-field">
-                  <label htmlFor={`entry-website-${index}`}>Website (optional)</label>
+                  <label htmlFor={`entry-website-${index}`}>
+                    Website (optional)
+                  </label>
                   <input
                     id={`entry-website-${index}`}
                     type="text"
@@ -229,11 +268,15 @@ export function PasswordManagerPanel({
                     maxLength={253}
                     placeholder="github.com"
                     value={entry.website}
-                    onChange={(event) => setEntry(index, { website: event.target.value })}
+                    onChange={(event) =>
+                      setEntry(index, { website: event.target.value })
+                    }
                   />
                 </div>
                 <div className="credential-field">
-                  <label htmlFor={`entry-reference-${index}`}>Secret reference</label>
+                  <label htmlFor={`entry-reference-${index}`}>
+                    Secret reference
+                  </label>
                   <input
                     id={`entry-reference-${index}`}
                     type="text"
@@ -241,9 +284,15 @@ export function PasswordManagerPanel({
                     autoComplete="off"
                     spellCheck={false}
                     maxLength={500}
-                    placeholder={kind === "onepassword" ? "op://Vault/Item/password" : "secret reference"}
+                    placeholder={
+                      kind === "onepassword"
+                        ? "op://Vault/Item/password"
+                        : "secret reference"
+                    }
                     value={entry.reference}
-                    onChange={(event) => setEntry(index, { reference: event.target.value })}
+                    onChange={(event) =>
+                      setEntry(index, { reference: event.target.value })
+                    }
                   />
                 </div>
               </div>
@@ -253,7 +302,12 @@ export function PasswordManagerPanel({
             <button
               type="button"
               className="text-button"
-              onClick={() => setEntries((current) => [...current, { label: "", website: "", reference: "" }])}
+              onClick={() =>
+                setEntries((current) => [
+                  ...current,
+                  { label: "", website: "", reference: "" },
+                ])
+              }
             >
               <Plus size={15} aria-hidden="true" /> Add another saved login
             </button>
@@ -263,18 +317,28 @@ export function PasswordManagerPanel({
               {formError}
             </p>
           )}
-          <button type="submit" className="button primary credential-submit" disabled={saving}>
+          <button
+            type="submit"
+            className="button primary credential-submit"
+            disabled={saving}
+          >
             {saving ? (
               <>
-                <LoaderCircle size={16} className="app-spinner" aria-hidden="true" /> Saving…
+                <LoaderCircle
+                  size={16}
+                  className="app-spinner"
+                  aria-hidden="true"
+                />{" "}
+                Saving…
               </>
             ) : (
               "Connect password manager"
             )}
           </button>
           <p className="aiko-fineprint">
-            The service token is encrypted on Aiko’s host and is used only when you choose to fill a
-            sign-in. It is never shown again or shared with the assistant.
+            The service token is encrypted on Aiko’s host and is used only when
+            you choose to fill a sign-in. It is never shown again or shared with
+            the assistant.
           </p>
         </form>
       </section>

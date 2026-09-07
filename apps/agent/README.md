@@ -34,26 +34,37 @@ The actual 29-tool playground browser client is now mounted through native Tardi
 
 See [setup, privacy boundaries and real-browser verification](../../docs/aiko-browser.md). This uses a separately supplied stock Chromium executable; it does not activate CloakBrowser, account login, HAR-to-API learning or VMs.
 
+## Password managers and login import
+
+The connect mini app can fill app sign-ins from the owner's own password manager and stage logins from a CSV export:
+
+- **Saved managers.** `src/password-managers.ts` stores per-account bindings for 1Password, Keeper Secrets Manager, HashiCorp Vault (KV v2) and Doppler. Provider tokens are sealed at rest with AES-256-GCM under `AIKO_MANAGER_KEY` (base64 32 bytes); without that key the feature fails closed. The mini app only ever sees metadata: manager name, kind and opaque saved references with labels. The HashiCorp Vault cluster address is operator configuration (`AIKO_HASHICORP_VAULT_ADDRESS`, optional `AIKO_HASHICORP_VAULT_NAMESPACE`).
+- **Private fill.** During a native sign-in the owner can pick a saved reference; the engine resolves it server-side and submits it into the owner's private browser page (`AikoLoginSubmitted` receipts unchanged). The password never reaches the mini app, the model or any log.
+- **CSV staging.** The mini app parses a password manager export entirely on-device: password, note and token columns are discarded by the parser and never uploaded. Only names, websites and usernames are sent; they stage app tiles (with prefilled usernames) that finish through the normal private sign-in.
+
 ## Architecture
 
-| File | Responsibility |
-| --- | --- |
-| `src/actor.ts` | Native actor, inference composition, unlimited-by-default tools with opt-in budget, mounted tools, bounded truthful replies and durable outbox |
-| `src/inference.ts` | Prior model-visible speech uses the accepted wording; original evidence stays immutable |
-| `src/server.ts` | Loopback HTTP, operator/Mini App authorization, bounded admission, native Bun host and recovery |
-| `src/telegram.ts`, `src/telegram-polling.ts` | Private sender verification, allowlist/explicit public onboarding, durable polling cursor, bounded delivery |
-| `src/accounts.ts`, `src/plane.ts`, `src/plane-auth.ts` | Private account storage, transport-neutral discovery/memory reads, account-bound credential grants |
-| `src/log-memory.ts` | Native, replay-safe follower from each account's selected logs into entity-learn |
-| `src/model-budget.ts`, `src/reply-policy.ts` | Durable paid-request reservations, bounded live answers and receipt-qualified citations |
-| `src/public-web.ts` | Read-only, SSRF-filtered, exact-user-URL public page tool with cited observations |
-| `src/telegram-control.ts`, `src/backup.ts` | Model-free Telegram commands and exclusive offline state snapshots |
-| `src/voice.ts` | Cancellation-aware ThinkFeel transport, shared limiter, circuit breaker, strict non-factual wording allowlist |
-| `src/capabilities.ts` | Explicitly synthetic source data and cited read receipt types; no independent memory/search engine |
-| `src/memory.ts` | Tardie 0.22 native bindings to actual entity-learn recall/get/history/sources/remember/forget/refresh; host-owned scope, approval and idempotency |
-| `src/browser.ts` | Native tool/inference binding, transient evidence, owner-scoped approvals and ambiguous-action recovery |
-| `src/browser-driver.ts`, `src/browser-proxy.ts` | Actual playground client lifecycle and bounded public IPv4 forwarding |
-| `src/vm.ts` | **Unmounted** native lifecycle component/provider contract; no concrete VM provisioning or authenticated browser adapter |
-| `src/config.ts`, `src/security.ts` | Private configuration, signature verification, body bounds and credential redaction |
+| File                                                   | Responsibility                                                                                                                                    |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/actor.ts`                                         | Native actor, inference composition, unlimited-by-default tools with opt-in budget, mounted tools, bounded truthful replies and durable outbox    |
+| `src/inference.ts`                                     | Prior model-visible speech uses the accepted wording; original evidence stays immutable                                                           |
+| `src/server.ts`                                        | Loopback HTTP, operator/Mini App authorization, bounded admission, native Bun host and recovery                                                   |
+| `src/telegram.ts`, `src/telegram-polling.ts`           | Private sender verification, allowlist/explicit public onboarding, durable polling cursor, bounded delivery                                       |
+| `src/accounts.ts`, `src/plane.ts`, `src/plane-auth.ts` | Private account storage, transport-neutral discovery/memory reads, account-bound credential grants                                                |
+| `src/log-memory.ts`                                    | Native, replay-safe follower from each account's selected logs into entity-learn                                                                  |
+| `src/model-budget.ts`, `src/reply-policy.ts`           | Durable paid-request reservations, bounded live answers and receipt-qualified citations                                                           |
+| `src/public-web.ts`                                    | Read-only, SSRF-filtered, exact-user-URL public page tool with cited observations                                                                 |
+| `src/telegram-control.ts`, `src/backup.ts`             | Model-free Telegram commands and exclusive offline state snapshots                                                                                |
+| `src/voice.ts`                                         | Cancellation-aware ThinkFeel transport, shared limiter, circuit breaker, strict non-factual wording allowlist                                     |
+| `src/capabilities.ts`                                  | Explicitly synthetic source data and cited read receipt types; no independent memory/search engine                                                |
+| `src/memory.ts`                                        | Tardie 0.22 native bindings to actual entity-learn recall/get/history/sources/remember/forget/refresh; host-owned scope, approval and idempotency |
+| `src/browser.ts`                                       | Native tool/inference binding, transient evidence, owner-scoped approvals and ambiguous-action recovery                                           |
+| `src/browser-driver.ts`, `src/browser-proxy.ts`        | Actual playground client lifecycle and bounded public IPv4 forwarding                                                                             |
+| `src/vm.ts`                                            | **Unmounted** native lifecycle component/provider contract; no concrete VM provisioning or authenticated browser adapter                          |
+| `src/connectors.ts`                                    | Connector engine: owner-scoped connections, native sign-ins, password manager fill and CSV staging                                                |
+| `src/connector-api.ts`                                 | Mini App connector HTTP surface with per-route field allowlists                                                                                   |
+| `src/password-managers.ts`                             | Sealed 1Password/Keeper/Vault/Doppler bindings, reference validation and provider resolution                                                      |
+| `src/config.ts`, `src/security.ts`                     | Private configuration, signature verification, body bounds and credential redaction                                                               |
 
 Tardie owns execution and effect recovery. There is no separate OpenAI SDK loop, entity-learn scheduler, generic shell, credential loader or arbitrary JavaScript tool. Optional public browsing uses the reviewed browser schemas; interactions require approval. This does not grant authenticated app access. Memory writes are local agent claims, not changes to connected apps. The native OpenAI-compatible adapter binds `glm-5.3-flash` to `https://gateway.codegraff.com/v1`; tests exercise that adapter with a mocked stream.
 

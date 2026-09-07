@@ -1,5 +1,8 @@
 import { parseModelRouting, type ModelRoutingConfig } from "./model-routing.ts";
-import { parseConnectorVault, type ConnectorVaultConfig } from "./connector-vault.ts";
+import {
+  parseConnectorVault,
+  type ConnectorVaultConfig,
+} from "./connector-vault.ts";
 import { lstat, readFile, mkdir, chmod } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, isAbsolute } from "node:path";
@@ -21,7 +24,12 @@ export type AikoConfig = {
   operatorToken: string;
   modelKey?: string;
   /** Separate opt-in from paid chat inference; explicit owners, revision and global daily embedding allowance. */
-  memoryEmbedding?: { apiKey: string; owners: readonly string[]; maxUsdPerDay: number; revision: string };
+  memoryEmbedding?: {
+    apiKey: string;
+    owners: readonly string[];
+    maxUsdPerDay: number;
+    revision: string;
+  };
   cerebrasKey?: string;
   modelRouting?: ModelRoutingConfig;
   arcadeKey?: string;
@@ -131,17 +139,36 @@ export async function loadConfig(
       "Live inference requires explicit AIKO_ALLOW_PAID_INFERENCE=true",
     );
   const embeddingFlag = get("AIKO_MEMORY_CLOUD_EMBEDDINGS") ?? "false";
-  if (!["true", "false"].includes(embeddingFlag)) throw new Error("Invalid cloud memory opt-in");
+  if (!["true", "false"].includes(embeddingFlag))
+    throw new Error("Invalid cloud memory opt-in");
   let memoryEmbedding: AikoConfig["memoryEmbedding"];
   if (embeddingFlag === "true") {
     const apiKey = get("OPENROUTER_EMBEDDING_API_KEY");
-    const owners = (get("AIKO_MEMORY_EMBEDDING_OWNERS") ?? "").split(",").map(v => v.trim());
+    const owners = (get("AIKO_MEMORY_EMBEDDING_OWNERS") ?? "")
+      .split(",")
+      .map((v) => v.trim());
     const maxUsdPerDay = Number(get("AIKO_MEMORY_EMBEDDING_MAX_USD_PER_DAY"));
     const revision = get("AIKO_MEMORY_EMBEDDING_REVISION") ?? "";
-    if (mode !== "live" || !apiKey || /[\r\n]/.test(apiKey) || !owners.length || owners.some(o => !safeUserId(o)) ||
-      !Number.isFinite(maxUsdPerDay) || maxUsdPerDay <= 0 || maxUsdPerDay > 10 || !/^[A-Za-z0-9_.:/-]{1,128}$/.test(revision))
-      throw new Error("Cloud memory requires live mode, a dedicated environment key, explicit owner allowlist, revision and daily USD cap");
-    memoryEmbedding = { apiKey, owners: [...new Set(owners)], maxUsdPerDay, revision };
+    if (
+      mode !== "live" ||
+      !apiKey ||
+      /[\r\n]/.test(apiKey) ||
+      !owners.length ||
+      owners.some((o) => !safeUserId(o)) ||
+      !Number.isFinite(maxUsdPerDay) ||
+      maxUsdPerDay <= 0 ||
+      maxUsdPerDay > 10 ||
+      !/^[A-Za-z0-9_.:/-]{1,128}$/.test(revision)
+    )
+      throw new Error(
+        "Cloud memory requires live mode, a dedicated environment key, explicit owner allowlist, revision and daily USD cap",
+      );
+    memoryEmbedding = {
+      apiKey,
+      owners: [...new Set(owners)],
+      maxUsdPerDay,
+      revision,
+    };
   }
   const instanceId = get("AIKO_INSTANCE_ID") ?? mode;
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(instanceId))
@@ -207,7 +234,8 @@ export async function loadConfig(
     get("AIKO_STATE_DIR") ??
     join(homedir(), ".local/share/unbrowse/aiko", mode);
   if (!isAbsolute(stateDir)) throw new Error("AIKO_STATE_DIR must be absolute");
-  if (!options.readonly) await mkdir(stateDir, { recursive: true, mode: 0o700 });
+  if (!options.readonly)
+    await mkdir(stateDir, { recursive: true, mode: 0o700 });
   const stateStat = await lstat(stateDir);
   if (
     !stateStat.isDirectory() ||
@@ -254,9 +282,12 @@ export async function loadConfig(
     get("AIKO_PLANE_CREDENTIALS") ?? "[]",
   );
   const replyStyle = get("AIKO_REPLY_STYLE") ?? "thinkfeel";
-  if (replyStyle !== "thinkfeel" && replyStyle !== "direct") throw new Error("Invalid reply style");
+  if (replyStyle !== "thinkfeel" && replyStyle !== "direct")
+    throw new Error("Invalid reply style");
   const voiceEnabled =
-    mode === "live" && replyStyle === "thinkfeel" && get("AIKO_ALLOW_THINKFEEL") === "true";
+    mode === "live" &&
+    replyStyle === "thinkfeel" &&
+    get("AIKO_ALLOW_THINKFEEL") === "true";
   const voiceKey = get("THINKFEEL_API_KEY");
   if (voiceEnabled && !voiceKey)
     throw new Error("ThinkFeel enabled without a key");
@@ -317,12 +348,27 @@ export async function loadConfig(
     modelKey,
     memoryEmbedding,
     cerebrasKey: get("CEREBRAS_API_KEY"),
-    modelRouting: parseModelRouting(Object.fromEntries(["AIKO_MODEL", "AIKO_CONVERSATION_PROVIDER", "AIKO_CONVERSATION_MODEL", "AIKO_RAG_PROVIDER", "AIKO_RAG_MODEL", "AIKO_BROWSER_PROVIDER", "AIKO_BROWSER_MODEL"].map(k => [k, get(k)]))),
+    modelRouting: parseModelRouting(
+      Object.fromEntries(
+        [
+          "AIKO_MODEL",
+          "AIKO_CONVERSATION_PROVIDER",
+          "AIKO_CONVERSATION_MODEL",
+          "AIKO_RAG_PROVIDER",
+          "AIKO_RAG_MODEL",
+          "AIKO_BROWSER_PROVIDER",
+          "AIKO_BROWSER_MODEL",
+        ].map((k) => [k, get(k)]),
+      ),
+    ),
     arcadeKey: get("ARCADE_API_KEY"),
     codeMode: get("AIKO_CODE_MODE") === "true",
     connectorVault: parseConnectorVault(get("AIKO_CONNECTOR_VAULT_JSON")),
     managerKey: parseManagerKey(get("AIKO_MANAGER_KEY")),
-    hashicorpVault: parseVaultAddress(get("AIKO_HASHICORP_VAULT_ADDRESS"), get("AIKO_HASHICORP_VAULT_NAMESPACE")),
+    hashicorpVault: parseVaultAddress(
+      get("AIKO_HASHICORP_VAULT_ADDRESS"),
+      get("AIKO_HASHICORP_VAULT_NAMESPACE"),
+    ),
     voiceKey,
     persona: get("THINKFEEL_PERSONA_ID") ?? PERSONA,
     voiceEnabled,

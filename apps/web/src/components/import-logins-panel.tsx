@@ -1,7 +1,11 @@
 import { useRef, useState } from "react";
 import { FileUp, LoaderCircle } from "lucide-react";
 import { MiniAppScreen } from "./mini-app-screen";
-import { parseLoginCsv, type CsvMapping, type CsvTable } from "../lib/csv-import";
+import {
+  parseLoginCsv,
+  type CsvMapping,
+  type CsvTable,
+} from "../lib/csv-import";
 import {
   csvMappingFor,
   previewConnectorCsv,
@@ -47,10 +51,17 @@ export function ImportLoginsPanel({
         setFileName(source.name);
       } catch (failure) {
         setTable(undefined);
-        setError(failure instanceof Error ? failure.message : "This file could not be read as a CSV export.");
+        setError(
+          failure instanceof Error
+            ? failure.message
+            : "This file could not be read as a CSV export.",
+        );
       }
     };
-    reader.onerror = () => setError("This file could not be read. Export it again from your password manager.");
+    reader.onerror = () =>
+      setError(
+        "This file could not be read. Export it again from your password manager.",
+      );
     reader.readAsText(source);
   }
   function previews() {
@@ -72,12 +83,15 @@ export function ImportLoginsPanel({
     setImporting(true);
     setError("");
     try {
-      const result = await request<{ imported: number; updated: number; skipped: { row: number; reason: string }[] }>(
-        "/imports/logins",
-        { rows: ready },
-      );
+      const result = await request<{
+        imported: number;
+        updated: number;
+        skipped: { row: number; reason: string }[];
+      }>("/imports/logins", { rows: ready });
       onImported();
-      const extra = result.skipped.length ? ` ${result.skipped.length} row${result.skipped.length === 1 ? " was" : "s were"} skipped.` : "";
+      const extra = result.skipped.length
+        ? ` ${result.skipped.length} row${result.skipped.length === 1 ? " was" : "s were"} skipped.`
+        : "";
       setNotice(
         `Added ${result.imported} app${result.imported === 1 ? "" : "s"}${
           result.updated ? `, updated ${result.updated}` : ""
@@ -86,7 +100,11 @@ export function ImportLoginsPanel({
       setTable(undefined);
       setFileName("");
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "The import could not be completed.");
+      setError(
+        failure instanceof Error
+          ? failure.message
+          : "The import could not be completed.",
+      );
     } finally {
       setImporting(false);
     }
@@ -94,18 +112,28 @@ export function ImportLoginsPanel({
   const preview = previews();
   const readyCount = preview.filter((p) => p.status === "ready").length;
   const columns = table?.columns ?? [];
-  const select = (field: keyof CsvMapping) => (event: React.ChangeEvent<HTMLSelectElement>) =>
-    setMapping((current) => (current ? { ...current, [field]: Number(event.target.value) } : current));
+  const select =
+    (field: keyof CsvMapping) =>
+    (event: React.ChangeEvent<HTMLSelectElement>) =>
+      setMapping((current) =>
+        current ? { ...current, [field]: Number(event.target.value) } : current,
+      );
   return (
     <MiniAppScreen title="Import logins" close={onClose}>
-      <section aria-label="Import from a password manager export" aria-busy={importing}>
+      <section
+        aria-label="Import from a password manager export"
+        aria-busy={importing}
+      >
         <div className="credential-identity">
           <span className="credential-symbol">
             <FileUp size={26} aria-hidden="true" />
           </span>
           <div>
             <h3>From an existing password manager</h3>
-            <p>Upload a CSV export from 1Password, Bitwarden, Chrome, NordPass and most others.</p>
+            <p>
+              Upload a CSV export from 1Password, Bitwarden, Chrome, NordPass
+              and most others.
+            </p>
           </div>
         </div>
         {error && (
@@ -132,7 +160,11 @@ export function ImportLoginsPanel({
                 event.target.value = "";
               }}
             />
-            <button type="button" className="button primary credential-submit" onClick={() => file.current?.click()}>
+            <button
+              type="button"
+              className="button primary credential-submit"
+              onClick={() => file.current?.click()}
+            >
               Choose export file
             </button>
           </>
@@ -140,17 +172,28 @@ export function ImportLoginsPanel({
         {table && mapping && (
           <>
             <p className="aiko-fineprint">
-              {fileName} — {table.rows.length} row{table.rows.length === 1 ? "" : "s"}. Password columns are
-              removed on this device and never uploaded.
+              {fileName} — {table.rows.length} row
+              {table.rows.length === 1 ? "" : "s"}. Password columns are removed
+              on this device and never uploaded.
             </p>
             <div className="credential-fields import-mapping">
               {(["name", "domain", "identity"] as const).map((field) => (
                 <div className="credential-field" key={field}>
                   <label htmlFor={`import-column-${field}`}>
-                    {field === "name" ? "Name column" : field === "domain" ? "Website column" : "Username column"}
+                    {field === "name"
+                      ? "Name column"
+                      : field === "domain"
+                        ? "Website column"
+                        : "Username column"}
                   </label>
-                  <select id={`import-column-${field}`} value={mapping[field]} onChange={select(field)}>
-                    <option value={-1}>{field === "name" ? "None" : "Choose a column…"}</option>
+                  <select
+                    id={`import-column-${field}`}
+                    value={mapping[field]}
+                    onChange={select(field)}
+                  >
+                    <option value={-1}>
+                      {field === "name" ? "None" : "Choose a column…"}
+                    </option>
                     {columns.map((column, index) =>
                       column.ignored ? null : (
                         <option key={index} value={index}>
@@ -165,17 +208,33 @@ export function ImportLoginsPanel({
             <ul className="import-preview" aria-label="Rows ready to import">
               {preview.slice(0, 200).map((row) => (
                 <li key={row.row} className={`import-row is-${row.status}`}>
-                  <span className="import-row-name">{row.login?.name ?? `Row ${row.row}`}</span>
-                  <span className="import-row-domain">{row.login?.website}</span>
+                  <span className="import-row-name">
+                    {row.login?.name ?? `Row ${row.row}`}
+                  </span>
+                  <span className="import-row-domain">
+                    {row.login?.website}
+                  </span>
                   <span className="import-row-status">{row.message}</span>
                 </li>
               ))}
             </ul>
-            {preview.length > 200 && <p className="aiko-fineprint">Showing the first 200 rows.</p>}
-            <button type="button" className="button primary credential-submit" disabled={importing || !readyCount} onClick={() => void submit()}>
+            {preview.length > 200 && (
+              <p className="aiko-fineprint">Showing the first 200 rows.</p>
+            )}
+            <button
+              type="button"
+              className="button primary credential-submit"
+              disabled={importing || !readyCount}
+              onClick={() => void submit()}
+            >
               {importing ? (
                 <>
-                  <LoaderCircle size={16} className="app-spinner" aria-hidden="true" /> Importing…
+                  <LoaderCircle
+                    size={16}
+                    className="app-spinner"
+                    aria-hidden="true"
+                  />{" "}
+                  Importing…
                 </>
               ) : (
                 `Import ${readyCount} app${readyCount === 1 ? "" : "s"}`
@@ -195,8 +254,8 @@ export function ImportLoginsPanel({
           </>
         )}
         <p className="aiko-fineprint">
-          Imports stage the app and its username only. Passwords stay in your password manager — you
-          submit them during each app’s private sign-in.
+          Imports stage the app and its username only. Passwords stay in your
+          password manager — you submit them during each app’s private sign-in.
         </p>
       </section>
     </MiniAppScreen>

@@ -8,7 +8,23 @@ Live query-first Eatigo browsing, pending-observation indexing/reflection, sandb
 
 ## Cloudflare sandbox-native profile
 
-### Connection onboarding — implementation in progress
+### Connection onboarding — deployed 2026-09-07, provider fills gated
+
+The connection manager ships in the deployed Worker and Mini App as of
+2026-09-07: the drawer connects password managers (1Password, Keeper Secrets
+Manager, HashiCorp Vault KV v2, Doppler) and stages CSV login exports entirely
+on-device (password/note/token columns are discarded before upload). Fills
+resolve the saved reference server-side and submit it into the owner's private
+sign-in session; the password never reaches the Mini App, chat, model prompts
+or logs. Provider tokens are sealed at rest under `AIKO_MANAGER_KEY`.
+
+Runtime boundaries: Vault, Doppler and Keeper resolve inside the Worker;
+1Password's SDK requires the local desktop app, so its fills fail closed in the
+Worker until resolution moves to a Bun-capable host. Live provider validation,
+the real Telegram media test-chat, and per-app verified sign-ins remain open
+acceptance gates; none of these onboarding gates is claimed as passed.
+
+Historical rollout requirements that shaped the implementation:
 
 The existing web app drawer is a preview, not a deployed connection manager. The
 vault service has tenant-scoped encrypted credentials and verified sessions, but
@@ -55,12 +71,12 @@ claimed as passed.
 
 The current implementation runs native Tardigrade actors in Cloudflare Durable Objects and browser/media work in persistent, owner-isolated Codegraff VMs. A Worker deployment or a healthy `/ready` response does not prove Telegram cutover or end-to-end delivery.
 
-| Surface | Cloudflare target | Earlier local profile |
-| --- | --- | --- |
-| Telegram ingress | Verified webhook after guarded handoff | `unlock-aiko.service` polling with a durable inbox/cursor |
-| Runtime and memory | Native Tardie host; per-owner Durable Object SQLite and `entity-learn/cloudflare` | Native Bun host; private per-account local SQLite stores |
-| Web access | Query-first `web_search`, then browser navigation across public sites in the owner's VM | Explicit-URL `web_read`; separately enabled local browser with interaction approvals |
-| Inference policy | `toolCallLimit: null`; no daily inference allowances or legacy 30-second request override | Optional tool budget plus the local daily/concurrency allowances documented below |
+| Surface            | Cloudflare target                                                                         | Earlier local profile                                                                |
+| ------------------ | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Telegram ingress   | Verified webhook after guarded handoff                                                    | `unlock-aiko.service` polling with a durable inbox/cursor                            |
+| Runtime and memory | Native Tardie host; per-owner Durable Object SQLite and `entity-learn/cloudflare`         | Native Bun host; private per-account local SQLite stores                             |
+| Web access         | Query-first `web_search`, then browser navigation across public sites in the owner's VM   | Explicit-URL `web_read`; separately enabled local browser with interaction approvals |
+| Inference policy   | `toolCallLimit: null`; no daily inference allowances or legacy 30-second request override | Optional tool budget plus the local daily/concurrency allowances documented below    |
 
 ### One foreground conversation and hidden actors
 

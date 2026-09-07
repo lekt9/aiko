@@ -26,8 +26,13 @@ export type ConnectorConnection = {
 };
 export type ConnectorConnect = ConnectorConnection;
 
-export type ManagerKind = "onepassword" | "keeper" | "hashicorp-vault" | "doppler";
-export type ManagerEntry = { reference: string; label: string; website?: string };
+export type ManagerKind =
+  "onepassword" | "keeper" | "hashicorp-vault" | "doppler";
+export type ManagerEntry = {
+  reference: string;
+  label: string;
+  website?: string;
+};
 export type PasswordManager = {
   id: string;
   kind: ManagerKind;
@@ -42,9 +47,12 @@ export const managerKindLabels: Record<ManagerKind, string> = {
   doppler: "Doppler",
 };
 export const managerKindHints: Record<ManagerKind, string> = {
-  onepassword: "Service account token · references like op://Vault/Item/password",
-  keeper: "One-line config · references like keeper://RECORD_UID/field/password",
-  "hashicorp-vault": "Service token · references like vault://secret/data/app/token#value",
+  onepassword:
+    "Service account token · references like op://Vault/Item/password",
+  keeper:
+    "One-line config · references like keeper://RECORD_UID/field/password",
+  "hashicorp-vault":
+    "Service token · references like vault://secret/data/app/token#value",
   doppler: "Service token · references like doppler://API_KEY",
 };
 
@@ -52,7 +60,11 @@ export const managerKindHints: Record<ManagerKind, string> = {
 export function loginConnectionId(search: string): string | undefined {
   const ids = new URLSearchParams(search).getAll("connection");
   if (ids.length !== 1) return;
-  return /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(ids[0]!) ? ids[0] : undefined;
+  return /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(
+    ids[0]!,
+  )
+    ? ids[0]
+    : undefined;
 }
 
 /** Normalize an explicit website address. Never guess a domain from an app name. */
@@ -108,7 +120,9 @@ export async function connectorRequest<T>(
   const timeout = AbortSignal.timeout(20_000);
   const settled = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const response = await fetch(
-    (path.startsWith("/secretary") || path.startsWith("/approvals")) ? `/api${path}` : `/api/connectors${path}`,
+    path.startsWith("/secretary") || path.startsWith("/approvals")
+      ? `/api${path}`
+      : `/api/connectors${path}`,
     {
       method: body ? "POST" : "GET",
       headers,
@@ -156,7 +170,12 @@ export async function connectorRequest<T>(
           "Secretary Mode is unavailable. Refresh and try again.",
       );
     }
-    if (path.startsWith("/approvals")) throw new Error(response.status === 404 ? "This approval expired or was already handled. Refresh the queue." : "Could not update approvals. Please retry.");
+    if (path.startsWith("/approvals"))
+      throw new Error(
+        response.status === 404
+          ? "This approval expired or was already handled. Refresh the queue."
+          : "Could not update approvals. Please retry.",
+      );
     if (path === "/browser")
       throw new Error(
         "Password sign-in is unavailable. No credentials were collected.",

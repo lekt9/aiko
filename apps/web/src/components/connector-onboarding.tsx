@@ -26,7 +26,13 @@ import {
   type ConnectorConnection,
 } from "../lib/connectors";
 
-type PendingApproval = {id:string;name:string;args:unknown;snapshot:string;expires:number};
+type PendingApproval = {
+  id: string;
+  name: string;
+  args: unknown;
+  snapshot: string;
+  expires: number;
+};
 type DrawerApp = { name: string; domain: string };
 const suggestedApps: DrawerApp[] = [
   { name: "LinkedIn", domain: "linkedin.com" },
@@ -155,7 +161,7 @@ export function ConnectorOnboarding() {
           break;
         } catch (failure) {
           lastFailure = failure;
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          await new Promise((resolve) => setTimeout(resolve, 2000));
         }
       }
       if (lastFailure) throw lastFailure;
@@ -231,24 +237,46 @@ export function ConnectorOnboarding() {
     let timer: ReturnType<typeof setTimeout>;
     const refreshQueue = async () => {
       try {
-        const queue = await request<{pending:PendingApproval[]}>("/approvals", undefined, abort.signal);
-        if (!abort.signal.aborted) {setApprovals(queue.pending); setApprovalLoading(false); setApprovalError("");}
+        const queue = await request<{ pending: PendingApproval[] }>(
+          "/approvals",
+          undefined,
+          abort.signal,
+        );
+        if (!abort.signal.aborted) {
+          setApprovals(queue.pending);
+          setApprovalLoading(false);
+          setApprovalError("");
+        }
       } catch {
-        if (!abort.signal.aborted) setApprovalError("Could not refresh approvals. Retrying…");
-      } finally { if (!abort.signal.aborted) timer=setTimeout(refreshQueue, 3000); }
+        if (!abort.signal.aborted)
+          setApprovalError("Could not refresh approvals. Retrying…");
+      } finally {
+        if (!abort.signal.aborted) timer = setTimeout(refreshQueue, 3000);
+      }
     };
     void refreshQueue();
-    return () => {abort.abort();clearTimeout(timer);};
+    return () => {
+      abort.abort();
+      clearTimeout(timer);
+    };
   }, [signedIn, accountVersion]);
-  async function decideApproval(id:string, approve:boolean) {
-    if(deciding) return;
-    setDeciding(true);setApprovalError("");
+  async function decideApproval(id: string, approve: boolean) {
+    if (deciding) return;
+    setDeciding(true);
+    setApprovalError("");
     try {
-      await request("/approvals", {id,approve});
-      const queue=await request<{pending:PendingApproval[]}>("/approvals");
+      await request("/approvals", { id, approve });
+      const queue = await request<{ pending: PendingApproval[] }>("/approvals");
       setApprovals(queue.pending);
-    } catch(failure) { setApprovalError(failure instanceof Error ? failure.message : "Could not confirm the decision. Refresh and try again."); }
-    finally {setDeciding(false);}
+    } catch (failure) {
+      setApprovalError(
+        failure instanceof Error
+          ? failure.message
+          : "Could not confirm the decision. Refresh and try again.",
+      );
+    } finally {
+      setDeciding(false);
+    }
   }
   function clearAccount() {
     accountRequests.current?.abort();
@@ -276,14 +304,21 @@ export function ConnectorOnboarding() {
   useEffect(() => {
     const id = launchConnection.current;
     // Wait for server-validated identity and this account's current capabilities.
-    if (!id || launchOpened.current || !signedIn || !connections || pending) return;
+    if (!id || launchOpened.current || !signedIn || !connections || pending)
+      return;
     launchOpened.current = true;
-    const connection = connections.find(item => item.id === id);
+    const connection = connections.find((item) => item.id === id);
     if (!connection) {
-      setError("This sign-in is no longer available for your account. Add the app to start again.");
+      setError(
+        "This sign-in is no longer available for your account. Add the app to start again.",
+      );
       return;
     }
-    if (connection.provider === "browser" && connection.status === "pending" && nativeInline) {
+    if (
+      connection.provider === "browser" &&
+      connection.status === "pending" &&
+      nativeInline
+    ) {
       setNativeDomain(connection.connectorId.replace(/^browser:/, ""));
       setNativeUsername(connection.importedUsername);
       setSelectedConnection(undefined);
@@ -322,7 +357,9 @@ export function ConnectorOnboarding() {
         setNativeDomain(app.domain);
         setNativeConnection(response.id);
         const list = await refresh();
-        setNativeUsername(list?.find((item) => item.id === response.id)?.importedUsername);
+        setNativeUsername(
+          list?.find((item) => item.id === response.id)?.importedUsername,
+        );
         return;
       }
       const url = safeAuthorizationUrl(response.authorizationUrl);
@@ -415,23 +452,60 @@ export function ConnectorOnboarding() {
     (c) => c.id === selectedConnection?.id,
   );
   const resumeUrl = safeAuthorizationUrl(selected?.authorizationUrl);
-  if (signedIn && (approvals.length > 0 || approvalLoading)) return (
-    <section className="approval-screen" aria-labelledby="approval-title">
-      <h2 id="approval-title">{approvalLoading ? "Checking approvals…" : `Approvals (${approvals.length})`}</h2>
-      <p>Review what Aiko wants to do. Your apps return when the queue is clear.</p>
-      {approvalError && <p role="alert" className="credential-error">{approvalError}</p>}
-      {approvals.map(item => <article className="approval-card" key={item.id}>
-        <h3>{item.name.replace(/_/g, " ")}</h3>
-        <p>Expires {new Date(item.expires).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</p>
-        <pre aria-label="Requested action">{JSON.stringify(item.args,null,2)}</pre>
-        <details><summary>Review page context</summary><pre>{item.snapshot}</pre></details>
-        <div className="connector-actions">
-          <button className="button" disabled={deciding} onClick={() => void decideApproval(item.id,false)}>Reject</button>
-          <button className="button primary" disabled={deciding} onClick={() => void decideApproval(item.id,true)}>Approve</button>
-        </div>
-      </article>)}
-    </section>
-  );
+  if (signedIn && (approvals.length > 0 || approvalLoading))
+    return (
+      <section className="approval-screen" aria-labelledby="approval-title">
+        <h2 id="approval-title">
+          {approvalLoading
+            ? "Checking approvals…"
+            : `Approvals (${approvals.length})`}
+        </h2>
+        <p>
+          Review what Aiko wants to do. Your apps return when the queue is
+          clear.
+        </p>
+        {approvalError && (
+          <p role="alert" className="credential-error">
+            {approvalError}
+          </p>
+        )}
+        {approvals.map((item) => (
+          <article className="approval-card" key={item.id}>
+            <h3>{item.name.replace(/_/g, " ")}</h3>
+            <p>
+              Expires{" "}
+              {new Date(item.expires).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </p>
+            <pre aria-label="Requested action">
+              {JSON.stringify(item.args, null, 2)}
+            </pre>
+            <details>
+              <summary>Review page context</summary>
+              <pre>{item.snapshot}</pre>
+            </details>
+            <div className="connector-actions">
+              <button
+                className="button"
+                disabled={deciding}
+                onClick={() => void decideApproval(item.id, false)}
+              >
+                Reject
+              </button>
+              <button
+                className="button primary"
+                disabled={deciding}
+                onClick={() => void decideApproval(item.id, true)}
+              >
+                Approve
+              </button>
+            </div>
+          </article>
+        ))}
+      </section>
+    );
   return (
     <section
       className="connector-onboarding app-drawer"
@@ -607,7 +681,10 @@ export function ConnectorOnboarding() {
                 aria-label={`${connectionName(connection)} — ${connection.status === "connected" ? "connected" : connection.status === "pending" ? "finish sign-in" : "needs attention"}. Manage connection`}
               >
                 <span className="drawer-icon-wrap">
-                  <AppTileIcon name={connectionName(connection)} domain={faviconDomainOf(connection)} />
+                  <AppTileIcon
+                    name={connectionName(connection)}
+                    domain={faviconDomainOf(connection)}
+                  />
                   {connection.status === "connected" && (
                     <span className="drawer-connected-badge">
                       <Check size={12} aria-hidden="true" />
@@ -653,7 +730,11 @@ export function ConnectorOnboarding() {
           >
             Browse apps
           </button>
-          <button className="button" onClick={() => setImportOpen(true)}>
+          <button
+            className="button"
+            disabled={!signedIn}
+            onClick={() => setImportOpen(true)}
+          >
             <FileUp size={15} aria-hidden="true" /> Import from a CSV export
           </button>
         </div>
@@ -681,9 +762,7 @@ export function ConnectorOnboarding() {
               >
                 <AppTileIcon name={app.name} domain={app.domain} />
                 <span className="drawer-tile-name">{app.name}</span>
-                <span className="drawer-tile-status">
-                  {"Add login"}
-                </span>
+                <span className="drawer-tile-status">{"Add login"}</span>
               </button>
             ))}
             <button
@@ -726,10 +805,7 @@ export function ConnectorOnboarding() {
         </details>
       )}
       {addWebsite && (
-        <MiniAppScreen
-          title="Add a website"
-          close={() => setAddWebsite(false)}
-        >
+        <MiniAppScreen title="Add a website" close={() => setAddWebsite(false)}>
           <div className="credential-identity">
             <span className="credential-symbol">
               <Globe size={26} aria-hidden="true" />
@@ -819,7 +895,10 @@ export function ConnectorOnboarding() {
           }}
         >
           <div className="credential-identity">
-            <AppTileIcon name={connectionName(selected)} domain={faviconDomainOf(selected)} />
+            <AppTileIcon
+              name={connectionName(selected)}
+              domain={faviconDomainOf(selected)}
+            />
             <div>
               <h3>{connectionName(selected)}</h3>
               <p>

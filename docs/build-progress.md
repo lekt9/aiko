@@ -62,3 +62,30 @@ Initial architecture: synthetic in-memory web demo and its original SDK. The lat
 - Runtime resolution selects the provider by kind from the sources row; the maintainer fails closed for unknown kinds, records the error on the job, publishes no session and keeps retrieval in recovery. Bitwarden's official JS SDK is still pre-release WASM-only, so that kind is intentionally deferred rather than hand-rolling its access-token crypto.
 - Tests: 11 new checks (per-kind reference acceptance/rejection including traversal, kind dispatch without cross-provider mixing, fail-closed unregistered kinds, kind-stable reconnection) — full backend suite 79/79 and workspace 112 passed / 47 skipped. Backend builds and strict typechecks pass. Found during testing: the maintainer claims queued jobs across tenants in the shared test schema, so new tests now clean up their queued jobs to keep the retry-budget test deterministic.
 - Demo UI boundary unchanged: the web preview still simulates manager connections and accepts no real credentials. Live provider validation, authorized service tokens and independent security review remain activation gates. No commits, deployment or real-account access.
+
+## Connect mini app: password managers and CSV onboarding · 2026-09-07
+
+- The connect mini app (gateway page drawer) now connects a password manager once and uses it during app sign-ins. New mini app screens: "Password managers" (add/list/disconnect) and "Import logins" (CSV export staging), plus a "Use a saved password manager" section inside the native sign-in panel.
+- Server side (apps/agent): `password-managers.ts` stores account-scoped bindings for 1Password, Keeper, HashiCorp Vault KV v2 and Doppler with per-kind opaque reference validation. Tokens are sealed at rest with AES-256-GCM under a new `AIKO_MANAGER_KEY` (base64 32-byte); the feature fails closed without it. Vault cluster address/namespace are operator config. Provider SDKs load lazily so the module never pulls them unless a fill happens.
+- New connector API routes with strict field allowlists: `GET/POST /api/connectors/password-managers[/add|/remove|/fill]` and `POST /api/connectors/imports/logins`. Fill resolves the saved reference server-side and submits it into the owner's private sign-in page through the existing native control seam; the password never reaches the mini app, model or logs. Removal tombstones records so in-flight fills fail closed.
+- Onboarding CSV import parses the export entirely on-device (reusing the demo vault's parser): password/notes/token columns are discarded before anything is read and never uploaded. Names, websites and usernames stage browser app tiles with prefilled usernames (≤500 rows per import, ≤1,000 staged per account, duplicates and private/userinfo domains skipped); each staged app still completes through its own private sign-in.
+- The connector store accepts a new `manager:` record type; hosts without a sealing key (for example the workerd composition) simply report the feature unavailable. `createService` gained a `managerResolvers` test seam.
+- Tests: 9 new bun tests (reference syntax per provider, seal-at-rest/no-token-in-listings, fail-closed without key, tombstoned removal, CSV staging/dedupe/skips, server-side fill with completion, cross-owner and unknown-reference refusals, and a full HTTP round trip add→list→stage→fill with no token or password in any response). Agent suite 577 pass / 1 pre-existing failure (`shared-browser-library` tardie graph check, present on the pristine tree). Web typecheck and production build pass.
+- Real provider credentials, `AIKO_MANAGER_KEY` provisioning and live provider validation remain operator activation gates. No commits, deployment or real-account access.
+
+## Release aiko-20260907 · 2026-09-07
+
+- Finished the Arcade OAuth removal cleanup left stale in the tests
+  (`background`, `connector-browser-lifecycle`, `connector-login`); the agent
+  workspace typechecks clean again and the suite matches its baseline (single
+  pre-existing `shared-browser-library` graph-check failure).
+- Deployed the password-manager + CSV onboarding mini app to the Cloudflare
+  Worker: `AIKO_MANAGER_KEY` provisioned into the private live config and into
+  the deployment secrets; `AIKO_HASHICORP_VAULT_ADDRESS`/`NAMESPACE` pass
+  through when configured. The 1Password SDK stays out of the workerd bundle
+  (computed specifier) and fails closed there; Keeper/Vault/Doppler resolve
+  in-Worker.
+- `verify-connectors-deployment.ts` now exercises the deployed manager surface
+  with the canary account: add → sealed listing → foreign-reference fill
+  refusal → removal, asserting the provider token never appears in a response.
+- Tagged `aiko-20260907`; branch `native-aiko-20260906` pushed.
