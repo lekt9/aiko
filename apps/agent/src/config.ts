@@ -11,6 +11,9 @@ import { normalizeAgentBrowserAllowedDomains } from "@unbrowse/browser-harness/c
 import { parsePlaneCredentials, type PlaneCredential } from "./plane-auth.ts";
 import { DEFAULT_MODEL_LIMITS, type ModelLimits } from "./model-budget.ts";
 import { safeUserId } from "./security.ts";
+import { parseManagerKey, parseVaultAddress } from "./password-managers.ts";
+
+export { parseManagerKey, parseVaultAddress };
 
 export const PERSONA = "3c36e929-50ac-4971-919f-70e6fc6273b7";
 export type AikoConfig = {
@@ -85,38 +88,7 @@ export async function privateEnv(
   return result;
 }
 
-function parseManagerKey(value?: string) {
-  if (!value) return undefined;
-  if (!/^[A-Za-z0-9+/=_-]{43,44}$/.test(value.trim()))
-    throw new Error("AIKO_MANAGER_KEY must be a base64 32-byte key");
-  const key = Buffer.from(value.trim(), "base64");
-  if (key.length !== 32)
-    throw new Error("AIKO_MANAGER_KEY must decode to exactly 32 bytes");
-  return value.trim();
-}
 
-function parseVaultAddress(address?: string, namespace?: string) {
-  if (!address) {
-    if (namespace)
-      throw new Error("AIKO_HASHICORP_VAULT_NAMESPACE requires an address");
-    return undefined;
-  }
-  const url = new URL(address);
-  if (
-    url.protocol !== "https:" ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    (url.pathname && url.pathname !== "/")
-  )
-    throw new Error(
-      "AIKO_HASHICORP_VAULT_ADDRESS must be an origin-only HTTPS address",
-    );
-  if (namespace && (namespace.length > 200 || /\p{C}/u.test(namespace)))
-    throw new Error("Invalid AIKO_HASHICORP_VAULT_NAMESPACE");
-  return { address, ...(namespace ? { namespace } : {}) };
-}
 
 export async function loadConfig(
   env: NodeJS.ProcessEnv = process.env,

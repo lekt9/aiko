@@ -14,6 +14,7 @@ import { createToolRouterActor, routerEventKey } from "./tool-router.ts";
 import { routerCaller, validateRouterInput } from "./connector-router-host.ts";
 import { WorkflowController, createWorkflowStore, workflowDispatcher } from "./workflow-host.ts";
 import { ConnectorEngine } from "./connectors.ts";
+import { FilePasswordManagerHost } from "./password-managers.ts";
 import { connectorApi } from "./connector-api.ts";
 import { DurableObject } from "cloudflare:workers";
 import { createHash } from "node:crypto";
@@ -85,6 +86,7 @@ import { CONTROL_HTML } from "./control.ts";
 import { automationNextWake, automationEventKey, automationView, automationWakeEvent, automationAppendAllowed } from "./automations.ts";
 import { CONSOLE_HTML } from "./console.ts";
 import type { AikoConfig } from "./config.ts";
+import { parseManagerKey, parseVaultAddress } from "./password-managers.ts";
 
 export interface AikoCloudflareEnv {
   CONNECTOR_ASSETS?: Fetcher;
@@ -105,6 +107,9 @@ export interface AikoCloudflareEnv {
   ARCADE_API_KEY?: string;
   AIKO_CODE_MODE?: string;
   AIKO_CONNECTOR_VAULT_JSON?: string;
+  AIKO_MANAGER_KEY?: string;
+  AIKO_HASHICORP_VAULT_ADDRESS?: string;
+  AIKO_HASHICORP_VAULT_NAMESPACE?: string;
   AIKO_MODEL?: string;
   AIKO_VISION_MODEL?: string;
   AIKO_VISION_PROVIDER?: "codegraff" | "cerebras";
@@ -171,6 +176,11 @@ function configOf(env: AikoCloudflareEnv): AikoConfig {
     arcadeKey: env.ARCADE_API_KEY,
     codeMode: env.AIKO_CODE_MODE === "true",
     connectorVault: parseConnectorVault(env.AIKO_CONNECTOR_VAULT_JSON),
+    managerKey: parseManagerKey(env.AIKO_MANAGER_KEY),
+    hashicorpVault: parseVaultAddress(
+      env.AIKO_HASHICORP_VAULT_ADDRESS,
+      env.AIKO_HASHICORP_VAULT_NAMESPACE,
+    ),
     port: 0,
     stateDir: "durable-object",
     operatorToken: env.AIKO_OPERATOR_TOKEN,
@@ -347,6 +357,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       config.modelKey ?? "",
       config.cerebrasKey ?? "",
       config.arcadeKey ?? "",
+      config.managerKey ?? "",
       ...Object.values(config.connectorVault?.accounts ?? {}).map(a => a.token),
       config.botToken ?? "",
       config.webhookSecret ?? "",
@@ -417,11 +428,13 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       redact,
       mediaProcessor: capabilities?.sandbox.processMedia,
     });
-    const connectors: ConnectorEngine = new ConnectorEngine({ owner, secureBrowser: connectorVault(config.connectorVault, owner) ?? (capabilities ? nativeBrowserConnector(owner, capabilities.sandbox.browserFactory()) : undefined), env: { ARCADE_API_KEY: config.arcadeKey }, store: {
-      get: key => this.ctx.storage.get(key),
-      set: (key, value) => this.ctx.storage.put(key, value),
-      list: async prefix => [...(await this.ctx.storage.list({ prefix })).values()],
-    }, onEvent: async e => {
+    const doStore = {
+      get: (key: string) => this.ctx.storage.get(key),
+      set: (key: string, value: unknown) => this.ctx.storage.put(key, value),
+      list: async (prefix: string) =>
+        [...(await this.ctx.storage.list({ prefix })).values()],
+    };
+    const connectors: ConnectorEngine = new ConnectorEngine({ owner, secureBrowser: connectorVault(config.connectorVault, owner) ?? (capabilities ? nativeBrowserConnector(owner, capabilities.sandbox.browserFactory()) : undefined), env: { ARCADE_API_KEY: config.arcadeKey }, store: doStore, managers: config.managerKey ? new FilePasswordManagerHost({ store: doStore, owner, key: config.managerKey, vault: config.hashicorpVault }) : undefined, onEvent: async e => {
       await host.commitRoot(host.self(`user-${owner}`),event("AikoHooksActivated",{id:"background-v1"}));
       await host.commitRoot(host.self(`user-${owner}`),e);
       await this.kick(host);

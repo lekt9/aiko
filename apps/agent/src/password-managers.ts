@@ -11,6 +11,41 @@ import {
 } from "node:crypto";
 import { connectorDomain } from "./connectors.ts";
 
+/** Sealing key for password manager tokens: base64 that decodes to exactly 32 bytes. */
+export function parseManagerKey(value?: string) {
+  if (!value) return undefined;
+  if (!/^[A-Za-z0-9+/=_-]{43,44}$/.test(value.trim()))
+    throw new Error("AIKO_MANAGER_KEY must be a base64 32-byte key");
+  const key = Buffer.from(value.trim(), "base64");
+  if (key.length !== 32)
+    throw new Error("AIKO_MANAGER_KEY must decode to exactly 32 bytes");
+  return value.trim();
+}
+
+/** HashiCorp Vault cluster address: origin-only HTTPS, optional namespace. */
+export function parseVaultAddress(address?: string, namespace?: string) {
+  if (!address) {
+    if (namespace)
+      throw new Error("AIKO_HASHICORP_VAULT_NAMESPACE requires an address");
+    return undefined;
+  }
+  const url = new URL(address);
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    (url.pathname && url.pathname !== "/")
+  )
+    throw new Error(
+      "AIKO_HASHICORP_VAULT_ADDRESS must be an origin-only HTTPS address",
+    );
+  if (namespace && (namespace.length > 200 || /\p{C}/u.test(namespace)))
+    throw new Error("Invalid AIKO_HASHICORP_VAULT_NAMESPACE");
+  return { address, ...(namespace ? { namespace } : {}) };
+}
+
 export const managerKinds = [
   "onepassword",
   "keeper",

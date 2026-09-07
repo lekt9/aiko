@@ -85,7 +85,7 @@ const addedManager = await request("/api/connectors/password-managers/add", {
   entries: [
     {
       label: "Canary",
-      website: "https://canary.example",
+      website: "https://canary.aiko-check.net",
       reference: "op://Canary/Vault/password",
     },
   ],
