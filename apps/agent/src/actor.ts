@@ -254,9 +254,11 @@ export function voiceAndOutbox(
             : e.type === "TurnCancelled"
             ? {
                 kind: "task",
-                receipt: state.browserAttempts.has(String(e.turn))
-                  ? "Cancelled. Browser effects may already have completed. Verify uncertain interactions before retrying."
-                  : "Cancelled. No app changes were made.",
+                receipt: e.cause === "deadline"
+                  ? "That request stopped after its deadline. Some actions may already have completed; verify uncertain outcomes before retrying."
+                  : state.browserAttempts.has(String(e.turn))
+                    ? "Cancelled. Browser effects may already have completed. Verify uncertain interactions before retrying."
+                    : "Cancelled. No app changes were made.",
               }
             : /^\/(?:start|help)(?:\s+[A-Za-z0-9_-]+)?$/.test(
                   message?.text ?? "",

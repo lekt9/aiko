@@ -39,5 +39,8 @@
     "AIKO_REPLY_STYLE": "direct",
     "AIKO_TELEGRAM_PUBLIC": "true",
     "AIKO_VOICE_ENABLED": "false",
+    // 108611440's object wedged in a storage-op reset loop; move it to a fresh
+    // object and re-import its history (2026-09-07 recovery).
+    "AIKO_DO_EPOCH_OVERRIDES": "{\"108611440\":\"v3\"}",
   },
 }

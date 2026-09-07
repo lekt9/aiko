@@ -966,6 +966,21 @@ export function createTelegramVision(options: {
 }
 
 /** Mount before infer. Short native effects own start/stop; renewal is ephemeral and bounded. */
+// Typing calls must never hold a settlement hostage: a transport that ignores
+// its abort signal would otherwise wedge the actor loop in front of every other
+// transition, so each await races a bounded timer and proceeds on lapse.
+const bounded = async <T>(promise: Promise<T>, ms: number): Promise<T | undefined> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const lapse = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), ms);
+  });
+  try {
+    return await Promise.race([promise, lapse]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+};
+
 export function createTelegramTyping(
   owner: string,
   telegram: Pick<TelegramTransport, "typing"> & Partial<Pick<TelegramTransport, "draft">>,
@@ -1006,6 +1021,16 @@ export function createTelegramTyping(
           epoch: 0,
           messageThreadId: e.telegram?.messageThreadId,
         });
+      // A requested cancellation ends the indicator at once: typing keep-alives
+      // would otherwise churn ahead of the cancellation terminal and starve it.
+      if (e.type === "CancellationRequested") {
+        const cancelled = String(
+          (e as { invocation?: { method?: unknown; id?: unknown } }).invocation?.id ?? "",
+        );
+        const entry = state.get(cancelled);
+        if (entry && !entry.done)
+          state.set(cancelled, { ...entry, done: true });
+      }
       const current = state.get(String(e.turn));
       if (current) {
         if (e.type === "TurnResumed") {
@@ -1032,10 +1057,15 @@ export function createTelegramTyping(
       }
       return state;
     },
-    output: (state) => ({
+    output: (state) => {
+      // Only the foreground head earns a fresh indicator; queued messages wait
+      // silently. Started turns still receive their Stopped cleanup below.
+      const head = [...state].find(([, v]) => !v.done && !v.stopped)?.[0];
+      return {
       view: undefined,
       transitions: [...state].flatMap(([turn, value]) => {
-        if ((value.done && !value.started) || value.stopped) return [];
+        if (value.stopped) return [];
+        if (turn !== head && !value.started) return [];
         const type = value.done
           ? "AikoTelegramTypingStopped"
           : "AikoTelegramTypingStarted";
@@ -1044,7 +1074,8 @@ export function createTelegramTyping(
           if (!telegram.draft || !value.activityKey || value.shown === value.activityKey) return [];
           return [effect({ key: `aiko-typing:${activation}:${turn}:${value.epoch}:draft:${value.activityKey}`, input: value,
             act: (input, signal) => Effect.promise(async () => {
-              const result = await telegram.draft!(owner, draftId, input.activity!, AbortSignal.any([signal, AbortSignal.timeout(3000)]), { canStop: true, messageThreadId: input.messageThreadId });
+              const result = await bounded(telegram.draft!(owner, draftId, input.activity!, AbortSignal.any([signal, AbortSignal.timeout(3000)]), { canStop: true, messageThreadId: input.messageThreadId }), 3500);
+              if (result === undefined) return [];
               return [evt("AikoTelegramDraftStarted", { owner, turn, epoch: input.epoch, activation, draftId, messageThreadId: input.messageThreadId, activityKey: input.activityKey, status: result.status })];
             }) })];
         }
@@ -1064,12 +1095,16 @@ export function createTelegramTyping(
                       ? AbortSignal.any([options.signal, controller.signal])
                       : controller.signal,
                     stopTyping = telegram.typing(owner, signal);
-                  if (telegram.draft) await telegram.draft(owner, draftId, "", AbortSignal.any([signal, AbortSignal.timeout(3000)]), { canStop: true, messageThreadId: value.messageThreadId });
+                  if (telegram.draft)
+                    await bounded(
+                      telegram.draft(owner, draftId, "", AbortSignal.any([signal, AbortSignal.timeout(3000)]), { canStop: true, messageThreadId: value.messageThreadId }),
+                      3500,
+                    );
                   const stop = async () => {
                     controller.abort();
                     clearTimeout(timer);
                     running.delete(turn);
-                    await stopTyping();
+                    await bounded(stopTyping(), 2000);
                   };
                   const timer = setTimeout(() => {
                     void stop();
@@ -1093,7 +1128,8 @@ export function createTelegramTyping(
           }),
         ];
       }),
-    }),
+      };
+    },
   });
   return { component: lifecycle, close };
 }

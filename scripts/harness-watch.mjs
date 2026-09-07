@@ -11,6 +11,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { eventTail } from "./harness-tail.mjs";
+const cursors = new Map();
 
 const flag = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -65,7 +67,7 @@ const rel = (at) =>
 
 async function accounts() {
   const { status, body } = await api("/api/control/accounts");
-  if (status !== 200) return [];
+  if (status !== 200) throw new Error(`account listing failed: HTTP ${status}`);
   return (body.accounts ?? []).map((a) => a.account);
 }
 
@@ -74,16 +76,18 @@ async function accountState(account) {
   const probe = await api(
     `/api/control/export?account=${encodeURIComponent(account)}`,
   );
-  const busy =
-    probe.status === 409 ||
-    (probe.status === 503 && probe.body?.error === "service_unavailable");
-  // newest journal events
-  const { body } = await api(
-    `/api/control/events?thread=user-${encodeURIComponent(
-      account,
-    )}&account=${encodeURIComponent(account)}`,
-  );
-  const rows = body?.events ?? [];
+  const busy = probe.status === 409 && probe.body?.error === "account_busy"
+    ? true : probe.status === 200 ? false : undefined;
+  const tail = await eventTail(async (after, limit) => {
+    const { status, body } = await api(
+      `/api/control/events?thread=user-${encodeURIComponent(account)}&account=${encodeURIComponent(account)}&after=${after}&limit=${limit}`,
+    );
+    if (status === 404 && after === 0) return { events: [], nextAfter: 0, hasMore: false };
+    if (status !== 200) throw new Error(`journal probe failed: HTTP ${status}`);
+    return body;
+  }, cursors.get(account));
+  cursors.set(account, tail);
+  const rows = tail.rows;
   const parse = (raw) => {
     let e = raw;
     for (let i = 0; i < 2 && typeof e === "string"; i++) {
@@ -97,7 +101,7 @@ async function accountState(account) {
   };
   const events = rows.map((r) => parse(r.event ?? r)).filter(Boolean);
   const recent = events.slice(-3).map((e) => `${e.type} (${rel(e.at)})`);
-  return { busy, journal: body?.hasMore ? `${rows.length}+` : `${rows.length}`, recent };
+  return { busy, journal: String(tail.head), recent };
 }
 
 async function tick() {
@@ -107,7 +111,8 @@ async function tick() {
   for (const account of list) {
     try {
       const { busy, journal, recent } = await accountState(account);
-      const tag = busy ? "BUSY (import/turn in flight — messages refused)" : "resting";
+      const tag = busy === undefined ? "UNKNOWN (probe failed)"
+        : busy ? "BUSY (unsettled work; export unavailable)" : "resting";
       console.log(`  ${account}: ${tag} | journal ${journal}`);
       for (const r of recent) console.log(`     · ${r}`);
     } catch (err) {

@@ -82,6 +82,7 @@ import {
   type TelegramInbound,
 } from "./telegram.ts";
 import { readReactionFor } from "./telegram-reactions.ts";
+import { FOREGROUND_STALL_MS, turnWatchdog } from "./turn-watchdog.ts";
 import {
   createTelegramTools,
   createTelegramTyping,
@@ -153,6 +154,7 @@ export interface AikoCloudflareEnv {
   AIKO_CARTESIA_VOICE_ID?: string;
   AIKO_CARTESIA_MODEL?: string;
   AIKO_CODE_MODE?: string;
+  AIKO_DO_EPOCH_OVERRIDES?: string;
   AIKO_CONNECTOR_VAULT_JSON?: string;
   AIKO_MANAGER_KEY?: string;
   AIKO_HASHICORP_VAULT_ADDRESS?: string;
@@ -215,9 +217,23 @@ function configOf(env: AikoCloudflareEnv): AikoConfig {
   );
   if ([...allowedUsers].some((owner) => !safeUserId(owner)))
     throw new Error("Invalid account allowlist");
+  let doEpochs: Record<string, string> | undefined;
+  if (env.AIKO_DO_EPOCH_OVERRIDES !== undefined) {
+    try {
+      const parsed = JSON.parse(env.AIKO_DO_EPOCH_OVERRIDES) as Record<string, unknown>;
+      for (const [owner, epoch] of Object.entries(parsed)) {
+        if (!safeUserId(owner) || typeof epoch !== "string" || !/^[A-Za-z0-9_-]{1,32}$/.test(epoch))
+          throw new Error("invalid");
+      }
+      doEpochs = Object.fromEntries(Object.entries(parsed).map(([owner, epoch]) => [owner, String(epoch)]));
+    } catch {
+      throw new Error("AIKO_DO_EPOCH_OVERRIDES must map account IDs to epoch tags");
+    }
+  }
   return {
     mode,
     instanceId,
+    doEpochs,
     model: env.AIKO_MODEL ?? "glm-5.3-flash",
     modelKey: env.CODEGRAFF_API_KEY,
     cerebrasKey: env.CEREBRAS_API_KEY,
@@ -327,8 +343,8 @@ function telegramOf(
  * durable registry keyed by raw owner id still admits the same accounts.
  */
 const ACCOUNT_OBJECT_EPOCH = "v2";
-export const accountObjectName = (owner: string) =>
-  `${ACCOUNT_OBJECT_EPOCH}:${owner}`;
+export const accountObjectName = (owner: string, epochs?: Record<string, string>) =>
+  `${epochs?.[owner] ?? ACCOUNT_OBJECT_EPOCH}:${owner}`;
 
 export class AikoRegistryDO extends DurableObject<AikoCloudflareEnv> {
   constructor(ctx: DurableObjectState, env: AikoCloudflareEnv) {
@@ -399,7 +415,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     if (
       !safeUserId(owner) ||
       (this.ctx.id.name !== undefined &&
-        this.ctx.id.name !== accountObjectName(owner))
+        this.ctx.id.name !== accountObjectName(owner, configOf(this.env).doEpochs))
     )
       throw new Error("Invalid account object binding");
     if (this.owner !== undefined && this.owner !== owner)
@@ -674,7 +690,11 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
               CEREBRAS_API_KEY: config.cerebrasKey,
               AIKO_ALLOW_PAID_INFERENCE: "true",
             },
-            stream: { firstChunkMs: 90000, idleMs: 90000, totalMs: 300000 },
+            // A DO invocation is wall-capped (~60s); the settle must fit one
+            // window: replay + typing + a single model round-trip. Longer
+            // budgets made every alarm exceed the wall, starve its own storage
+            // ops, and reset the object before any turn could ever complete.
+            stream: { firstChunkMs: 20000, idleMs: 20000, totalMs: 40000 },
           })
         : undefined;
     const model = withSpokenHistory(
@@ -710,9 +730,25 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         parent === `user-${owner}` &&
         /^ag\.[0-9]+:/.test(child) &&
         child.length < 2048,
+      watchdog: (thread, log) => thread === `user-${owner}`
+        ? turnWatchdog(log, FOREGROUND_STALL_MS)
+        : undefined,
       nextWake: async () => {
+        // The sandbox probe fans out to another service and must never hold
+        // alarm scheduling hostage; a lapsed probe simply contributes no wake.
+        const withLapse = async <T>(promise: Promise<T>, ms: number): Promise<T | undefined> => {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const lapse = new Promise<undefined>((resolve) => {
+            timer = setTimeout(() => resolve(undefined), ms);
+          });
+          try {
+            return await Promise.race([promise, lapse]);
+          } finally {
+            if (timer !== undefined) clearTimeout(timer);
+          }
+        };
         const times = [
-          await this.sandboxDeadline(host, capabilities),
+          await withLapse(this.sandboxDeadline(host, capabilities), 5_000),
           automationNextWake(await host.read(`user-${owner}`)),
           promiseNextWake(await host.read(`user-${owner}`)),
         ].filter((n): n is number => n !== undefined);
@@ -1093,9 +1129,22 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
   }
   async alarm() {
     if (!this.owner) return;
+    // Auxiliary maintenance must never pin the alarm: a wedged connector flush
+    // or sandbox probe would hold this invocation open and starve the driver.
+    const bounded = async <T>(promise: Promise<T>, ms: number): Promise<T | undefined> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const lapse = new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), ms);
+      });
+      try {
+        return await Promise.race([promise, lapse]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    };
     try {
       const { host, capabilities, connectors } = await this.open(this.owner);
-      await connectors.flushEvents();
+      await bounded(connectors.flushEvents(), 10_000);
       const at = Date.now();
       const tick = automationWakeEvent(
         await host.read(`user-${this.owner}`),
@@ -1109,8 +1158,10 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       if (promiseTick)
         await host.commitRoot(host.self(`user-${this.owner}`), promiseTick);
       await host.alarm();
-      await this.serialize(async () => {
-        const deadline = await this.sandboxDeadline(host, capabilities);
+      await bounded(this.serialize(async () => {
+        // Every sandbox probe is bounded individually: a dead sandbox must
+        // delay maintenance, never hold the admission chain hostage.
+        const deadline = await bounded(this.sandboxDeadline(host, capabilities), 5_000);
         if (
           !capabilities ||
           deadline === undefined ||
@@ -1120,9 +1171,9 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         )
           return;
         // Retire only this owner's cached browser, retaining the controller and durable VM/profile for later wake.
-        if (!(await capabilities.browser.retire(this.owner!))) return;
+        if (!(await bounded(capabilities.browser.retire(this.owner!), 5_000))) return;
         try {
-          if (!(await capabilities.sandbox.stop())) {
+          if (!(await bounded(capabilities.sandbox.stop(), 5_000))) {
             await this.ctx.storage.setAlarm(
               Math.min(
                 (await this.ctx.storage.getAlarm()) ?? Infinity,
@@ -1141,7 +1192,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
           );
           throw error;
         }
-      });
+      }), 15_000);
     } catch {
       // A storage-timeout reset still drops this isolate. If we survived, keep a
       // near-term alarm so remaining native work is not stranded for the recovery delay.
@@ -1292,8 +1343,14 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
           } finally {
             memory.close();
           }
-        } catch {
-          return json({ error: "import_conflict_or_unsettled_history" }, 409);
+        } catch (error) {
+          return json(
+            {
+              error: "import_conflict_or_unsettled_history",
+              detail: error instanceof Error ? error.message : String(error),
+            },
+            409,
+          );
         }
       });
     }
@@ -1816,7 +1873,7 @@ export default {
           return json({ error: "limited" }, 429);
         const inbound = received.inbound;
         const pending = env.AIKO_ACCOUNTS.getByName(
-          accountObjectName(owner),
+          accountObjectName(owner, config.doEpochs),
         ).acceptTelegram(owner, inbound);
         const answer = () =>
           inbound.callback
@@ -1891,7 +1948,7 @@ export default {
         )
           return json({ error: "not_found" }, 404);
         const status = await env.AIKO_ACCOUNTS.getByName(
-          accountObjectName(body.account),
+          accountObjectName(body.account, config.doEpochs),
         ).acceptOperatorMessage(body.account, body.id, body.text);
         return json(
           { status, id: `operator:${body.id}`, channel: "telegram" },
@@ -1910,7 +1967,7 @@ export default {
         for (const owner of owners)
           accounts.push(
             await env.AIKO_ACCOUNTS.getByName(
-              accountObjectName(owner),
+              accountObjectName(owner, config.doEpochs),
             ).describe(owner),
           );
         return json({
@@ -1946,7 +2003,7 @@ export default {
         !(await registry.admit(owner, config.maxAccounts))
       )
         return json({ error: "limited" }, 429);
-      return await env.AIKO_ACCOUNTS.getByName(accountObjectName(owner)).handle(
+      return await env.AIKO_ACCOUNTS.getByName(accountObjectName(owner, config.doEpochs)).handle(
         owner,
         request,
         principal,

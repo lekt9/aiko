@@ -33,6 +33,7 @@ import {
   threadCreatedForDelivery,
   threadKeys,
 } from "tardie/core/thread";
+import { enabled } from "tardie/core/runtime/reconciler";
 import {
   alarmFired,
   earliestDeadlineOf,
@@ -80,6 +81,11 @@ export interface CloudflareAccountHostOptions<R> {
   >;
   keyOf?(event: Event): string | undefined;
   recoveryDelayMs?: number;
+  /** Application-owned fallback deadline; the event must use native cancellation semantics. */
+  watchdog?(thread: string, events: readonly Event[]): {
+    deadlineAt: number;
+    event(at: number): Event;
+  } | undefined;
   /** Host-owned durable capability deadline, composed with native method deadlines. */
   nextWake?(): Promise<number | undefined>;
   /** Synchronous application precondition checked inside the append transaction, after all awaits. */
@@ -184,8 +190,40 @@ export async function createCloudflareAccountHost<R>(
       .toArray()
       .map((row) => ({ seq: row.seq, event: JSON.parse(row.event) as Event }));
   };
-  const readSync = (thread: string): Event[] =>
-    readPageSync(thread, 0, Number.MAX_SAFE_INTEGER).map((row) => row.event);
+  // Whole-thread reads back the replay-heavy paths (thread diagnostics, the
+  // settle's initial cache, wake heuristics). Parsing 10k+ rows on every call
+  // pegged the isolate CPU until its own storage ops starved and the platform
+  // reset the object, so pages are cached per thread and invalidated by the
+  // append revision, which every mutating path already bumps.
+  // Tail-extension: during active settles appends land on every round, so a
+  // revision bump must NOT force a full re-read — re-parsing a 12k-row browser
+  // log per append pegged the isolate until its own storage ops starved (the
+  // second wedge). Extend from the cached high-water seq instead.
+  const readCache = new Map<
+    string,
+    { revision: number; lastSeq: number; events: Event[] }
+  >();
+  const readSync = (thread: string): Event[] => {
+    const cached = readCache.get(thread);
+    if (cached && cached.revision === revision) return cached.events;
+    if (cached) {
+      const rows = readPageSync(thread, cached.lastSeq, Number.MAX_SAFE_INTEGER);
+      if (rows.length) {
+        cached.events = cached.events.concat(rows.map((row) => row.event));
+        cached.lastSeq = rows[rows.length - 1].seq;
+      }
+      cached.revision = revision;
+      return cached.events;
+    }
+    const rows = readPageSync(thread, 0, Number.MAX_SAFE_INTEGER);
+    const events = rows.map((row) => row.event);
+    readCache.set(thread, {
+      revision,
+      lastSeq: rows.length ? rows[rows.length - 1].seq : 0,
+      events,
+    });
+    return events;
+  };
   const headSync = (thread: string): number => {
     checkThread(thread);
     return storage.sql
@@ -210,8 +248,8 @@ export async function createCloudflareAccountHost<R>(
     threadKeys.keyOf(event) ??
     options.keyOf?.(event) ??
     options.actorFor(thread)?.keyOf?.(event);
-  const arm = async () => {
-    const at = Date.now() + delay;
+  const arm = async (deadline?: number) => {
+    const at = Math.max(Date.now() + 1, Math.min(Date.now() + delay, deadline ?? Infinity));
     const current = await storage.getAlarm();
     if (current === null || current > at) await storage.setAlarm(at);
   };
@@ -433,6 +471,17 @@ export async function createCloudflareAccountHost<R>(
             new Error("No provider route is mounted on this account host"),
           ),
   });
+  const watchdogFor = (thread: string) => options.watchdog?.(thread, readSync(thread));
+  const expireWatchdog = async (thread: string) => {
+    const deadline = watchdogFor(thread)?.deadlineAt;
+    if (deadline === undefined || deadline > Date.now()) return;
+    await append(thread, () => {
+      // append() arms storage first. Recheck after that await so concurrent
+      // progress, completion or owner cancellation wins over this timeout.
+      const current = watchdogFor(thread), at = Date.now();
+      return current && current.deadlineAt <= at ? [current.event(at)] : [];
+    });
+  };
   const sliceStop = Object.freeze({ slice: true as const });
   let sliceBudget = Infinity;
   let sliceThread: string | undefined;
@@ -483,9 +532,36 @@ export async function createCloudflareAccountHost<R>(
       const layer = options
         .layersFor(thread)
         .pipe(Layer.provideMerge(ports)) as Layer.Layer<R | EventLog>;
-      await Effect.runPromise(
-        runtime.reconciler.settle.pipe(Effect.provide(layer)),
-      );
+      const monitor = Effect.gen(function* () {
+        for (;;) {
+          const current = watchdogFor(thread);
+          // A cancellation can finish and enable the next queued head inside
+          // this same settlement. Keep monitoring until the settlement exits.
+          yield* Effect.sleep(current ? Math.max(1, current.deadlineAt - Date.now()) : 1_000);
+          yield* Effect.promise(() => expireWatchdog(thread));
+        }
+      });
+      const probe = (fields: Record<string, unknown>) => {
+        try {
+          appendSync(thread, [{ type: "AikoDiagProbe", ...fields, at: Date.now() } as unknown as Event], false, true);
+        } catch { /* diagnostics are best-effort */ }
+      };
+      try {
+        await Effect.runPromise(
+          // A live hung effect can hold an alarm handler open. Monitor inside
+          // this settlement too; append() interrupts it through Tardie's registry.
+          // raceFirst cancels the monitor on settlement (or propagates its failure).
+          (options.watchdog ? Effect.raceFirst(runtime.reconciler.settle, monitor) : runtime.reconciler.settle)
+            .pipe(Effect.provide(layer)),
+        );
+      } catch (error) {
+        probe({
+          phase: "serve-error",
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? (error.stack ?? "").split("\n").slice(1, 6).join(" | ") : "",
+        });
+        throw error;
+      }
       runtime.settled = true;
     },
   });
@@ -509,7 +585,7 @@ export async function createCloudflareAccountHost<R>(
     const observed = revision;
     const idle = await resting();
     const deadlines = threadsSync()
-      .map(deadlineFor)
+      .flatMap(thread => [deadlineFor(thread), watchdogFor(thread)?.deadlineAt])
       .filter((n): n is number => n !== undefined);
     const external = await options.nextWake?.();
     if (external !== undefined) {
@@ -518,7 +594,7 @@ export async function createCloudflareAccountHost<R>(
       deadlines.push(external);
     }
     const next = deadlines.length ? Math.min(...deadlines) : undefined;
-    if (revision !== observed || !idle) return arm();
+    if (revision !== observed || !idle) return arm(next);
     if (next !== undefined)
       await storage.setAlarm(Math.max(Date.now() + 1, next));
     else await storage.deleteAlarm();
@@ -645,8 +721,30 @@ export async function createCloudflareAccountHost<R>(
         } else if (created.depth !== 0)
           throw new Error("Invalid imported root depth");
         const actor = options.actorFor(history.thread);
-        if (actor && !restingActor(actor, history.events))
-          throw new Error("Import requires complete, settled histories");
+        if (actor && !restingActor(actor, history.events)) {
+          const pending = enabled(actor, history.events)
+            .map(
+              (t) => {
+                const shape = t as {
+                  kind?: string;
+                  key?: string;
+                  invocation?: { method?: string };
+                };
+                return [
+                  shape.kind,
+                  shape.invocation?.method,
+                  shape.key,
+                ]
+                  .filter(Boolean)
+                  .join(":");
+              },
+            )
+            .slice(0, 6)
+            .join(", ");
+          throw new Error(
+            `Import requires complete, settled histories (${pending || "unknown transitions"})`,
+          );
+        }
         const keys = history.events
           .map((e) => keyOf(history.thread, e))
           .filter((key) => key !== undefined);
@@ -681,12 +779,27 @@ export async function createCloudflareAccountHost<R>(
     alarm: async () => {
       await arm();
       for (const thread of threadsSync()) {
-        const deadline = deadlineFor(thread);
-        if (deadline !== undefined && deadline <= Date.now())
-          await append(thread, [
-            alarmFired({ scheduledFor: deadline, at: Date.now() }),
-          ]);
-        else if (threadNeedsWork(thread)) driver.mark(thread);
+        try {
+          await expireWatchdog(thread);
+          const deadline = deadlineFor(thread);
+          if (deadline !== undefined && deadline <= Date.now())
+            await append(thread, [
+              alarmFired({ scheduledFor: deadline, at: Date.now() }),
+            ]);
+          else if (threadNeedsWork(thread)) driver.mark(thread);
+        } catch (error) {
+          // One thread's diagnostic failure must not starve the others; record
+          // it durably so a poisoned thread is visible in its own history.
+          try {
+            appendSync(thread, [{
+              type: "AikoDiagProbe",
+              phase: "alarm",
+              error: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? (error.stack ?? "").split("\n").slice(1, 5).join(" | ") : "",
+              at: Date.now(),
+            } as unknown as Event], false, true);
+          } catch { /* journal unavailable; keep serving the remaining threads */ }
+        }
       }
       // One settlement per alarm so a long native drive cannot pin the isolate
       // and starve Telegram webhook RPCs. Remaining unrested threads re-arm immediately.
