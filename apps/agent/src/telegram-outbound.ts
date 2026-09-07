@@ -485,7 +485,11 @@ export function createTelegramOutbound(options: {
           {
             chat_id: chat,
             message_id: messageId,
-            reaction: emoji === null ? [] : [{ type: "emoji", emoji }],
+            // Telegram matches bare emoji; variation selectors break the match.
+            reaction:
+              emoji === null
+                ? []
+                : [{ type: "emoji", emoji: emoji.replace(/\uFE0F/g, "") }],
           },
           signal,
         )
