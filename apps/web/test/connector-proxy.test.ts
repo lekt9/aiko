@@ -105,3 +105,17 @@ describe("account connector proxy", () => {
     ).toBe("https://arcade.dev/authorize?state=opaque");
   });
 });
+
+it("forwards authenticated manager authorization, callback and private fill routes", async () => {
+  process.env.AIKO_CONNECTOR_ORIGIN = "https://agent.example";
+  const fetch = vi.fn(async () => Response.json({ ok: true }));
+  vi.stubGlobal("fetch", fetch);
+  for (const action of ["add", "authorize", "callback", "fill", "remove"]) {
+    const response = await handleConnectorRequest(request(`/password-managers/${action}`, "POST", "{}", "Bearer owner"));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  }
+  expect((await handleConnectorRequest(request("/password-managers", "GET"))).status).toBe(200);
+  expect((await handleConnectorRequest(request("/password-managers/callback", "POST", "{}", ""))).status).toBe(401);
+  expect(fetch).toHaveBeenCalledTimes(6);
+});

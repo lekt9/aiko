@@ -5,15 +5,14 @@ import {
   managerKindHints,
   managerKindLabels,
   websiteDomain,
-  type ManagerKind,
+  type ManagerProvider,
   type PasswordManager,
 } from "../lib/connectors";
 
 type EntryDraft = { label: string; website: string; reference: string };
-const kinds = Object.keys(managerKindLabels) as ManagerKind[];
 
 /** Connect a password manager once; sign-ins can then be filled from it.
- * Only the provider token and opaque references are stored, sealed server-side. */
+ * OAuth grants stay sealed server-side; only references reach the app. */
 export function PasswordManagerPanel({
   request,
   onClose,
@@ -25,9 +24,15 @@ export function PasswordManagerPanel({
 }) {
   const [managers, setManagers] = useState<PasswordManager[]>();
   const [loadError, setLoadError] = useState("");
-  const [kind, setKind] = useState<ManagerKind>("onepassword");
+  const [providers, setProviders] = useState<ManagerProvider[]>([]);
+  const [providerId, setProviderId] = useState("");
+  const provider = providers.find((p) => p.id === providerId) ?? providers[0];
+  const kind = provider?.kind ?? "remote-mcp";
+  const [pending, setPending] = useState<{ id: string; url: string }>();
+  const popup = useRef<Window | null>(null);
+  const completing = useRef(false);
+  const [responseUrl, setResponseUrl] = useState("");
   const [name, setName] = useState("");
-  const [token, setToken] = useState("");
   const [entries, setEntries] = useState<EntryDraft[]>([
     { label: "", website: "", reference: "" },
   ]);
@@ -38,10 +43,12 @@ export function PasswordManagerPanel({
 
   async function refresh() {
     try {
-      const result = await request<{ managers: PasswordManager[] }>(
-        "/password-managers",
-      );
+      const result = await request<{
+        managers: PasswordManager[];
+        providers: ManagerProvider[];
+      }>("/password-managers");
       setManagers(result.managers);
+      setProviders(result.providers ?? []);
       setLoadError("");
     } catch (failure) {
       setLoadError(
@@ -69,11 +76,11 @@ export function PasswordManagerPanel({
     );
     if (
       !name.trim() ||
-      !token.trim() ||
+      !provider ||
       trimmed.some((entry) => !entry.reference.trim() || !entry.label.trim())
     ) {
       setFormError(
-        "Give the connection a name, paste its token, and label every reference.",
+        "Choose a connection, give it a name, and label every reference.",
       );
       return;
     }
@@ -88,27 +95,111 @@ export function PasswordManagerPanel({
     setSaving(true);
     setFormError("");
     try {
-      await request("/password-managers/add", {
+      const result = await request<
+        PasswordManager & { authorizationUrl?: string }
+      >("/password-managers/add", {
         kind,
         name: name.trim(),
-        token: token.trim(),
+        providerId: provider!.id,
         entries: trimmed.map((entry) => ({
           label: entry.label.trim(),
           reference: entry.reference.trim(),
           ...(entry.website.trim() ? { website: entry.website.trim() } : {}),
         })),
       });
-      setToken("");
+      if (result.authorizationUrl)
+        setPending({ id: result.id, url: result.authorizationUrl });
       setEntries([{ label: "", website: "", reference: "" }]);
       setName("");
-      setNotice("Saved. This password manager can now fill sign-ins.");
+      setNotice(
+        result.authorizationUrl
+          ? "Continue to your password manager to authorize this connection."
+          : "Connected. Your saved references can now fill sign-ins.",
+      );
       onChanged?.();
-      await refresh();
     } catch (failure) {
       setFormError(
         failure instanceof Error
           ? failure.message
           : "Could not save this password manager.",
+      );
+    } finally {
+      await refresh();
+      setSaving(false);
+    }
+  }
+  async function completeAuthorization(data: {
+    code?: unknown;
+    state?: unknown;
+    error?: unknown;
+  }) {
+    if (!pending || saving || completing.current) return;
+    if (data.state !== new URL(pending.url).searchParams.get("state")) return;
+    if (data.error || typeof data.code !== "string" || !data.code) {
+      setFormError("Authorization was cancelled. Reconnect when ready.");
+      setPending(undefined);
+      return;
+    }
+    completing.current = true;
+    setSaving(true);
+    setFormError("");
+    setResponseUrl("");
+    try {
+      await request("/password-managers/callback", {
+        managerId: pending.id,
+        code: data.code,
+        state: data.state,
+      });
+      setNotice("Connected. Your saved references can now fill sign-ins.");
+      onChanged?.();
+    } catch {
+      setFormError(
+        "Authorization could not be completed. Reconnect to try again.",
+      );
+    } finally {
+      setPending(undefined);
+      setSaving(false);
+      completing.current = false;
+      void refresh();
+    }
+  }
+  useEffect(() => {
+    if (!pending) return;
+    const receive = (event: MessageEvent) => {
+      if (
+        event.origin !== window.location.origin ||
+        !popup.current ||
+        event.source !== popup.current ||
+        event.data?.type !== "unlock-manager-oauth"
+      )
+        return;
+      void completeAuthorization(event.data);
+    };
+    const channel = new BroadcastChannel("unlock-manager-oauth");
+    channel.onmessage = (event) => {
+      if (event.data?.type === "unlock-manager-oauth")
+        void completeAuthorization(event.data);
+    };
+    window.addEventListener("message", receive);
+    return () => {
+      window.removeEventListener("message", receive);
+      channel.close();
+    };
+  }, [pending, saving, request, onChanged]);
+  async function reconnect(id: string) {
+    setSaving(true);
+    setFormError("");
+    try {
+      const result = await request<{ authorizationUrl?: string }>(
+        "/password-managers/authorize",
+        { managerId: id },
+      );
+      if (result.authorizationUrl)
+        setPending({ id, url: result.authorizationUrl });
+      await refresh();
+    } catch {
+      setFormError(
+        "Could not reconnect this password manager. Try again or create a new connection.",
       );
     } finally {
       setSaving(false);
@@ -120,6 +211,7 @@ export function PasswordManagerPanel({
     setFormError("");
     try {
       await request("/password-managers/remove", { managerId: id });
+      if (pending?.id === id) setPending(undefined);
       setNotice(
         "Disconnected. Saved logins from it can no longer fill sign-ins.",
       );
@@ -145,8 +237,9 @@ export function PasswordManagerPanel({
           <div>
             <h3>Sign in from your password manager</h3>
             <p>
-              Connect it once; Aiko can fill app sign-ins from it. Your master
-              password never leaves the app.
+              Connect it once; Aiko can fill app sign-ins from it. Authorize
+              access in your password manager; Unlock saves references and fills
+              passwords privately.
             </p>
           </div>
         </div>
@@ -171,12 +264,29 @@ export function PasswordManagerPanel({
                 type="button"
                 className="icon-button"
                 aria-label={`Disconnect ${manager.name}`}
-                disabled={removing.current === manager.id}
+                disabled={saving || removing.current === manager.id}
                 onClick={() => void remove(manager.id)}
               >
                 <Trash2 size={16} aria-hidden="true" />
               </button>
             </div>
+            {manager.status !== "connected" && (
+              <p className="aiko-fineprint">Authorization required</p>
+            )}
+            {manager.providerId ? (
+              <button
+                type="button"
+                className="text-button"
+                disabled={saving}
+                onClick={() => void reconnect(manager.id)}
+              >
+                Reconnect
+              </button>
+            ) : (
+              <p className="aiko-fineprint">
+                Disconnect this older connection and authorize a new one below.
+              </p>
+            )}
             <ul className="manager-entries">
               {manager.entries.map((entry) => (
                 <li key={entry.reference}>
@@ -194,6 +304,75 @@ export function PasswordManagerPanel({
             No password manager connected yet. Add one below.
           </p>
         )}
+        {pending && (
+          <div className="manager-card" role="status">
+            <p>Authorize access in your password manager, then return here.</p>
+            <button
+              type="button"
+              className="button primary"
+              disabled={saving}
+              onClick={() => {
+                popup.current = window.open(
+                  pending.url,
+                  "unlock-password-manager-oauth",
+                  "popup,width=600,height=720",
+                );
+                if (!popup.current)
+                  setFormError(
+                    "Allow popups to authorize your password manager.",
+                  );
+              }}
+            >
+              Continue to password manager
+            </button>
+            <details>
+              <summary>Finish from another browser</summary>
+              <label htmlFor="manager-response">Connection result</label>
+              <input
+                id="manager-response"
+                type="text"
+                autoComplete="off"
+                spellCheck={false}
+                value={responseUrl}
+                onChange={(event) => setResponseUrl(event.target.value)}
+                placeholder="Paste the result copied after authorization"
+              />
+              <button
+                type="button"
+                className="text-button"
+                disabled={saving || !responseUrl}
+                onClick={() => {
+                  try {
+                    const result = new URL(responseUrl);
+                    if (
+                      result.origin !== window.location.origin ||
+                      result.pathname !== "/password-manager-callback.html" ||
+                      result.searchParams.get("state") !==
+                        new URL(pending.url).searchParams.get("state")
+                    )
+                      throw new Error();
+                    void completeAuthorization({
+                      code: result.searchParams.get("code"),
+                      state: result.searchParams.get("state"),
+                      error: result.searchParams.get("error"),
+                    });
+                  } catch {
+                    setFormError(
+                      "Paste the connection result from the authorization window.",
+                    );
+                  }
+                }}
+              >
+                Finish connection
+              </button>
+            </details>
+          </div>
+        )}
+        {!providers.length && !loadError && managers && (
+          <p className="aiko-fineprint">
+            No password manager connections are configured on this host yet.
+          </p>
+        )}
         <form className="manager-form" onSubmit={(event) => void save(event)}>
           <h3>Connect a password manager</h3>
           <div className="credential-fields">
@@ -201,12 +380,16 @@ export function PasswordManagerPanel({
               <label htmlFor="manager-kind">Password manager</label>
               <select
                 id="manager-kind"
-                value={kind}
-                onChange={(event) => setKind(event.target.value as ManagerKind)}
+                value={provider?.id ?? ""}
+                onChange={(event) => setProviderId(event.target.value)}
+                disabled={saving || !providers.length}
               >
-                {kinds.map((value) => (
-                  <option key={value} value={value}>
-                    {managerKindLabels[value]}
+                {!providers.length && (
+                  <option value="">No connections available</option>
+                )}
+                {providers.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
                   </option>
                 ))}
               </select>
@@ -221,19 +404,6 @@ export function PasswordManagerPanel({
                 placeholder="Personal vault"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
-              />
-            </div>
-            <div className="credential-field">
-              <label htmlFor="manager-token">Service token</label>
-              <textarea
-                id="manager-token"
-                required
-                rows={3}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder={managerKindHints[kind].split("·")[0]?.trim()}
-                value={token}
-                onChange={(event) => setToken(event.target.value)}
               />
             </div>
           </div>
@@ -320,7 +490,7 @@ export function PasswordManagerPanel({
           <button
             type="submit"
             className="button primary credential-submit"
-            disabled={saving}
+            disabled={saving || !provider}
           >
             {saving ? (
               <>
@@ -336,9 +506,9 @@ export function PasswordManagerPanel({
             )}
           </button>
           <p className="aiko-fineprint">
-            The service token is encrypted on Aiko’s host and is used only when
-            you choose to fill a sign-in. It is never shown again or shared with
-            the assistant.
+            You authorize access with your password manager. Unlock keeps that
+            authorization encrypted and resolves saved references only when
+            filling a sign-in. Passwords are never shared with the assistant.
           </p>
         </form>
       </section>

@@ -37,6 +37,7 @@ async function driveLogin(
         connectionId: input.connectionId,
         domain: input.domain,
         action,
+        ...(input.credentialReference ? { credentialReference: input.credentialReference } : {}),
         ...fields,
       },
       dependencies,

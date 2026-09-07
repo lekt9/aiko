@@ -1,5 +1,5 @@
 /** Account-scoped password manager bindings for the connect mini app.
- * Provider tokens are sealed at rest with AES-256-GCM and never leave the host;
+ * OAuth grants are sealed at rest with AES-256-GCM and never reach the model;
  * the mini app only ever sees metadata. Resolution happens only inside a
  * trusted native sign-in fill, never as a model tool. */
 import {
@@ -9,9 +9,15 @@ import {
   randomUUID,
   createHash,
 } from "node:crypto";
+import {
+  managerMcp,
+  type ManagerGrant,
+  type ManagerProvider,
+} from "./password-manager-mcp.ts";
+import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { connectorDomain } from "./connectors.ts";
 
-/** Sealing key for password manager tokens: base64 that decodes to exactly 32 bytes. */
+/** Sealing key for password manager OAuth grants: base64 that decodes to exactly 32 bytes. */
 export function parseManagerKey(value?: string) {
   if (!value) return undefined;
   if (!/^[A-Za-z0-9+/=_-]{43,44}$/.test(value.trim()))
@@ -22,41 +28,9 @@ export function parseManagerKey(value?: string) {
   return value.trim();
 }
 
-/** HashiCorp Vault cluster address: origin-only HTTPS, optional namespace. */
-/** Origin-only HTTPS base URL for operator-hosted infrastructure (no credentials in the URL). */
-function originOnlyHttps(value: string | undefined, envName: string) {
-  if (!value) return undefined;
-  const url = new URL(value);
-  if (
-    url.protocol !== "https:" ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    (url.pathname && url.pathname !== "/")
-  )
-    throw new Error(`${envName} must be an origin-only HTTPS address`);
-  return value.replace(/\/+$/, "");
-}
-
-export function parseVaultAddress(address?: string, namespace?: string) {
-  if (!address) {
-    if (namespace)
-      throw new Error("AIKO_HASHICORP_VAULT_NAMESPACE requires an address");
-    return undefined;
-  }
-  const url = originOnlyHttps(address, "AIKO_HASHICORP_VAULT_ADDRESS");
-  if (namespace && (namespace.length > 200 || /\p{C}/u.test(namespace)))
-    throw new Error("Invalid AIKO_HASHICORP_VAULT_NAMESPACE");
-  return { address: url!, ...(namespace ? { namespace } : {}) };
-}
-
-/** 1Password Connect server base URL (operator configuration). */
-export function parseConnectUrl(value?: string) {
-  return originOnlyHttps(value, "AIKO_ONEPASSWORD_CONNECT_URL");
-}
-
 export const managerKinds = [
+  "bitwarden",
+  "remote-mcp",
   "onepassword",
   "onepassword-connect",
   "keeper",
@@ -76,38 +50,13 @@ export type ManagerView = {
   name: string;
   entries: ManagerEntry[];
   createdAt: number;
+  providerId?: string;
+  status: "connected" | "authorization_required";
 };
 export type SealedToken = { v: 1; iv: string; data: string; tag: string };
 
-export const MANAGER_KIND_HELP: Record<ManagerKind, string> = {
-  onepassword:
-    "1Password service account token; references like op://Vault/Item/password",
-  "onepassword-connect":
-    "1Password Connect credentials token; resolves through the operator's Connect server",
-  keeper:
-    "Keeper Secrets Manager one-line config; references like keeper://RECORD_UID/field/password",
-  "hashicorp-vault":
-    "Vault service token; references like vault://secret/data/app/token#value",
-  doppler: "Doppler service token; references like doppler://API_KEY",
-};
-
-const referencePatterns: Record<ManagerKind, RegExp> = {
-  onepassword: /^op:\/\/[^/?#]+\/[^/?#]+(?:\/[^/?#]+)?\/[^/?#]+$/,
-  "onepassword-connect": /^op:\/\/[^/?#]+\/[^/?#]+(?:\/[^/?#]+)?\/[^/?#]+$/,
-  keeper:
-    /^keeper:\/\/[A-Za-z0-9_-]{22}\/(?:field|custom_field)\/[A-Za-z0-9_.-]+$/,
-  "hashicorp-vault":
-    /^vault:\/\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_.-]+)+#[A-Za-z0-9_.-]+$/,
-  doppler: /^doppler:\/\/[A-Za-z0-9_.-]+$/,
-};
-
-export const validReference = (kind: ManagerKind, reference: string) =>
-  reference.length <= 500 &&
-  !/\p{C}/u.test(reference) &&
-  referencePatterns[kind].test(reference) &&
-  !reference
-    .split(/[#/]/)
-    .some((segment) => segment === "." || segment === "..");
+export const validReference = (_kind: ManagerKind, reference: string) =>
+  reference.length > 0 && reference.length <= 500 && !/\p{C}/u.test(reference);
 
 const text = (value: unknown, max: number): string => {
   if (typeof value !== "string")
@@ -121,7 +70,7 @@ const text = (value: unknown, max: number): string => {
 export function parseManagerAdd(input: unknown): {
   kind: ManagerKind;
   name: string;
-  token: string;
+  providerId: string;
   entries: ManagerEntry[];
 } {
   if (!input || typeof input !== "object" || Array.isArray(input))
@@ -130,7 +79,15 @@ export function parseManagerAdd(input: unknown): {
   const kind = body.kind;
   if (typeof kind !== "string" || !managerKinds.includes(kind as ManagerKind))
     throw new Error("Unsupported password manager");
-  const token = text(body.token, 16384);
+  if (
+    Object.keys(body).some(
+      (key) => !["kind", "name", "providerId", "entries"].includes(key),
+    )
+  )
+    throw new Error(
+      "Authorize a password manager connection; pasted tokens are no longer accepted",
+    );
+  const providerId = text(body.providerId, 100);
   if (typeof body.name !== "string" || !body.name.trim())
     throw new Error("Give the connection a name");
   const name = text(body.name, 60);
@@ -146,9 +103,7 @@ export function parseManagerAdd(input: unknown): {
     const entry = raw as Record<string, unknown>;
     const reference = text(entry.reference, 500);
     if (!validReference(kind as ManagerKind, reference))
-      throw new Error(
-        `That reference does not match ${kind}. ${MANAGER_KIND_HELP[kind as ManagerKind]}`,
-      );
+      throw new Error("Enter a valid saved login reference");
     const label = text(entry.label, 60);
     if (entry.website === undefined || entry.website === "")
       return { reference, label };
@@ -158,7 +113,7 @@ export function parseManagerAdd(input: unknown): {
   const seen = new Set(entries.map((entry) => entry.reference));
   if (seen.size !== entries.length)
     throw new Error("Each reference can be saved once per manager");
-  return { kind: kind as ManagerKind, name, token, entries };
+  return { kind: kind as ManagerKind, name, providerId, entries };
 }
 
 export function aadFor(owner: string, id: string) {
@@ -214,16 +169,23 @@ export function openManagerToken(
   }
 }
 
-export type ManagerResolvers = Record<
-  ManagerKind,
-  (token: string, reference: string) => Promise<string>
->;
-
 export interface ManagerHost {
-  add(input: unknown): Promise<ManagerView>;
+  add(input: unknown): Promise<ManagerView & { authorizationUrl?: string }>;
+  providers(): { id: string; name: string; kind: string }[];
+  authorize(id: string): Promise<{ authorizationUrl?: string }>;
+  finishAuthorization(
+    id: string,
+    state: string,
+    code: string,
+  ): Promise<ManagerView>;
   list(): Promise<ManagerView[]>;
   remove(id: string): Promise<void>;
-  resolvePassword(managerId: string, reference: string): Promise<string>;
+  resolvePassword(
+    managerId: string,
+    reference: string,
+    website?: string,
+    signal?: AbortSignal,
+  ): Promise<string>;
 }
 
 type ManagerRecord = {
@@ -232,15 +194,17 @@ type ManagerRecord = {
   kind: ManagerKind;
   name: string;
   entries: ManagerEntry[];
-  sealed: SealedToken;
+  providerId?: string;
+  /** Bind authorization to exact operator configuration, including tool and endpoints. */
+  providerFingerprint?: string;
+  status?: "connected" | "authorization_required";
+  sealed?: SealedToken;
   createdAt: number;
   removedAt?: number;
 };
 
 export const MAX_MANAGERS_PER_OWNER = 8;
 
-/** Owner-bound host over the connector store. Tokens are sealed with an
- * AES-256-GCM host key (AIKO_MANAGER_KEY); without it, adding fails closed. */
 export class FilePasswordManagerHost implements ManagerHost {
   private prefix: string;
   constructor(
@@ -252,37 +216,39 @@ export class FilePasswordManagerHost implements ManagerHost {
       };
       owner: string;
       key?: string;
-      vault?: { address?: string; namespace?: string };
-      onePasswordConnectUrl?: string;
-      /** Runtime-provided resolvers that win over the defaults for their kind (used where the SDK cannot run). */
-      sandboxResolvers?: Partial<ManagerResolvers>;
-      resolvers?: ManagerResolvers;
+      providers?: ManagerProvider[];
+      fetch?: FetchLike;
     },
   ) {
     this.prefix = `connectors:${createHash("sha256").update(options.owner).digest("hex")}:manager:`;
   }
   private key() {
-    if (!this.options.key)
-      throw new Error(
-        "This host has no password manager sealing key configured",
-      );
-    const key = Buffer.from(this.options.key, "base64");
+    const key = Buffer.from(this.options.key ?? "", "base64");
     if (key.length !== 32)
       throw new Error(
         "This host has no password manager sealing key configured",
       );
     return key;
   }
-  private resolvers() {
-    return {
-      ...defaultResolvers(
-        this.options.vault?.address,
-        this.options.vault?.namespace,
-        this.options.onePasswordConnectUrl,
-      ),
-      ...this.options.sandboxResolvers,
-      ...this.options.resolvers,
-    };
+  providers() {
+    return (this.options.providers ?? []).map(({ id, name, kind }) => ({
+      id,
+      name,
+      kind,
+    }));
+  }
+  private provider(record: ManagerRecord) {
+    const provider = this.options.providers?.find(
+      (p) => p.id === record.providerId && p.kind === record.kind,
+    );
+    if (!provider || record.providerFingerprint !== this.fingerprint(provider))
+      throw new Error(
+        "Password manager configuration changed. Disconnect and connect it again.",
+      );
+    return provider;
+  }
+  private fingerprint(provider: ManagerProvider) {
+    return createHash("sha256").update(JSON.stringify(provider)).digest("hex");
   }
   private async load(id: string): Promise<ManagerRecord> {
     if (!/^[a-f0-9-]{36}$/.test(id))
@@ -309,28 +275,108 @@ export class FilePasswordManagerHost implements ManagerHost {
         ...(website ? { website } : {}),
       })),
       createdAt: record.createdAt,
+      providerId: record.providerId,
+      status: record.providerId
+        ? (record.status ?? "authorization_required")
+        : "authorization_required",
     };
+  }
+  private grant(record: ManagerRecord): ManagerGrant {
+    // Legacy service-token rows can be listed and removed, but never resolved.
+    if (!record.providerId || !record.sealed)
+      throw new Error("Reconnect your password manager using OAuth");
+    return JSON.parse(
+      openManagerToken(
+        this.key(),
+        this.options.owner,
+        record.id,
+        record.sealed,
+      ),
+    );
+  }
+  private async save(record: ManagerRecord, grant: ManagerGrant) {
+    await this.load(record.id); // A disconnect during network I/O must not resurrect a grant.
+    record.sealed = sealManagerToken(
+      this.key(),
+      this.options.owner,
+      record.id,
+      JSON.stringify(grant),
+    );
+    await this.options.store.set(`${this.prefix}${record.id}`, record);
   }
   async add(input: unknown) {
     const parsed = parseManagerAdd(input);
     const key = this.key();
-    const existing = (await this.list()).length;
-    if (existing >= MAX_MANAGERS_PER_OWNER)
+    const provider = this.options.providers?.find(
+      (p) => p.id === parsed.providerId && p.kind === parsed.kind,
+    );
+    if (!provider)
+      throw new Error("Choose an available password manager connection");
+    if ((await this.list()).length >= MAX_MANAGERS_PER_OWNER)
       throw new Error(
         "This account already has the maximum number of password managers",
       );
     const id = randomUUID();
     const record: ManagerRecord = {
+      ...parsed,
       id,
       owner: this.options.owner,
-      kind: parsed.kind,
-      name: parsed.name,
-      entries: parsed.entries,
-      sealed: sealManagerToken(key, this.options.owner, id, parsed.token),
+      providerFingerprint: this.fingerprint(provider),
+      status: "authorization_required",
+      sealed: sealManagerToken(key, this.options.owner, id, "{}"),
       createdAt: Date.now(),
     };
     await this.options.store.set(`${this.prefix}${id}`, record);
-    return this.view(record);
+    // A failed provider remains visible for retry/removal instead of orphaning a connection.
+    const result = await this.authorize(id);
+    return { ...this.view(await this.load(id)), ...result };
+  }
+  async authorize(id: string) {
+    const record = await this.load(id);
+    const provider = this.provider(record);
+    const grant = this.grant(record);
+    delete grant.tokens;
+    grant.state = Buffer.from(randomBytes(32)).toString("base64url");
+    grant.expiresAt = Date.now() + 10 * 60_000;
+    record.status = "authorization_required";
+    try {
+      const result = await managerMcp(provider, grant, {}, this.options.fetch);
+      if (!result.authorizationUrl) record.status = "connected";
+      return result;
+    } finally {
+      await this.save(record, grant);
+    }
+  }
+  async finishAuthorization(id: string, state: string, code: string) {
+    const record = await this.load(id);
+    const provider = this.provider(record);
+    const grant = this.grant(record);
+    if (
+      !state ||
+      state !== grant.state ||
+      !grant.expiresAt ||
+      grant.expiresAt < Date.now() ||
+      !grant.verifier ||
+      typeof code !== "string" ||
+      !code ||
+      code.length > 4096 ||
+      /\p{C}/u.test(code)
+    )
+      throw new Error(
+        "Authorization expired or invalid. Reconnect your password manager.",
+      );
+    // Consume state durably before exchanging a one-use authorization code.
+    delete grant.state;
+    delete grant.expiresAt;
+    await this.save(record, grant);
+    try {
+      await managerMcp(provider, grant, { code }, this.options.fetch);
+      record.status = "connected";
+      return this.view(record);
+    } finally {
+      delete grant.verifier;
+      await this.save(record, grant);
+    }
   }
   async list() {
     const views: ManagerView[] = [];
@@ -344,202 +390,41 @@ export class FilePasswordManagerHost implements ManagerHost {
   async remove(id: string) {
     const record = await this.load(id);
     record.removedAt = Date.now();
-    // Tombstoned so an in-flight fill fails closed instead of silently reusing a removed credential.
+    delete record.sealed;
     await this.options.store.set(`${this.prefix}${id}`, record);
   }
-  async resolvePassword(managerId: string, reference: string) {
+  async resolvePassword(
+    managerId: string,
+    reference: string,
+    website?: string,
+    signal?: AbortSignal,
+  ) {
     const record = await this.load(managerId);
-    if (!record.entries.some((entry) => entry.reference === reference))
+    const entry = record.entries.find((entry) => entry.reference === reference);
+    if (!entry)
       throw new Error("That saved login is not part of this password manager");
-    const token = openManagerToken(
-      this.key(),
-      this.options.owner,
-      record.id,
-      record.sealed,
-    );
-    return await this.resolvers()[record.kind](token, reference);
+    if (
+      entry.website &&
+      (!website || connectorDomain(website) !== entry.website)
+    )
+      throw new Error("That saved login belongs to a different website");
+    if (record.status !== "connected")
+      throw new Error("Reconnect your password manager using OAuth");
+    const provider = this.provider(record);
+    const grant = this.grant(record);
+    try {
+      const result = await managerMcp(
+        provider,
+        grant,
+        { reference, signal },
+        this.options.fetch,
+      );
+      await this.load(managerId);
+      if (!result.password)
+        throw new Error("Password manager did not resolve this reference");
+      return result.password;
+    } finally {
+      await this.save(record, grant);
+    }
   }
-}
-
-const providerError = (kind: ManagerKind) =>
-  new Error(
-    `Could not reach ${kind}. Check the saved credential and try again.`,
-  );
-
-/** Default resolvers. Official SDKs load lazily so module import never pulls them. */
-export function defaultResolvers(
-  vaultAddress?: string,
-  vaultNamespace?: string,
-  onePasswordConnectUrl?: string,
-): ManagerResolvers {
-  return {
-    async onepassword(token, reference) {
-      try {
-        // Computed specifier: the 1Password SDK needs the local desktop app,
-        // so it must stay out of the workerd bundle and fail closed there.
-        const onePasswordModule = ["@1password", "sdk"].join("/");
-        const { createClient } = await import(onePasswordModule);
-        const client = await createClient({
-          auth: token,
-          integrationName: "Aiko",
-          integrationVersion: "0.2.0",
-        });
-        return await client.secrets.resolve(reference);
-      } catch {
-        throw providerError("onepassword");
-      }
-    },
-    async keeper(token, reference) {
-      try {
-        const { getValue, getSecrets, inMemoryStorage, initialize } =
-          await import("@keeper-security/secrets-manager-core");
-        initialize();
-        const oneLine = !token.trim().startsWith("{")
-          ? token.trim().slice(token.trim().indexOf(":") + 1)
-          : token.trim();
-        const config = JSON.parse(
-          Buffer.from(oneLine, "base64").toString("utf8"),
-        ) as { clientId?: string };
-        if (typeof config.clientId !== "string" || !config.clientId)
-          throw new Error();
-        const secrets = await getSecrets({ storage: inMemoryStorage(config) }, [
-          reference.slice("keeper://".length).split("/", 1)[0]!,
-        ]);
-        const value = getValue(secrets, reference);
-        if (typeof value !== "string" || !value) throw new Error();
-        return value;
-      } catch {
-        throw providerError("keeper");
-      }
-    },
-    async "hashicorp-vault"(token, reference) {
-      if (!vaultAddress)
-        throw new Error("This host has no Vault cluster configured");
-      const match = reference.match(
-        /^vault:\/\/([A-Za-z0-9_-]+)((?:\/[A-Za-z0-9_.-]+)+)#([A-Za-z0-9_.-]+)$/,
-      );
-      if (
-        !match ||
-        match[2]!
-          .split("/")
-          .some((segment) => segment === "." || segment === "..")
-      )
-        throw providerError("hashicorp-vault");
-      try {
-        const url = new URL(
-          `${new URL(vaultAddress).origin}/v1/${match[1]}/data${match[2]}`,
-        );
-        const response = await fetch(url, {
-          headers: {
-            Accept: "application/json",
-            "X-Vault-Token": token,
-            ...(vaultNamespace ? { "X-Vault-Namespace": vaultNamespace } : {}),
-          },
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!response.ok) throw new Error();
-        const body = (await response.json()) as {
-          data?: { data?: Record<string, unknown> };
-        };
-        const value = body.data?.data?.[match[3]!];
-        if (typeof value !== "string" || !value) throw new Error();
-        return value;
-      } catch {
-        throw providerError("hashicorp-vault");
-      }
-    },
-    async "onepassword-connect"(token, reference) {
-      const match = reference.match(
-        /^op:\/\/([^/?#]+)\/([^/?#]+)(?:\/[^/?#]+)?\/([^/?#]+)$/,
-      );
-      if (!match) throw providerError("onepassword-connect");
-      try {
-        if (!onePasswordConnectUrl) throw new Error();
-        const base = onePasswordConnectUrl.replace(/\/+$/, "");
-        const headers = {
-          Authorization: `Token ${token}`,
-          Accept: "application/json",
-        };
-        const uuid =
-          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        const getJson = async <T>(path: string): Promise<T> => {
-          const response = await fetch(base + path, {
-            headers,
-            signal: AbortSignal.timeout(10_000),
-          });
-          if (!response.ok) throw new Error();
-          return (await response.json()) as T;
-        };
-        let vaultId = match[1]!;
-        if (!uuid.test(vaultId)) {
-          const filter = encodeURIComponent(
-            `name eq "${vaultId.replace(/"/g, '\\"')}"`,
-          );
-          const vaults = await getJson<Array<{ id?: string; name?: string }>>(
-            `/v1/vaults?filter=${filter}`,
-          );
-          vaultId =
-            vaults.find((v) => v.name?.toLowerCase() === vaultId.toLowerCase())
-              ?.id ?? "";
-          if (!vaultId) throw new Error();
-        }
-        let itemId = match[2]!;
-        if (!uuid.test(itemId)) {
-          const filter = encodeURIComponent(
-            `title eq "${itemId.replace(/"/g, '\\"')}"`,
-          );
-          const items = await getJson<Array<{ id?: string; title?: string }>>(
-            `/v1/vaults/${vaultId}/items?filter=${filter}`,
-          );
-          itemId =
-            items.find((i) => i.title?.toLowerCase() === itemId.toLowerCase())
-              ?.id ?? "";
-          if (!itemId) throw new Error();
-        }
-        const item = await getJson<{
-          fields?: Array<{ label?: string; id?: string; value?: unknown }>;
-        }>(`/v1/vaults/${vaultId}/items/${itemId}`);
-        const field = (item.fields ?? []).find(
-          (f) => f.label === match[3] || f.id === match[3],
-        );
-        const value = field?.value;
-        if (typeof value !== "string" || !value) throw new Error();
-        return value;
-      } catch {
-        throw providerError("onepassword-connect");
-      }
-    },
-    async doppler(token, reference) {
-      const match = reference.match(/^doppler:\/\/([A-Za-z0-9_.-]+)$/);
-      if (!match) throw providerError("doppler");
-      try {
-        const url = new URL(
-          "https://api.doppler.com/v3/configs/config/secrets",
-        );
-        url.searchParams.set("name", match[1]!);
-        const response = await fetch(url, {
-          headers: {
-            Accept: "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!response.ok) throw new Error();
-        const body = (await response.json()) as {
-          secrets?: Record<string, { computed?: unknown }>;
-        };
-        const secrets = body.secrets ?? {};
-        const entry =
-          secrets[match[1]!] ??
-          Object.entries(secrets).find(
-            ([key]) => key.toLowerCase() === match[1]!.toLowerCase(),
-          )?.[1];
-        const value = entry?.computed;
-        if (typeof value !== "string" || !value) throw new Error();
-        return value;
-      } catch {
-        throw providerError("doppler");
-      }
-    },
-  };
 }

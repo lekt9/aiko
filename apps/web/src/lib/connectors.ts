@@ -27,6 +27,8 @@ export type ConnectorConnection = {
 export type ConnectorConnect = ConnectorConnection;
 
 export type ManagerKind =
+  | "bitwarden"
+  | "remote-mcp"
   | "onepassword"
   | "onepassword-connect"
   | "keeper"
@@ -37,7 +39,10 @@ export type ManagerEntry = {
   label: string;
   website?: string;
 };
+export type ManagerProvider = { id: string; name: string; kind: ManagerKind };
 export type PasswordManager = {
+  providerId?: string;
+  status: "connected" | "authorization_required";
   id: string;
   kind: ManagerKind;
   name: string;
@@ -45,6 +50,8 @@ export type PasswordManager = {
   createdAt: number;
 };
 export const managerKindLabels: Record<ManagerKind, string> = {
+  bitwarden: "Bitwarden",
+  "remote-mcp": "Password manager",
   onepassword: "1Password",
   "onepassword-connect": "1Password Connect",
   keeper: "Keeper",
@@ -52,15 +59,13 @@ export const managerKindLabels: Record<ManagerKind, string> = {
   doppler: "Doppler",
 };
 export const managerKindHints: Record<ManagerKind, string> = {
-  onepassword:
-    "Service account token · references like op://Vault/Item/password",
-  "onepassword-connect":
-    "Connect credentials token · fills resolve through the operator's Connect server",
-  keeper:
-    "One-line config · references like keeper://RECORD_UID/field/password",
-  "hashicorp-vault":
-    "Service token · references like vault://secret/data/app/token#value",
-  doppler: "Service token · references like doppler://API_KEY",
+  onepassword: "Use a saved login reference such as op://Vault/Item/password.",
+  "onepassword-connect": "Use a reference supported by your connected vault.",
+  bitwarden: "Use the saved item's identifier from your connected vault.",
+  "remote-mcp": "Use a reference supported by your connected password manager.",
+  keeper: "Use the saved record's reference from your connected vault.",
+  "hashicorp-vault": "Use a reference supported by your connected vault.",
+  doppler: "Use a reference supported by your connected vault.",
 };
 
 /** Launch data selects a screen, never an account or an authorization grant. */
@@ -105,6 +110,45 @@ export function safeAuthorizationUrl(value?: string): string | undefined {
   }
 }
 
+export class MiniAppAuthenticationError extends Error {}
+const reopenMessage =
+  "Your Telegram session expired. Close this mini app and reopen it from Aiko’s chat menu, then try again.";
+let miniAppSession: { initData: string; token: Promise<string> } | undefined;
+export function clearMiniAppSession() {
+  miniAppSession = undefined;
+}
+async function sessionFor(initData: string) {
+  if (miniAppSession?.initData === initData) return miniAppSession.token;
+  const token = (async () => {
+    const response = await fetch("/api/connectors/session", {
+      method: "POST",
+      headers: {
+        "x-telegram-init-data": initData,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (response.status === 401 || response.status === 403)
+      throw new MiniAppAuthenticationError(reopenMessage);
+    if (!response.ok)
+      throw new Error("Could not open your Telegram session. Try again.");
+    const value = (await response.json()) as { token?: string };
+    if (!value.token)
+      throw new Error("Could not open your Telegram session. Try again.");
+    return value.token;
+  })();
+  miniAppSession = { initData, token };
+  try {
+    return await token;
+  } catch (error) {
+    if (miniAppSession?.token === token) miniAppSession = undefined;
+    throw error;
+  }
+}
+
 export async function connectorRequest<T>(
   path: string,
   body?: object,
@@ -120,11 +164,16 @@ export async function connectorRequest<T>(
   if (authentication?.bearer)
     headers.Authorization = `Bearer ${authentication.bearer}`;
   else if (authentication?.telegram !== false && telegram?.initData)
-    headers["x-telegram-init-data"] = telegram.initData;
+    headers.Authorization = `tms ${await sessionFor(telegram.initData)}`;
+  signal?.throwIfAborted();
   if (body) headers["Content-Type"] = "application/json";
   // Requests always settle: a stalled server surfaces as a retryable error,
   // never an indefinite spinner.
-  const privateSignIn = ["/native", "/browser", "/password-managers/fill"].includes(path);
+  const privateSignIn = [
+    "/native",
+    "/browser",
+    "/password-managers/fill",
+  ].includes(path);
   const timeout = AbortSignal.timeout(privateSignIn ? 120_000 : 20_000);
   const settled = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const response = await fetch(
@@ -141,10 +190,10 @@ export async function connectorRequest<T>(
     },
   );
   if (!response.ok) {
-    if (response.status === 401 || response.status === 403)
-      throw new Error(
-        "This Telegram identity was not accepted. Reopen Aiko from the Connect apps menu and try again.",
-      );
+    if (response.status === 401 || response.status === 403) {
+      clearMiniAppSession();
+      throw new MiniAppAuthenticationError(reopenMessage);
+    }
     if (path.startsWith("/password-managers") || path.startsWith("/imports")) {
       const detail = (await response.json().catch(() => ({}))) as {
         error?: string;

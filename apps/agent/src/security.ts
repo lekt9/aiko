@@ -94,6 +94,22 @@ export function verifyInitData(
   }
 }
 
+// Exchange fresh Telegram launch data once. The signed, short-lived app session
+// stays in browser memory; stale launch data can never mint or renew a session.
+export function createMiniAppSession(owner: string, botToken: string, now = Date.now()) {
+  const payload = `${owner}.${now + 12 * 60 * 60_000}`;
+  const signature = createHmac("sha256", botToken).update(`aiko-mini-app/v1:${payload}`).digest("hex");
+  return `${payload}.${signature}`;
+}
+export function verifyMiniAppSession(token: string, botToken: string, now = Date.now()): string | undefined {
+  const match = /^([1-9]\d{0,15})\.(\d{13})\.([a-f0-9]{64})$/.exec(token);
+  if (!match) return;
+  const [, owner, expiry, signature] = match;
+  if (Number(expiry) <= now || Number(expiry) > now + 12 * 60 * 60_000) return;
+  const expected = createHmac("sha256", botToken).update(`aiko-mini-app/v1:${owner}.${expiry}`).digest("hex");
+  return equalSecret(signature!, expected) ? owner : undefined;
+}
+
 export const safeUserId = (value: unknown): value is string =>
   typeof value === "string" &&
   /^(?:local|[1-9]\d{0,15}|acct_[A-Za-z0-9_-]{8,64})$/.test(value);

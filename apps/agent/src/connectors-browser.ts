@@ -8,6 +8,7 @@ export type SecureBrowserStatus = SecureBrowserBinding & (
 );
 export interface SecureBrowserAdapter {
   native?: boolean;
+  progress?(): Promise<{ stage: string; message: string; at: number }[]>;
   readContext?(binding: SecureBrowserBinding, signal?: AbortSignal, url?: string, linkOffset?: number): Promise<{url: string; text: string; links?: string[]; linksTruncated?: boolean; nextLinkOffset?: number}>;
   control?(binding: SecureBrowserBinding, input: Omit<NativeLoginInput, "connectionId" | "domain">, signal?: AbortSignal): Promise<NativeLoginView>;
   begin(binding: SecureBrowserBinding, signal?: AbortSignal): Promise<{ authorizationUrl: string }>;

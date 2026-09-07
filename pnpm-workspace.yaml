@@ -1,3 +1,6 @@
 packages:
   - apps/*
   - packages/*
+
+patchedDependencies:
+  tardie@0.22.0: patches/tardie@0.22.0.patch

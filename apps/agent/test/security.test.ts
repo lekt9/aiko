@@ -8,6 +8,8 @@ import {
   boundedText,
   equalSecret,
   verifyInitData,
+  createMiniAppSession,
+  verifyMiniAppSession,
   redactor,
 } from "../src/security.ts";
 import { createVoice, validateVoice, createThinkFeelComposer, type VoiceInput } from "../src/voice.ts";
@@ -298,6 +300,16 @@ function initData(user: number, at: number, bot = "test-bot") {
   return params.toString();
 }
 describe("identity, custody and capability security", () => {
+  test("Mini App session survives launch expiry but rejects tampering, wrong bot and expiry", () => {
+    const now = Date.now();
+    const token = createMiniAppSession("123", "test-bot", now);
+    expect(verifyMiniAppSession(token, "test-bot", now + 301_000)).toBe("123");
+    expect(verifyMiniAppSession(token.replace(/^123/, "456"), "test-bot", now)).toBeUndefined();
+    expect(verifyMiniAppSession(token, "wrong-bot", now)).toBeUndefined();
+    expect(verifyMiniAppSession(token, "test-bot", now + 12 * 60 * 60_000)).toBeUndefined();
+    expect(verifyMiniAppSession(token, "test-bot", now - 1000)).toBeUndefined();
+    expect(verifyInitData(initData(123, now), "test-bot", now + 301_000)).toBeUndefined();
+  });
   test("Mini App signature, age, duplicate keys and wrong token", () => {
     const now = Date.now();
     const raw = initData(123, now);

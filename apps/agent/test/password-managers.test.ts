@@ -1,653 +1,593 @@
 import { test, expect } from "bun:test";
-import { randomUUID, randomBytes } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   ConnectorEngine,
-  connectorStorePrefix,
   type ConnectorStore,
   type SecureBrowserAdapter,
 } from "../src/connectors.ts";
 import {
-  defaultResolvers,
   FilePasswordManagerHost,
   parseManagerAdd,
-  openManagerToken,
   sealManagerToken,
-  validReference,
+  openManagerToken,
 } from "../src/password-managers.ts";
-import { createService } from "../src/server.ts";
-import { credentialDigest } from "../src/plane-auth.ts";
-import { PERSONA, type AikoConfig } from "../src/config.ts";
-
-const cleanup: (() => Promise<void>)[] = [];
+import {
+  extractManagerPassword,
+  parseManagerProviders,
+} from "../src/password-manager-mcp.ts";
+import { connectorApi } from "../src/connector-api.ts";
 
 class Store implements ConnectorStore {
   rows = new Map<string, unknown>();
-  async get(k: string) {
-    return structuredClone(this.rows.get(k));
+  async get(key: string) {
+    return structuredClone(this.rows.get(key));
   }
-  async set(k: string, v: unknown) {
-    this.rows.set(k, structuredClone(v));
+  async set(key: string, value: unknown) {
+    this.rows.set(key, structuredClone(value));
   }
-  async list(p: string) {
+  async list(prefix: string) {
     return [...this.rows]
-      .filter(([k]) => k.startsWith(p))
-      .map(([, v]) => structuredClone(v));
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, value]) => structuredClone(value));
   }
 }
-
-const KEY = Buffer.from(randomBytes(32)).toString("base64");
-const alice = "1111111111";
-
-const onePasswordAdd = {
+const KEY = randomBytes(32).toString("base64");
+const owner = "1111111111";
+const providers = parseManagerProviders(
+  JSON.stringify([
+    {
+      id: "personal",
+      name: "Personal vault",
+      kind: "onepassword",
+      url: "https://mcp.example/mcp",
+      redirectUrl: "https://unlock.example/password-manager-callback.html",
+      authorizationOrigins: ["https://auth.example"],
+      tool: "read_secret",
+      referenceArgument: "reference",
+      valuePath: ["password"],
+    },
+  ]),
+);
+const add = {
   kind: "onepassword",
+  providerId: "personal",
   name: "Personal vault",
-  token: "synthetic-op-service-token",
   entries: [
     {
-      label: "GitHub login",
+      label: "GitHub",
       website: "https://github.com",
       reference: "op://Vault/GitHub/password",
     },
   ],
 };
+const PASSWORD = "SYNTHETIC-PRIVATE-PASSWORD";
+const ACCESS = "SYNTHETIC-ACCESS-TOKEN";
+const REFRESH = "SYNTHETIC-REFRESH-TOKEN";
 
-const fakeBrowser = (
-  submitted: { username?: string; password?: string }[] = [],
-): SecureBrowserAdapter => ({
-  native: true,
-  begin: async () => ({
-    authorizationUrl: "https://t.me/aiko_bot?start=fixture",
-  }),
-  control: async (_binding, input) => {
-    if (input.action === "login") {
-      submitted.push({ username: input.username, password: input.password });
+/** Exercises the real SDK's discovery, PKCE, registration and MCP transport over a fake network. */
+function network() {
+  const calls: {
+    url: string;
+    method: string;
+    body?: any;
+    authorization?: string | null;
+  }[] = [];
+  let rejectAccess = false;
+  let failTool = false;
+  let metadataOrigin = "https://auth.example";
+  let onTool: (() => Promise<void>) | undefined;
+  const fetcher: typeof fetch = (async (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    const method = init?.method ?? "GET";
+    const raw = String(init?.body ?? "");
+    const body = raw.startsWith("{")
+      ? JSON.parse(raw)
+      : raw
+        ? Object.fromEntries(new URLSearchParams(raw))
+        : undefined;
+    const authorization = new Headers(init?.headers).get("Authorization");
+    calls.push({ url: url.href, method, body, authorization });
+    expect(init?.redirect).toBe("error");
+    if (url.pathname.includes("oauth-protected-resource"))
+      return Response.json({
+        resource: "https://mcp.example/mcp",
+        authorization_servers: [metadataOrigin],
+      });
+    if (
+      url.pathname.includes("oauth-authorization-server") ||
+      url.pathname.includes("openid-configuration")
+    )
+      return Response.json({
+        issuer: "https://auth.example",
+        authorization_endpoint: "https://auth.example/authorize",
+        token_endpoint: "https://auth.example/token",
+        registration_endpoint: "https://auth.example/register",
+        response_types_supported: ["code"],
+        grant_types_supported: ["authorization_code", "refresh_token"],
+        code_challenge_methods_supported: ["S256"],
+        token_endpoint_auth_methods_supported: ["none"],
+      });
+    if (url.pathname === "/register")
+      return Response.json(
+        { ...body, client_id: "unlock-test-client" },
+        { status: 201 },
+      );
+    if (url.pathname === "/token") {
+      rejectAccess = false;
+      return Response.json({
+        access_token: ACCESS,
+        refresh_token: REFRESH,
+        token_type: "Bearer",
+        expires_in: 3600,
+      });
+    }
+    if (url.pathname !== "/mcp") return new Response(null, { status: 404 });
+    if (!authorization || rejectAccess)
+      return new Response(null, {
+        status: 401,
+        headers: {
+          "WWW-Authenticate":
+            'Bearer resource_metadata="https://mcp.example/.well-known/oauth-protected-resource"',
+        },
+      });
+    expect(authorization).toBe(`Bearer ${ACCESS}`);
+    if (method !== "POST") return new Response(null, { status: 405 });
+    if (body.method === "notifications/initialized")
+      return new Response(null, { status: 202 });
+    let result: unknown;
+    if (body.method === "initialize")
+      result = {
+        protocolVersion: "2025-03-26",
+        capabilities: { tools: {} },
+        serverInfo: { name: "fixture", version: "1" },
+      };
+    else if (body.method === "tools/list")
+      result = {
+        tools: [
+          {
+            name: "read_secret",
+            inputSchema: {
+              type: "object",
+              properties: { reference: { type: "string" } },
+              required: ["reference"],
+            },
+          },
+          { name: "delete_vault", inputSchema: { type: "object" } },
+        ],
+      };
+    else if (body.method === "tools/call") {
+      expect(body.params).toEqual({
+        name: "read_secret",
+        arguments: { reference: add.entries[0]!.reference },
+      });
+      await onTool?.();
+      result = failTool
+        ? {
+            isError: true,
+            content: [{ type: "text", text: PASSWORD + ACCESS }],
+          }
+        : { content: [], structuredContent: { password: PASSWORD } };
+    } else throw new Error("Unexpected MCP operation");
+    return Response.json({ jsonrpc: "2.0", id: body.id, result });
+  }) as typeof fetch;
+  return {
+    calls,
+    fetch: fetcher,
+    expire: () => {
+      rejectAccess = true;
+    },
+    fail: () => {
+      failTool = true;
+    },
+    redirectDiscovery: () => {
+      metadataOrigin = "https://untrusted.example";
+    },
+    duringTool: (fn: () => Promise<void>) => {
+      onTool = fn;
+    },
+  };
+}
+function fixture() {
+  const store = new Store();
+  const remote = network();
+  const host = new FilePasswordManagerHost({
+    store,
+    owner,
+    key: KEY,
+    providers,
+    fetch: remote.fetch,
+  });
+  const submitted: unknown[] = [];
+  const browser: SecureBrowserAdapter = {
+    native: true,
+    begin: async () => ({
+      authorizationUrl: "https://t.me/aiko_bot?start=fixture",
+    }),
+    control: async (_binding, input) => {
+      submitted.push(input);
       return {
         status: "connected",
         domain: _binding.domain,
-        expiresAt: Date.now() + 600000,
+        expiresAt: Date.now() + 60_000,
         revision: 2,
       };
-    }
-    return {
-      status: "pending",
-      domain: _binding.domain,
-      fields: ["username", "password"],
-      expiresAt: Date.now() + 600000,
-      revision: 1,
-    };
-  },
-  status: async (binding) => ({
-    ...binding,
-    status: "connected" as const,
-    verification: {
-      verified: true,
-      revision: 1,
-      expiresAt: Date.now() + 300000,
     },
-  }),
-});
-
-const engineWith = (
-  options: {
-    store?: Store;
-    browser?: SecureBrowserAdapter;
-    managers?: FilePasswordManagerHost;
-    owner?: string;
-  } = {},
-) =>
-  new ConnectorEngine({
-    owner: options.owner ?? alice,
-    store: options.store ?? new Store(),
-    secureBrowser: options.browser ?? fakeBrowser(),
-    managers: options.managers,
-    fetch: async () =>
-      new Response(JSON.stringify({ items: [] }), { status: 200 }),
-  });
-
-test("manager reference validation matches each provider's syntax", () => {
-  expect(validReference("onepassword", "op://Vault/Item/password")).toBe(true);
-  expect(
-    validReference("onepassword", "op://Vault/Item/Section/password"),
-  ).toBe(true);
-  expect(validReference("onepassword", "op://Vault/Item")).toBe(false);
-  expect(
-    validReference("onepassword-connect", "op://Vault/Item/password"),
-  ).toBe(true);
-  expect(
-    validReference("onepassword-connect", "op://Vault/Item/Section/password"),
-  ).toBe(true);
-  expect(validReference("onepassword-connect", "doppler://API_KEY")).toBe(
-    false,
-  );
-  expect(
-    validReference("keeper", "keeper://abcdefghijklmnopqrstuv/field/password"),
-  ).toBe(true);
-  expect(validReference("keeper", "keeper://short/field/password")).toBe(false);
-  expect(
-    validReference("hashicorp-vault", "vault://secret/data/app/token#value"),
-  ).toBe(true);
-  expect(
-    validReference("hashicorp-vault", "vault://secret/data/../etc#value"),
-  ).toBe(false);
-  expect(
-    validReference("hashicorp-vault", "vault://secret/data/app/token"),
-  ).toBe(false);
-  expect(validReference("doppler", "doppler://API_KEY")).toBe(true);
-  expect(validReference("doppler", "doppler://project/config/NAME")).toBe(
-    false,
-  );
-  expect(() =>
-    parseManagerAdd({ ...onePasswordAdd, kind: "bitwarden" }),
-  ).toThrow();
-  expect(
-    parseManagerAdd({ ...onePasswordAdd, kind: "onepassword-connect" }).kind,
-  ).toBe("onepassword-connect");
-  expect(() => parseManagerAdd({ ...onePasswordAdd, entries: [] })).toThrow();
-  expect(() =>
-    parseManagerAdd({
-      ...onePasswordAdd,
-      entries: [
-        { label: "a", reference: "op://Vault/A/password" },
-        { label: "b", reference: "op://Vault/A/password" },
-      ],
+    status: async (binding) => ({
+      ...binding,
+      status: "connected",
+      verification: {
+        verified: true,
+        revision: 1,
+        expiresAt: Date.now() + 60_000,
+      },
     }),
-  ).toThrow();
-  const parsed = parseManagerAdd({
-    ...onePasswordAdd,
-    entries: [{ ...onePasswordAdd.entries[0] }],
-  });
-  expect(parsed.entries[0]?.website).toBe("github.com");
-});
-
-test("tokens are sealed at rest and never present in listings", async () => {
-  const store = new Store();
-  const host = new FilePasswordManagerHost({
+  };
+  const engine = new ConnectorEngine({
+    owner,
     store,
-    owner: alice,
-    key: KEY,
-    resolvers: {
-      onepassword: async () => "SYNTHETIC-RESOLVED-PASSWORD",
-    } as never,
+    secureBrowser: browser,
+    managers: host,
+    fetch: async () => Response.json({ items: [] }),
   });
-  const view = await host.add(onePasswordAdd);
-  expect(view.entries[0]?.reference).toBe("op://Vault/GitHub/password");
-  expect(JSON.stringify([...store.rows.values()])).not.toContain(
-    "synthetic-op-service-token",
-  );
-  expect(JSON.stringify(await host.list())).not.toContain(
-    "synthetic-op-service-token",
-  );
-  const key = Buffer.from(KEY, "base64");
-  const sealed = sealManagerToken(key, alice, view.id, "round-trip-value");
-  expect(openManagerToken(key, alice, view.id, sealed)).toBe(
-    "round-trip-value",
+  return { store, remote, host, engine, submitted };
+}
+async function connect(f: ReturnType<typeof fixture>) {
+  const manager = await f.host.add(add);
+  expect(manager.status).toBe("authorization_required");
+  const url = new URL(manager.authorizationUrl!);
+  expect(url.origin).toBe("https://auth.example");
+  expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+  expect(url.searchParams.get("redirect_uri")).toBe(providers[0]!.redirectUrl);
+  const state = url.searchParams.get("state")!;
+  await f.host.finishAuthorization(manager.id, state, "synthetic-code");
+  const tokenRequest = f.remote.calls.find((call) =>
+    call.url.endsWith("/token"),
+  )!.body;
+  expect(
+    createHash("sha256").update(tokenRequest.code_verifier).digest("base64url"),
+  ).toBe(url.searchParams.get("code_challenge")!);
+  expect(tokenRequest.resource).toBe("https://mcp.example/mcp");
+  return { ...manager, state };
+}
+
+test("new connections reject pasted tokens, arbitrary endpoints and duplicate references", () => {
+  expect(() => parseManagerAdd({ ...add, token: "old-token" })).toThrow(
+    "pasted tokens",
   );
   expect(() =>
-    openManagerToken(key, "someone-else", view.id, sealed),
+    parseManagerAdd({ ...add, url: "https://evil.example" }),
   ).toThrow();
+  expect(() => parseManagerAdd({ ...add, entries: [] })).toThrow();
+  expect(() =>
+    parseManagerAdd({ ...add, entries: [...add.entries, ...add.entries] }),
+  ).toThrow();
+  expect(parseManagerAdd(add).entries[0]?.website).toBe("github.com");
+  expect(() =>
+    parseManagerProviders(
+      JSON.stringify([{ ...providers[0], url: "http://localhost/mcp" }]),
+    ),
+  ).toThrow();
+  expect(() =>
+    parseManagerProviders(
+      JSON.stringify([{ ...providers[0], valuePath: ["__proto__"] }]),
+    ),
+  ).toThrow();
+});
+
+test("OAuth PKCE grants are sealed, owner-bound and never appear in listings", async () => {
+  const f = fixture();
+  const manager = await connect(f);
+  expect((await f.host.list())[0]?.status).toBe("connected");
+  for (const secret of [ACCESS, REFRESH, "synthetic-code"]) {
+    expect(JSON.stringify([...f.store.rows.values()])).not.toContain(secret);
+    expect(JSON.stringify(await f.host.list())).not.toContain(secret);
+  }
+  const sealed = sealManagerToken(
+    Buffer.from(KEY, "base64"),
+    owner,
+    manager.id,
+    "round-trip",
+  );
   expect(
-    await host.resolvePassword(view.id, "op://Vault/GitHub/password"),
-  ).toBe("SYNTHETIC-RESOLVED-PASSWORD");
+    openManagerToken(Buffer.from(KEY, "base64"), owner, manager.id, sealed),
+  ).toBe("round-trip");
+  expect(() =>
+    openManagerToken(
+      Buffer.from(KEY, "base64"),
+      "someone-else",
+      manager.id,
+      sealed,
+    ),
+  ).toThrow();
   await expect(
-    host.resolvePassword(view.id, "op://Vault/Other/password"),
+    f.host.finishAuthorization(manager.id, manager.state, "synthetic-code"),
+  ).rejects.toThrow("expired or invalid");
+  const foreign = new FilePasswordManagerHost({
+    store: f.store,
+    owner: "2222222222",
+    key: KEY,
+    providers,
+    fetch: f.remote.fetch,
+  });
+  expect(await foreign.list()).toEqual([]);
+  await expect(
+    foreign.resolvePassword(
+      manager.id,
+      add.entries[0]!.reference,
+      "github.com",
+    ),
   ).rejects.toThrow();
 });
 
-test("adding without a host sealing key fails closed", async () => {
-  const host = new FilePasswordManagerHost({
-    store: new Store(),
-    owner: alice,
-  });
-  await expect(host.add(onePasswordAdd)).rejects.toThrow("sealing key");
-});
-
-test("removal tombstones the record so in-flight fills fail closed", async () => {
-  const store = new Store();
-  const host = new FilePasswordManagerHost({
-    store,
-    owner: alice,
-    key: KEY,
-    resolvers: {
-      onepassword: async () => "x",
-    } as never,
-  });
-  const view = await host.add(onePasswordAdd);
-  await host.remove(view.id);
-  expect(await host.list()).toEqual([]);
-  await expect(
-    host.resolvePassword(view.id, "op://Vault/GitHub/password"),
-  ).rejects.toThrow();
-});
-
-test("CSV rows stage app tiles with usernames and never store passwords", async () => {
-  const store = new Store();
-  const engine = engineWith({ store });
-  const result = await engine.importLogins([
-    { name: "GitHub", website: "https://github.com", username: "octocat" },
-    { website: "notion.so", username: "owner@example.com" },
-    { website: "http://insecure.test", username: "x" },
-    { website: "https://user:pass@evil.example", username: "x" },
-    { website: "https://github.com", username: "duplicate" },
-    { username: "no-website" },
-  ]);
-  expect(result.imported).toBe(2);
-  expect(result.updated).toBe(0);
-  expect(result.skipped.map((s) => s.row)).toEqual([3, 4, 5, 6]);
-  const connections = await engine.connections();
-  const github = connections.find(
-    (c) => c.connectorId === "browser:github.com",
-  );
-  expect(github).toMatchObject({
-    status: "pending",
-    importedUsername: "octocat",
-    appName: "GitHub",
-  });
-  expect(
-    connections.find((c) => c.connectorId === "browser:notion.so"),
-  ).toMatchObject({ importedUsername: "owner@example.com" });
-  expect(JSON.stringify([...store.rows.values()])).not.toContain(
-    "SYNTHETIC-PASSWORD",
-  );
-  // Same domain again updates the staged username instead of duplicating the tile.
-  const second = await engine.importLogins([
-    { website: "github.com", username: "octocat" },
-  ]);
-  expect(second.imported).toBe(0);
-});
-
-test("fill resolves the saved reference server-side and submits it privately", async () => {
-  const store = new Store();
-  const submitted: { username?: string; password?: string }[] = [];
-  const host = new FilePasswordManagerHost({
-    store,
-    owner: alice,
-    key: KEY,
-    resolvers: {
-      onepassword: async (_token: string, reference: string) =>
-        reference === "op://Vault/GitHub/password"
-          ? "SYNTHETIC-FILLED-PASSWORD"
-          : (() => {
-              throw new Error("unavailable");
-            })(),
-    } as never,
-  });
-  const manager = await host.add(onePasswordAdd);
-  const engine = engineWith({
-    store,
-    browser: fakeBrowser(submitted),
-    managers: host,
-  });
-  await engine.importLogins([
-    { name: "GitHub", website: "https://github.com", username: "octocat" },
-  ]);
-  const connection = (await engine.connections()).find(
-    (c) => c.connectorId === "browser:github.com",
-  )!;
-  const result = await engine.fillFromManager({
+test("private fill resolves only the saved reference and never publishes the password", async () => {
+  const f = fixture();
+  const manager = await connect(f);
+  await f.engine.importLogins([{ website: "github.com", username: "octocat" }]);
+  const connection = (await f.engine.connections())[0]!;
+  const result = await f.engine.fillFromManager({
     connectionId: connection.id,
     managerId: manager.id,
-    reference: "op://Vault/GitHub/password",
+    reference: add.entries[0]!.reference,
   });
-  expect(submitted).toEqual([
-    { username: "octocat", password: "SYNTHETIC-FILLED-PASSWORD" },
-  ]);
-  expect(JSON.stringify(result)).not.toContain("SYNTHETIC-FILLED-PASSWORD");
-  expect(
-    (await engine.connections()).find((c) => c.id === connection.id)?.status,
-  ).toBe("connected");
-});
-
-test("fill fails closed on unknown managers, foreign references and unresolvable tokens", async () => {
-  const store = new Store();
-  const submitted: { username?: string; password?: string }[] = [];
-  const host = new FilePasswordManagerHost({
-    store,
-    owner: alice,
-    key: KEY,
-    resolvers: {
-      onepassword: async () => {
-        throw new Error("provider down");
+  expect(f.submitted).toEqual([
+    {
+      action: "login",
+      username: "octocat",
+      password: PASSWORD,
+      credentialReference: {
+        managerId: manager.id,
+        reference: add.entries[0]!.reference,
       },
-    } as never,
-  });
-  const manager = await host.add(onePasswordAdd);
-  const engine = engineWith({
-    store,
-    browser: fakeBrowser(submitted),
-    managers: host,
-  });
-  await engine.importLogins([
-    { website: "https://github.com", username: "octocat" },
+    },
   ]);
-  const connection = (await engine.connections())[0]!;
+  expect(JSON.stringify(result)).not.toContain(PASSWORD);
+  expect(JSON.stringify([...f.store.rows.values()])).not.toContain(PASSWORD);
+  expect(
+    f.remote.calls.filter((call) => call.body?.method === "tools/call"),
+  ).toHaveLength(1);
+});
+
+test("foreign references and wrong destinations fail before contacting the provider", async () => {
+  const f = fixture();
+  const manager = await connect(f);
+  const count = f.remote.calls.length;
   await expect(
-    engine.fillFromManager({
-      connectionId: connection.id,
-      managerId: randomUUID(),
-      reference: "op://Vault/GitHub/password",
-    }),
+    f.host.resolvePassword(
+      manager.id,
+      "op://Other/Item/password",
+      "github.com",
+    ),
   ).rejects.toThrow();
   await expect(
-    engine.fillFromManager({
-      connectionId: connection.id,
-      managerId: manager.id,
-      reference: "op://Vault/Other/password",
-    }),
-  ).rejects.toThrow();
+    f.host.resolvePassword(manager.id, add.entries[0]!.reference, "notion.so"),
+  ).rejects.toThrow("different website");
   await expect(
-    engine.fillFromManager({
-      connectionId: connection.id,
-      managerId: manager.id,
-      reference: "op://Vault/GitHub/password",
-    }),
-  ).rejects.toThrow();
-  expect(submitted).toEqual([]);
-  // A foreign owner's engine cannot even see the connection.
-  const foreign = engineWith({ store, owner: "2222222222", managers: host });
+    f.host.resolvePassword(manager.id, add.entries[0]!.reference),
+  ).rejects.toThrow("different website");
+  expect(f.remote.calls).toHaveLength(count);
+});
+
+test("expired grants refresh privately and provider errors never echo secrets", async () => {
+  const f = fixture();
+  const manager = await connect(f);
+  f.remote.expire();
+  expect(
+    await f.host.resolvePassword(
+      manager.id,
+      add.entries[0]!.reference,
+      "github.com",
+    ),
+  ).toBe(PASSWORD);
+  expect(
+    f.remote.calls.some(
+      (call) =>
+        call.body?.grant_type === "refresh_token" &&
+        call.body.refresh_token === REFRESH,
+    ),
+  ).toBe(true);
+  f.remote.fail();
   await expect(
-    foreign.fillFromManager({
-      connectionId: connection.id,
-      managerId: manager.id,
-      reference: "op://Vault/GitHub/password",
-    }),
+    f.host.resolvePassword(manager.id, add.entries[0]!.reference, "github.com"),
+  ).rejects.toThrow(
+    "Could not use this password manager. Reconnect and try again.",
+  );
+});
+
+test("disconnect during resolution erases grants and prevents the in-flight fill", async () => {
+  const f = fixture();
+  const manager = await connect(f);
+  f.remote.duringTool(() => f.host.remove(manager.id));
+  await expect(
+    f.host.resolvePassword(manager.id, add.entries[0]!.reference, "github.com"),
+  ).rejects.toThrow();
+  expect(await f.host.list()).toEqual([]);
+  expect(
+    [...f.store.rows.values()].every(
+      (row) => !(row as { sealed?: unknown }).sealed,
+    ),
+  ).toBe(true);
+});
+
+test("wrong, expired and foreign OAuth state cannot exchange a code", async () => {
+  const f = fixture();
+  const manager = await f.host.add(add);
+  const count = f.remote.calls.length;
+  await expect(
+    f.host.finishAuthorization(manager.id, "wrong", "code"),
+  ).rejects.toThrow();
+  expect(f.remote.calls).toHaveLength(count);
+  const row = [...f.store.rows.values()][0] as any;
+  const grant = JSON.parse(
+    openManagerToken(Buffer.from(KEY, "base64"), owner, row.id, row.sealed),
+  );
+  grant.expiresAt = Date.now() - 1;
+  row.sealed = sealManagerToken(
+    Buffer.from(KEY, "base64"),
+    owner,
+    row.id,
+    JSON.stringify(grant),
+  );
+  await expect(
+    f.host.finishAuthorization(manager.id, grant.state, "code"),
+  ).rejects.toThrow();
+  expect(f.remote.calls).toHaveLength(count);
+});
+
+test("OAuth discovery cannot redirect credentials to an unconfigured origin", async () => {
+  const f = fixture();
+  f.remote.redirectDiscovery();
+  await expect(f.host.add(add)).rejects.toThrow(
+    "Could not use this password manager",
+  );
+  expect(
+    f.remote.calls.every((call) => !call.url.includes("untrusted.example")),
+  ).toBe(true);
+});
+
+test("missing sealing key and provider configuration fail closed", async () => {
+  const f = fixture();
+  await expect(
+    new FilePasswordManagerHost({ store: f.store, owner, providers }).add(add),
+  ).rejects.toThrow("sealing key");
+  await expect(
+    f.host.add({ ...add, providerId: "unconfigured" }),
   ).rejects.toThrow();
 });
 
-test("fill without a stored username asks for one instead of guessing", async () => {
-  const store = new Store();
-  const submitted: { username?: string; password?: string }[] = [];
+test("provider configuration changes invalidate existing grants", async () => {
+  const f = fixture();
+  const manager = await connect(f);
   const host = new FilePasswordManagerHost({
-    store,
-    owner: alice,
+    store: f.store,
+    owner,
     key: KEY,
-    resolvers: {
-      onepassword: async () => "SYNTHETIC-PASSWORD",
-    } as never,
+    providers: [{ ...providers[0]!, tool: "different_tool" }],
+    fetch: f.remote.fetch,
   });
-  const manager = await host.add(onePasswordAdd);
-  const engine = engineWith({
-    store,
-    browser: fakeBrowser(submitted),
-    managers: host,
-  });
-  await engine.importLogins([{ website: "https://github.com" }]);
-  const connection = (await engine.connections())[0]!;
   await expect(
-    engine.fillFromManager({
+    host.resolvePassword(manager.id, add.entries[0]!.reference, "github.com"),
+  ).rejects.toThrow("configuration changed");
+});
+
+test("legacy token rows require reconnection and can be removed", async () => {
+  const f = fixture();
+  const manager = await connect(f);
+  const row = [...f.store.rows.values()][0] as any;
+  delete row.providerId;
+  delete row.status;
+  expect((await f.host.list())[0]?.status).toBe("authorization_required");
+  await expect(
+    f.host.resolvePassword(manager.id, add.entries[0]!.reference, "github.com"),
+  ).rejects.toThrow("OAuth");
+  await f.host.remove(manager.id);
+  expect(await f.host.list()).toEqual([]);
+});
+
+test("MCP result extraction accepts explicit fields and rejects errors and ambiguous content", () => {
+  expect(
+    extractManagerPassword(
+      { content: [{ type: "text", text: '{"login":{"password":"secret"}}' }] },
+      ["login", "password"],
+    ),
+  ).toBe("secret");
+  expect(
+    extractManagerPassword({ content: [{ type: "text", text: "secret" }] }, []),
+  ).toBe("secret");
+  for (const result of [
+    { isError: true, structuredContent: { password: "secret" } },
+    { structuredContent: { password: {} } },
+    {
+      content: [
+        { type: "text", text: "a" },
+        { type: "text", text: "b" },
+      ],
+    },
+  ])
+    expect(() => extractManagerPassword(result, ["password"])).toThrow();
+});
+
+test("connector API exposes provider metadata and completes OAuth without returning credentials", async () => {
+  const f = fixture();
+  const request = (path: string, body?: object) =>
+    connectorApi(
+      new Request(
+        `https://unlock.example/api/connectors/password-managers${path}`,
+        {
+          method: body ? "POST" : "GET",
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        },
+      ),
+      f.engine,
+    );
+  const listing = (await (await request("")).json()) as any;
+  expect(listing.providers).toEqual([
+    { id: "personal", name: "Personal vault", kind: "onepassword" },
+  ]);
+  const manager = (await (await request("/add", add)).json()) as any;
+  const state = new URL(manager.authorizationUrl).searchParams.get("state");
+  const result = await request("/callback", {
+    managerId: manager.id,
+    state,
+    code: "synthetic-code",
+  });
+  expect(result.status).toBe(200);
+  expect(await result.json()).toMatchObject({ status: "connected" });
+  expect(
+    (
+      await request("/callback", {
+        managerId: manager.id,
+        state,
+        code: "synthetic-code",
+      })
+    ).status,
+  ).toBe(400);
+  expect(
+    (await request("/add", { ...add, token: "no-more-tokens" })).status,
+  ).toBe(400);
+});
+
+test("CSV import stages metadata and username is still required before filling", async () => {
+  const f = fixture();
+  const manager = await connect(f);
+  const result = await f.engine.importLogins([
+    { website: "github.com" },
+    { website: "http://insecure.test" },
+    { website: "https://user:pass@evil.example" },
+  ]);
+  expect(result.imported).toBe(1);
+  expect(result.skipped).toHaveLength(2);
+  const connection = (await f.engine.connections())[0]!;
+  await expect(
+    f.engine.fillFromManager({
       connectionId: connection.id,
       managerId: manager.id,
-      reference: "op://Vault/GitHub/password",
+      reference: add.entries[0]!.reference,
     }),
   ).rejects.toThrow("username");
-  const result = await engine.fillFromManager({
-    connectionId: connection.id,
-    managerId: manager.id,
-    reference: "op://Vault/GitHub/password",
-    username: "typed@example.com",
-  });
-  expect(submitted[0]?.username).toBe("typed@example.com");
-  expect(result.status).toBe("connected");
+  expect(f.submitted).toEqual([]);
 });
 
-test("password manager routes authenticate and round-trip through the connector API", async () => {
-  const stateDir = await mkdtemp("/tmp/aiko-managers-api-");
-  cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
-  const token = "aiko_test_manager_api_token_1234567890";
-  const submitted: { username?: string; password?: string }[] = [];
-  const config: AikoConfig = {
-    mode: "demo",
-    port: 4242,
-    stateDir,
-    operatorToken: "private-test-operator-1234567890123456",
-    persona: PERSONA,
-    voiceEnabled: false,
-    allowedUsers: new Set(["1111111111"]),
-    arcadeKey: "private-test-arcade-key-123456",
-    managerKey: KEY,
-    planeCredentials: [
+test("cancellation during reference lookup prevents credential submission", async () => {
+  const f = fixture();
+  const manager = await connect(f);
+  await f.engine.importLogins([{ website: "github.com", username: "octocat" }]);
+  const connection = (await f.engine.connections())[0]!;
+  const controller = new AbortController();
+  f.remote.duringTool(async () => {
+    controller.abort();
+  });
+  await expect(
+    f.engine.fillFromManager(
       {
-        account: "1111111111",
-        digest: credentialDigest(token),
-        scopes: ["read", "write"],
+        connectionId: connection.id,
+        managerId: manager.id,
+        reference: add.entries[0]!.reference,
       },
-    ],
-  };
-  const service = await createService(config, {
-    connectorFetch: async () => Response.json({ items: [] }),
-    connectorBrowser: () => fakeBrowser(submitted),
-    managerResolvers: {
-      onepassword: async (_token: string, reference: string) =>
-        reference === "op://Vault/GitHub/password"
-          ? "SYNTHETIC-RESOLVED-PASSWORD"
-          : (() => {
-              throw new Error("unavailable");
-            })(),
-    } as never,
-  });
-  cleanup.push(() => service.close());
-  const request = (path: string, body?: unknown, authorization?: string) =>
-    service.fetch(
-      new Request("http://127.0.0.1:4242" + path, {
-        method: body === undefined ? "GET" : "POST",
-        headers: {
-          ...(authorization
-            ? { Authorization: "Bearer " + authorization }
-            : {}),
-          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-        },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      }),
-    );
-  expect((await request("/api/connectors/password-managers")).status).toBe(401);
-  expect(
-    await (
-      await request("/api/connectors/password-managers", undefined, token)
-    ).json(),
-  ).toEqual({ managers: [] });
-  const added = await request(
-    "/api/connectors/password-managers/add",
-    onePasswordAdd,
-    token,
-  );
-  expect(added.status).toBe(200);
-  const view = (await added.json()) as {
-    id: string;
-    entries: { reference: string }[];
-  };
-  expect(view.entries[0]?.reference).toBe("op://Vault/GitHub/password");
-  expect(JSON.stringify(view)).not.toContain("synthetic-op-service-token");
-  const invalid = await request(
-    "/api/connectors/password-managers/add",
-    { ...onePasswordAdd, name: "" },
-    token,
-  );
-  expect(invalid.status).toBe(400);
-  expect(((await invalid.json()) as { message?: string }).message).toContain(
-    "name",
-  );
-  const staged = await request(
-    "/api/connectors/imports/logins",
-    {
-      rows: [
-        { name: "GitHub", website: "https://github.com", username: "octocat" },
-      ],
-    },
-    token,
-  );
-  expect(staged.status).toBe(200);
-  expect(((await staged.json()) as { imported: number }).imported).toBe(1);
-  const connections = (await (
-    await request("/api/connectors/connections", undefined, token)
-  ).json()) as { connections: { id: string; importedUsername?: string }[] };
-  const connection = connections.connections.find(
-    (c) => c.importedUsername === "octocat",
-  );
-  expect(connection).toBeDefined();
-  const fill = await request(
-    "/api/connectors/password-managers/fill",
-    {
-      connectionId: connection!.id,
-      managerId: view.id,
-      reference: "op://Vault/GitHub/password",
-    },
-    token,
-  );
-  expect(fill.status).toBe(200);
-  expect(((await fill.json()) as { status: string }).status).toBe("connected");
-  expect(submitted[0]?.password).toBe("SYNTHETIC-RESOLVED-PASSWORD");
-  expect(JSON.stringify(submitted)).not.toContain("synthetic-op-service-token");
-});
-
-test("onepassword-connect resolves references through the Connect REST API", async () => {
-  const calls: string[] = [];
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    calls.push(url);
-    expect(new Headers(init?.headers).get("Authorization")).toBe(
-      "Token connect-credentials-token",
-    );
-    const json = (body: unknown) =>
-      new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    if (
-      url.endsWith(`/v1/vaults?filter=${encodeURIComponent('name eq "Vault"')}`)
-    )
-      return json([
-        { id: "11111111-1111-4111-8111-111111111111", name: "Vault" },
-      ]);
-    if (
-      url.includes(
-        "/v1/vaults/11111111-1111-4111-8111-111111111111/items?filter=",
-      )
-    )
-      return json([
-        { id: "22222222-2222-4222-8222-222222222222", title: "GitHub" },
-      ]);
-    if (
-      url.endsWith(
-        "/v1/vaults/11111111-1111-4111-8111-111111111111/items/22222222-2222-4222-8222-222222222222",
-      )
-    )
-      return json({
-        fields: [
-          { label: "username", type: "TEXT", value: "canary" },
-          {
-            label: "password",
-            type: "CONCEALED",
-            value: "SYNTHETIC-CONNECT-PASSWORD",
-          },
-        ],
-      });
-    return new Response("not found", { status: 404 });
-  }) as typeof fetch;
-  try {
-    const resolvers = defaultResolvers(
-      undefined,
-      undefined,
-      "https://connect.aiko-check.net",
-    );
-    const value = await resolvers["onepassword-connect"](
-      "connect-credentials-token",
-      "op://Vault/GitHub/password",
-    );
-    expect(value).toBe("SYNTHETIC-CONNECT-PASSWORD");
-    expect(calls.length).toBe(3);
-    await expect(
-      resolvers["onepassword-connect"](
-        "connect-credentials-token",
-        "op://Missing/Item/password",
-      ),
-    ).rejects.toThrow("Could not reach onepassword-connect");
-    // Without operator configuration the kind fails closed without touching the network.
-    await expect(
-      defaultResolvers()["onepassword-connect"](
-        "connect-credentials-token",
-        "op://Vault/GitHub/password",
-      ),
-    ).rejects.toThrow("Could not reach onepassword-connect");
-    // The missing vault performed one lookup before failing closed; the
-    // offline check (no operator URL) touched the network zero times.
-    expect(calls.length).toBe(4);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("a sandbox resolver overrides only its kind, like the deployed VM path", async () => {
-  const store = new Store();
-  const submitted: { username?: string; password?: string }[] = [];
-  let sandboxCalls = 0;
-  const host = new FilePasswordManagerHost({
-    store,
-    owner: alice,
-    key: KEY,
-    sandboxResolvers: {
-      onepassword: async (token: string, reference: string) => {
-        sandboxCalls++;
-        expect(token).toBe("synthetic-op-service-token");
-        return "SANDBOX-RESOLVED-PASSWORD";
-      },
-    },
-  });
-  const manager = await host.add(onePasswordAdd);
-  const engine = engineWith({
-    store,
-    browser: fakeBrowser(submitted),
-    managers: host,
-  });
-  await engine.importLogins([
-    { name: "GitHub", website: "https://github.com", username: "octocat" },
-  ]);
-  const connection = (await engine.connections()).find(
-    (c) => c.connectorId === "browser:github.com",
-  )!;
-  const result = await engine.fillFromManager({
-    connectionId: connection.id,
-    managerId: manager.id,
-    reference: "op://Vault/GitHub/password",
-  });
-  expect(sandboxCalls).toBe(1);
-  expect(submitted[0]?.password).toBe("SANDBOX-RESOLVED-PASSWORD");
-  expect(result.status).toBe("connected");
-});
-
-test("the embedded wasm build initializes the 1Password core end to end", async () => {
-  const wasm = await Bun.file(
-    new URL("../node_modules/@1password/sdk-core/nodejs/core_bg.wasm", import.meta.url),
-  ).arrayBuffer();
-  const b64 = Buffer.from(wasm).toString("base64");
-  const entry = `${import.meta.dir}/fixture-op-entry.mjs`;
-  await Bun.write(
-    entry,
-    `import { resolveOnePassword } from ${JSON.stringify(
-      new URL("../src/onepassword-core.ts", import.meta.url).pathname,
-    )};
-try {
-  await resolveOnePassword("ops_definitely_not_a_real_token", "op://Vault/Item/password");
-  console.log("UNEXPECTED-RESOLVE");
-} catch (error) {
-  console.log("CORE-ERROR:", String(error.message).slice(0, 60));
-}`,
-  );
-  const build = await Bun.build({
-    entrypoints: [entry],
-    target: "bun",
-    minify: false,
-    define: { OP_WASM_B64: JSON.stringify(b64) },
-  });
-  expect(build.success).toBe(true);
-  const artifact = `${import.meta.dir}/fixture-op-bundle.mjs`;
-  await Bun.write(artifact, build.outputs[0]!);
-  const proc = Bun.spawnSync(["bun", artifact], { cwd: import.meta.dir });
-  const out = proc.stdout.toString();
-  expect(out).not.toContain("UNEXPECTED-RESOLVE");
-  // The Rust core parsed the token shape: the wasm bridge works in the embedded build.
-  expect(out).toContain("CORE-ERROR:");
-  expect(out.toLowerCase()).toContain("service account token");
-  await rm(entry, { force: true });
-  await rm(artifact, { force: true });
+      controller.signal,
+    ),
+  ).rejects.toThrow();
+  expect(f.submitted).toEqual([]);
 });

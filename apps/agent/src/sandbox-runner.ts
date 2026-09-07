@@ -10,7 +10,6 @@ import {
 } from "./codegraff.ts";
 import { BrowserEventQueue } from "./browser-event-queue.ts";
 import { runCodeSegment } from "./code-sandbox-runner.ts";
-import { resolveOnePassword } from "./onepassword-core.ts";
 import { snapshotVm, readVmSnapshot, discardVmSnapshot, writeVmRestore, verifyVmRestore, publishVmRestore } from "./vm-backup.ts";
 import {
   agentBrowserAgentActionOf,
@@ -171,10 +170,7 @@ if (mode === "install") {
             replayIdentity.privateKey,
           );
           privateOperations.consume(value.id);
-          if (
-            value.operation !== "code" &&
-            value.operation !== "manager-resolve"
-          ) {
+          if (value.operation !== "code") {
             if (busy || !driver.requestTransport)
               return new Response("Unavailable", { status: 409 });
             busy = true;
@@ -200,11 +196,6 @@ if (mode === "install") {
                   })()
               : value.operation === "code"
                 ? await runCodeSegment(value.input, cancellation.signal)
-                : value.operation === "manager-resolve"
-                  ? await resolveOnePassword(
-                      (value.input as { token?: unknown })?.token,
-                      (value.input as { reference?: unknown })?.reference,
-                    )
                   : value.operation === "connection-page" && driver.readConnectionPage
                     ? await driver.readConnectionPage(value.url,value.linkOffset,cancellation.signal)
                   : value.operation === "native-auth" && driver.nativeAuth

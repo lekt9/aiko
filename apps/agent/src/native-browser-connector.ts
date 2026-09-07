@@ -7,6 +7,7 @@ export function nativeBrowserConnector(
   owner: string,
   factory: BrowserDriverFactory,
   emit: (event: object) => Promise<void>,
+  progress?: SecureBrowserAdapter["progress"],
 ): SecureBrowserAdapter {
   const invoke = async (
     input: import("./native-login.ts").NativeLoginInput,
@@ -27,6 +28,7 @@ export function nativeBrowserConnector(
   };
   return {
     native: true,
+    progress,
     readContext: async (binding, signal, target, linkOffset = 0) => {
       if (binding.owner !== owner) throw Error("Owner mismatch");
       if (!Number.isSafeInteger(linkOffset) || linkOffset < 0) throw Error("Invalid link offset");

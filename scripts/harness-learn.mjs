@@ -328,6 +328,10 @@ async function readEventRows(file, attempts) {
  */
 function pushEventSignals(e, run) {
   const t = String(e.type);
+  if (t === "AikoResponseRequested" && e.outcome === "blocked")
+    push({ kind: "response_blocked", tool: "channel-response", run,
+      detail: "The channel response reports an unfinished request",
+      fingerprintInput: "response_blocked" });
   if (t === "TurnFailed")
     push({
       kind: "turn_failed",
@@ -354,16 +358,16 @@ function pushEventSignals(e, run) {
         tool: "tardigrade",
         run,
         detail: excerpt(
-          `${e.result.providerId ?? "(no provider)"} ${e.result.error ?? ""}`.trim(),
+          `${e.result.reason ?? "unspecified"} ${e.result.error ?? ""}`.trim(),
         ),
         fingerprintInput: `delivery_${status}::${normalize(
-          String(e.result.error ?? e.result.providerId ?? ""),
+          String(e.result.error ?? e.result.reason ?? ""),
         )}`,
       });
   } else if (t === "ToolReturned") {
     const r = e.result;
     if (r && typeof r === "object" && typeof r.status === "string") {
-      const good = r.status === "ok" || r.status === "delivered";
+      const good = ["ok", "delivered", "completed", "listed", "processed", "ready", "queued"].includes(r.status);
       if (!good)
         push({
           kind: r.status === "unknown" ? "receipt_unknown" : `receipt_${r.status}`,
@@ -501,12 +505,15 @@ async function mineTardigradeRemote({ url, token, exportFile }) {
       });
       if (res.ok) {
         const list = await res.json();
+        if (!Array.isArray(list.accounts)) throw new Error("Invalid account listing");
         owners = (list.accounts ?? [])
-          .map((a) => (typeof a === "string" ? a : a?.owner))
+          .map((a) => (typeof a === "string" ? a : a?.account ?? a?.owner))
           .filter(Boolean);
         accountsFound = owners.length;
-      }
-    } catch {}
+      } else throw new Error("Account listing unavailable");
+    } catch {
+      skippedAccounts.push({ account: "registry", error: "Account listing unavailable; coverage is incomplete" });
+    }
     if (!owners?.length) owners = [null];
     payload = { threads: [] };
     for (const owner of owners) {
@@ -526,7 +533,11 @@ async function mineTardigradeRemote({ url, token, exportFile }) {
         continue;
       }
       const data = await res.json();
-      payload.threads.push(...(data.threads ?? []));
+      if (!Array.isArray(data.threads)) {
+        skippedAccounts.push({ account: sha16(owner ?? "default"), error: "Invalid thread export" });
+        continue;
+      }
+      payload.threads.push(...data.threads);
     }
   }
   // never cache entity-learn memory archives — events only
@@ -534,7 +545,7 @@ async function mineTardigradeRemote({ url, token, exportFile }) {
   fs.mkdirSync(path.join(OUT, "tardigrade-remote"), { recursive: true });
   fs.writeFileSync(
     path.join(OUT, `tardigrade-remote/export-${stamp}.json`),
-    JSON.stringify(cache),
+    JSON.stringify(cache), { mode: 0o600 },
   );
   const threads = payload.threads ?? [];
   let mined = 0;

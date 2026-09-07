@@ -167,19 +167,24 @@ test("unknown final response is not retried by another drive or a duplicate turn
   expect(f.counts().sends).toBe(1);
 });
 
-test("held-out provider failure still requests a channel reply without claiming successful actions", async () => {
+test("provider failure retains its native terminal and sends one safe Telegram notice across restart", async () => {
   const f = await service(() => ({
     kind: "fail",
     error: "private provider failure",
+    failure: { cause: "inference_error", attempts: 1 },
   }));
-  const log = await f.seed("api");
-  expect(log.find((e) => e.type === "ToolCalled")?.name).toBe("respond");
+  const log = await f.seed();
+  expect(log.find((e) => e.type === "TurnFailed")).toMatchObject({ error: "private provider failure" });
+  expect(log.some((e) => e.type === "TurnCompleted")).toBe(false);
   expect(log.find((e) => e.type === "AikoReplyPrepared")?.result).toMatchObject(
     { text: expect.stringContaining("couldn’t finish") },
   );
   expect(
-    JSON.stringify(log.filter((e) => e.type === "AikoResponseRequested")),
+    JSON.stringify(log.filter((e) => e.type === "AikoReplyPrepared")),
   ).not.toContain("private provider failure");
+  expect(log.find((e) => e.type === "AikoDeliverySettled")?.result).toMatchObject({ status: "delivered" });
+  await f.restart();
+  expect(f.counts().sends).toBe(1);
 });
 
 const request: InferRequest = {

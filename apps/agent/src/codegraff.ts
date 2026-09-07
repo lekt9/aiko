@@ -78,6 +78,7 @@ export interface SandboxRecord {
   lastActive?: number;
   stoppedAt?: number;
 }
+export type BrowserSetupProgress = { stage: string; message: string; at: number };
 const idOf = (id: unknown): string => {
   if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,120}$/.test(id))
     throw new Error("Invalid sandbox identity");
@@ -147,19 +148,47 @@ export class CodegraffSandbox {
       }
     );
   }
+  async progress(): Promise<BrowserSetupProgress[]> {
+    return (await this.options.store.get<BrowserSetupProgress[]>("codegraff:setup-progress")) ?? [];
+  }
+  private async reportSetup(stage: string, message: string) {
+    const entry = { stage, message, at: Date.now() };
+    const previous = stage === "checking" ? [] : await this.progress();
+    if (previous.at(-1)?.stage === stage) return;
+    await this.options.store.put("codegraff:setup-progress", [...previous, entry].slice(-24));
+    await this.options.emit({ type: "AikoBrowserSetupProgress", owner: this.options.owner, ...entry });
+  }
   async ensure(signal?: AbortSignal): Promise<string> {
     if (this.maintaining) throw new Error("Sandbox maintenance in progress");
     if (this.stopping) await this.stopping;
-    if (this.waking) return this.waking;
-    this.waking = this.wake(signal).finally(() => {
+    if (this.waking) {
+      if (!signal) return this.waking;
+      signal.throwIfAborted();
+      // A login can join an actor's existing wake without inheriting an
+      // unbounded wait or cancelling the other caller's browser setup.
+      const waking = this.waking;
+      return new Promise<string>((resolve, reject) => {
+        const abort = () => reject(signal.reason);
+        signal.addEventListener("abort", abort, { once: true });
+        void waking.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+      });
+    }
+    this.waking = this.wake(signal).catch(async (error) => {
+      await this.reportSetup("failed", signal?.aborted
+        ? "Browser setup timed out or was cancelled. Try connecting again."
+        : "Browser setup failed. Try connecting again.");
+      throw error;
+    }).finally(() => {
       this.waking = undefined;
     });
     return this.waking;
   }
   private async wake(signal?: AbortSignal) {
     const { store, gateway, owner, emit } = this.options;
+    await this.reportSetup("checking", "Checking your private browser…");
     let record = await this.record();
     if (!record) {
+      await this.reportSetup("allocating", "Creating your private browser workspace…");
       record = { owner, phase: "provisioning", startedAt: Date.now() };
       await store.put("codegraff:sandbox", record);
       await emit({ type: "AikoSandboxProvisioning", owner, at: Date.now() });
@@ -212,6 +241,7 @@ export class CodegraffSandbox {
       state = await readState();
     }
     if (/^(stopped|archived)$/.test(state)) {
+      await this.reportSetup("waking", "Waking your saved browser…");
       for (let attempt = 0; ; attempt++) {
         try {
           await gateway.request(`${prefix}/start`, {}, startupSignal);
@@ -251,6 +281,7 @@ export class CodegraffSandbox {
       at: Date.now(),
     });
     if (record.runnerVersion !== version) {
+      await this.reportSetup("installing", "Preparing browser software…");
       if (record.runnerVersion) {
         // Upgrade only after the previous trusted runner flushes its browser profile.
         await this.exec(
@@ -266,7 +297,23 @@ export class CodegraffSandbox {
         signal,
       );
       // Bootstrap is trusted versioned code, not a model-generated shell command.
-      await this.exec(id, "bash /tmp/aiko-bootstrap.sh", signal);
+      const outputs: Record<string, string> = {
+        "runtime-ready": "Browser runtime is installed.",
+        "chromium-ready": "Chromium is installed.",
+        "dependencies-ready": "Browser dependencies are ready.",
+      };
+      const reported = new Set<string>();
+      await this.exec(id, "bash /tmp/aiko-bootstrap.sh", signal, async (output) => {
+        // Only fixed markers from our versioned bootstrap enter logs or the UI.
+        // Never stream arbitrary stdout, credentials, keys, or private page data.
+        for (const line of output.split("\n")) {
+          const marker = line.trim().replace(/^\[aiko-setup\] /, "");
+          if (!line.startsWith("[aiko-setup] ") || !outputs[marker] || reported.has(marker)) continue;
+          reported.add(marker);
+          await this.reportSetup(marker, outputs[marker]!);
+        }
+      });
+      await this.reportSetup("installing-driver", "Installing the browser driver…");
       await this.upload(
         id,
         `${RUNNER_ROOT}/runner.js`,
@@ -285,6 +332,7 @@ export class CodegraffSandbox {
       JSON.stringify({ owner: this.options.owner }),
       signal,
     );
+    await this.reportSetup("starting", "Starting and checking the private browser…");
     await this.exec(
       id,
       `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js health`,
@@ -304,6 +352,7 @@ export class CodegraffSandbox {
       runnerVersion: version,
       at: Date.now(),
     });
+    await this.reportSetup("ready", "Your private browser is ready.");
     return id;
   }
   async upload(id: string, path: string, text: string, signal?: AbortSignal) {
@@ -325,6 +374,7 @@ export class CodegraffSandbox {
     id: string,
     command: string,
     signal?: AbortSignal,
+    onOutput?: (output: string) => Promise<void>,
   ): Promise<string> {
     const prefix = `/v1/sandboxes/${idOf(id)}/exec`;
     const launched = await this.options.gateway.request(
@@ -342,6 +392,7 @@ export class CodegraffSandbox {
           undefined,
           signal,
         );
+        if (onOutput) await onOutput(String(job.output ?? job.result ?? ""));
         if (job.state === "completed") {
           if (job.exitCode !== 0)
             throw new Error(`sandbox_execution_failed:${String(job.exitCode)}`);
@@ -887,21 +938,6 @@ export class CodegraffSandbox {
   ): Promise<import("./code-sandbox-protocol.ts").CodeSegmentResult> {
     const id = await this.ensure(signal);
     return this.invokePrivate(id, { operation: "code", input }, signal);
-  }
-  /** Resolve a tenant password-manager reference on this owner's own VM; only the encrypted private envelope carries the token. */
-  async managerResolve(
-    input: { token: string; reference: string },
-    signal?: AbortSignal,
-  ): Promise<string> {
-    const id = await this.ensure(signal);
-    const value = await this.invokePrivate(
-      id,
-      { operation: "manager-resolve", input },
-      signal,
-    );
-    if (typeof value !== "string" || !value)
-      throw new Error("Transient browser replay unavailable");
-    return value;
   }
   /** Owner-scoped maintenance. Secret state uses the existing encrypted VM
    * channel; stdout, uploaded commands and actor events contain metadata only. */

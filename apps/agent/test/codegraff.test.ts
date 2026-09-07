@@ -113,6 +113,44 @@ test("concurrent wake and reconstructed host reuse exactly one tenant VM and dis
   expect(commands.every(c => c.body.async === true)).toBe(true);
 });
 
+test("browser setup publishes only trusted bootstrap output markers and records failures", async () => {
+  const f = fixture();
+  const events: any[] = [];
+  const sandbox = new CodegraffSandbox({...f.options, emit: async e => { events.push(e); }});
+  const exec = spyOn(sandbox, "exec").mockImplementation(async (_id, command, _signal, onOutput) => {
+    if (command === "bash /tmp/aiko-bootstrap.sh") {
+      await onOutput?.("secret-output-must-stay-private\n[aiko-setup] runtime-ready\n[aiko-setup] chromium-ready\n[aiko-setup] dependencies-ready\n");
+    }
+    return '{"ready":true}';
+  });
+  try {
+    await sandbox.ensure();
+    expect((await sandbox.progress()).map(e => e.stage)).toContain("chromium-ready");
+    expect(JSON.stringify(events)).not.toContain("secret-output");
+    expect((await sandbox.progress()).at(-1)?.stage).toBe("ready");
+    exec.mockRejectedValueOnce(Error("private-provider-failure"));
+    await expect(sandbox.ensure()).rejects.toThrow("private-provider-failure");
+    expect((await sandbox.progress()).at(-1)?.stage).toBe("failed");
+    expect(JSON.stringify(events)).not.toContain("private-provider-failure");
+  } finally { exec.mockRestore(); }
+});
+
+test("a cancelled login stops waiting for an existing wake without cancelling its owner", async () => {
+  const f = fixture();
+  let release!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const exec = spyOn(f.sandbox, "exec").mockImplementation(async () => { await blocked; return '{"ready":true}'; });
+  const first = f.sandbox.ensure();
+  const caller = new AbortController();
+  const joined = f.sandbox.ensure(caller.signal);
+  caller.abort(Error("login-cancelled"));
+  try {
+    await expect(joined).rejects.toThrow("login-cancelled");
+    release();
+    expect(await first).toBe("vm-fixture");
+  } finally { release(); exec.mockRestore(); }
+});
+
 for (const stage of ["bootstrap", "install", "health"]) {
   test(`first-use ${stage} failure cannot publish readiness; retry reuses the allocated VM`, async () => {
     const f = fixture();

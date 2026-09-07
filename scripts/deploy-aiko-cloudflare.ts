@@ -115,23 +115,11 @@ async function run(args: string[], input?: string) {
   if (code !== 0) throw new Error(`Deployment step failed (${code})`);
   return out;
 }
-const opWasm = Bun.file(
-  "/home/deck/work/unlock/apps/agent/node_modules/@1password/sdk-core/nodejs/core_bg.wasm",
-);
-if (!(await opWasm.exists()))
-  throw new Error(
-    "@1password/sdk-core wasm core missing from the runner build",
-  );
 const runner = await Bun.build({
   entrypoints: ["/home/deck/work/unlock/apps/agent/src/sandbox-runner.ts"],
   target: "bun",
   external: ["@huggingface/transformers"],
   minify: true,
-  define: {
-    OP_WASM_B64: JSON.stringify(
-      Buffer.from(await opWasm.arrayBuffer()).toString("base64"),
-    ),
-  },
 });
 if (!runner.success) throw new Error("Trusted browser runner build failed");
 await Bun.write(

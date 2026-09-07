@@ -1,5 +1,7 @@
 # Tardigrade native audit — 2026-09-06
 
+The [2026-09-07 chat incident](chat-response-incident.md) records a subsequent provider-history failure, native failure-reporting repair, live replay verification and model fallback configuration.
+
 Aiko now uses native method futures for router calls, native invocation cancellation and resume epochs, native output validation for reflection, and durable effect records for workflow recovery. The Telegram investigation also fixed the path between a completed model turn and a delivered reply. This audit covers the existing agent, Node host, Cloudflare host, router, background actors, workflow harness and channel boundary.
 
 ## Findings and changes

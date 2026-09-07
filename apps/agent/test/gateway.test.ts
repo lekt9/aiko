@@ -412,3 +412,28 @@ test("polling persists a redacted inbox before cursor advancement; queued work s
   expect(accepted).toEqual([1, 2, 3]);
   expect(notices).toBe(1);
 });
+
+test("Telegram launch exchanges for a bounded app session without weakening launch freshness or owner scope", async () => {
+  const { createHmac } = await import("node:crypto");
+  const { createMiniAppSession } = await import("../src/security.ts");
+  const app = await setup();
+  const launch = (at: number) => {
+    const values = new URLSearchParams({auth_date:String(Math.floor(at/1000)),user:JSON.stringify({id:123})});
+    const check = [...values].sort(([a],[b]) => a.localeCompare(b)).map(([k,v]) => `${k}=${v}`).join("\n");
+    const key = createHmac("sha256","WebAppData").update(app.config.botToken!).digest();
+    values.set("hash",createHmac("sha256",key).update(check).digest("hex"));
+    return values.toString();
+  };
+  const exchange = (raw: string) => app.fetcher("http://127.0.0.1:4242/api/connectors/session",{method:"POST",headers:{"x-telegram-init-data":raw}});
+  const response = await exchange(launch(Date.now()));
+  expect(response.status).toBe(200);
+  const {token} = await response.json() as {token:string};
+  expect(response.headers.get("cache-control")).toContain("no-store");
+  expect((await exchange(launch(Date.now()-301_000))).status).toBe(401);
+  expect((await app.fetcher("http://127.0.0.1:4242/api/connectors/connections",{headers:{authorization:`tms ${token}`}})).status).toBe(200);
+  await app.restart();
+  const earlier = createMiniAppSession("123", app.config.botToken!, Date.now()-600_000);
+  expect((await app.fetcher("http://127.0.0.1:4242/api/connectors/connections",{headers:{authorization:`tms ${earlier}`}})).status).toBe(200);
+  expect((await app.fetcher("http://127.0.0.1:4242/api/control/events?thread=user-456",{headers:{authorization:`tms ${token}`}})).status).toBe(403);
+  expect((await app.fetcher("http://127.0.0.1:4242/api/connectors/session",{method:"POST",headers:{authorization:`tms ${token}`}})).status).toBe(401);
+});

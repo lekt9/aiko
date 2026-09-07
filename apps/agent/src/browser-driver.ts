@@ -441,7 +441,19 @@ export function browserDriverFactory(
           stage = "browser-start";
           await startBrowser();
           stage = "private-cdp";
-          const cdp = await openPrivateBrowserCdp(replayEndpoint!, signal);
+          let cdp: Awaited<ReturnType<typeof openPrivateBrowserCdp>>;
+          try { cdp = await openPrivateBrowserCdp(replayEndpoint!, signal); }
+          catch (error) {
+            // A stopped Chromium can leave a live runner holding its old CDP
+            // endpoint. Re-establish it once for page inspection, before any
+            // login input is dispatched. Writes remain explicit owner retries.
+            started = false;
+            if (!["form","view","begin","status"].includes(input.action) || signal?.aborted) throw error;
+            stage = "browser-reconnect";
+            await startBrowser();
+            stage = "private-cdp";
+            cdp = await openPrivateBrowserCdp(replayEndpoint!, signal);
+          }
           try {
             const privateCdp = {...cdp,send:async(method:string,params:object,sessionId?:string)=>{
               try {return await cdp.send(method,params,sessionId);}

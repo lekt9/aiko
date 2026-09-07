@@ -34,6 +34,11 @@ export async function connectorApi(
   const url = new URL(request.url),
     path = url.pathname.replace(/^\/v1\//, "/api/");
   try {
+    if (request.method === "GET" && path === "/api/connectors/native/progress") {
+      const id = url.searchParams.get("connectionId") ?? "";
+      if (!/^[a-f0-9-]{36}$/.test(id)) return json({ error: "invalid_query" }, 400);
+      return json(await engine.nativeProgress(id));
+    }
     await engine.flushEvents();
     if (request.method === "GET") {
       if (path === "/api/connectors") {
@@ -47,7 +52,7 @@ export async function connectorApi(
       if (path === "/api/connectors/connections")
         return json({ connections: await engine.connections(), nativeInline: (await engine.apps()).nativeInline });
       if (path === "/api/connectors/password-managers")
-        return json({ managers: await engine.managers() });
+        return json({ managers: await engine.managers(), providers: engine.managerProviders() });
       return json({ error: "not_found" }, 404);
     }
     if (request.method !== "POST")
@@ -101,6 +106,13 @@ export async function connectorApi(
     };
     if (path === "/api/connectors/password-managers/add")
       return await managerRoute(() => engine.addManager(body));
+    if (["/api/connectors/password-managers/authorize", "/api/connectors/password-managers/callback"].includes(path)) {
+      if (!body || typeof body.managerId !== "string" || !/^[a-f0-9-]{36}$/.test(body.managerId) || Object.keys(body).some((key) => !["managerId", "state", "code"].includes(key)))
+        return json({ error: "invalid_body" }, 400);
+      if (path.endsWith("/authorize")) return await managerRoute(() => engine.authorizeManager(body.managerId));
+      if (typeof body.state !== "string" || body.state.length > 100 || typeof body.code !== "string") return json({ error: "invalid_body" }, 400);
+      return await managerRoute(() => engine.finishManagerAuthorization(body.managerId, body.state, body.code));
+    }
     if (path === "/api/connectors/password-managers/remove") {
       if (
         typeof body.managerId !== "string" ||
@@ -130,6 +142,7 @@ export async function connectorApi(
             reference: string;
             username?: string;
           },
+          request.signal,
         ),
       );
     }
@@ -155,7 +168,7 @@ export async function connectorApi(
       return json({ error: "invalid_body" }, 400);
     if (path === "/api/connectors/native") {
       const { connectionId, ...input } = body;
-      return json(await engine.nativeControl(connectionId, input));
+      return json(await engine.nativeControl(connectionId, input, request.signal));
     }
     if (path.endsWith("/complete"))
       return json(await engine.completeAuth(body.connectionId));

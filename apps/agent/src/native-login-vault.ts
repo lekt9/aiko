@@ -23,11 +23,12 @@ import {
   cdpCookieParameters,
 } from "../../../packages/sdk/src/cdp.ts";
 
-type Credentials = { username?: string; password?: string };
+type Credentials = { username?: string; password?: string; credentialReference?: { managerId: string; reference: string } };
 type SavedLogin = {
   revision: number;
   expiresAt: number;
   credentials?: Credentials;
+  credentialReference?: { managerId: string; reference: string };
   cookies: VaultCookie[];
 };
 
@@ -159,6 +160,7 @@ export class NativeLoginVault {
       expiresAt: state.expiresAt,
       username,
       password,
+      credentialReference: input.credentialReference ?? (input.password ? undefined : previous?.credentialReference),
     });
     const timer = setTimeout(
       () => this.discard(state.connectionId),
@@ -238,12 +240,16 @@ export class NativeLoginVault {
     if (!cookies.some((c) => c.httpOnly))
       throw Error("Restorable session unavailable");
     const candidate = this.pending.get(state.connectionId);
+    let credentialReference = candidate?.domain === state.domain &&
+      candidate.revision === state.revision - 1 && candidate.expiresAt > Date.now()
+      ? candidate.credentialReference : undefined;
     let credentials =
       candidate?.domain === state.domain &&
       candidate.revision === state.revision - 1 &&
       candidate.expiresAt > Date.now() &&
       candidate.username &&
-      candidate.password
+      candidate.password &&
+      !credentialReference
         ? { username: candidate.username, password: candidate.password }
         : undefined;
     // Verification may be retried after a login-tab close failed. Do not replace
@@ -259,6 +265,7 @@ export class NativeLoginVault {
           this.context(state),
           JSON.parse(row.envelope),
         );
+        if (saved.revision === state.revision) credentialReference = saved.credentialReference;
         if (
           saved.revision === state.revision &&
           saved.credentials?.username &&
@@ -275,6 +282,7 @@ export class NativeLoginVault {
       expiresAt: state.expiresAt,
       cookies,
       ...(credentials ? { credentials } : {}),
+      ...(credentialReference ? { credentialReference } : {}),
     };
     const sealed = await this.cipher.seal(this.context(state), record);
     this.db

@@ -215,10 +215,10 @@ export function withRequiredResponse(
                   text: redact((action.arguments as any).text),
                 },
               };
-            if (action.kind !== "complete" && action.kind !== "fail")
+            // Preserve the native failure terminal and its diagnostics. The outbox delivers its service notice.
+            if (action.kind !== "complete")
               return action;
             const text =
-              action.kind === "complete" &&
               typeof action.output === "string" &&
               action.output.trim()
                 ? action.output
@@ -232,7 +232,6 @@ export function withRequiredResponse(
               mode: action.mode,
               arguments: {
                 text: redact(text),
-                ...(action.kind === "fail" ? { outcome: "blocked" } : {}),
               },
             };
           }),

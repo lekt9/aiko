@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole } from "lucide-react";
 import { MiniAppScreen } from "./mini-app-screen";
-import type { PasswordManager } from "../lib/connectors";
+import {
+  MiniAppAuthenticationError,
+  type PasswordManager,
+} from "../lib/connectors";
 
 type View = {
   status: string;
@@ -34,6 +37,51 @@ export function NativeLoginPanel({
   const [submitted, setSubmitted] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [preparing, setPreparing] = useState(false);
+  const [progress, setProgress] = useState<
+    { stage: string; message: string; at: number }[]
+  >([]);
+  const requestRef = useRef(request);
+  requestRef.current = request;
+  useEffect(() => {
+    if (!busy) return;
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const result = await requestRef.current<{
+          progress: { stage: string; message: string; at: number }[];
+        }>(
+          `/native/progress?connectionId=${encodeURIComponent(connectionId)}`,
+          undefined,
+          abort.signal,
+        );
+        if (!abort.signal.aborted)
+          setProgress((previous) => {
+            const entries = new Map(
+              previous.map((entry) => [`${entry.at}:${entry.stage}`, entry]),
+            );
+            for (const entry of result.progress)
+              entries.set(`${entry.at}:${entry.stage}`, entry);
+            return [...entries.values()].sort((a, b) => a.at - b.at).slice(-24);
+          });
+      } catch (failure) {
+        if (
+          !abort.signal.aborted &&
+          failure instanceof MiniAppAuthenticationError
+        ) {
+          setError(failure.message);
+          abort.abort();
+        }
+      } finally {
+        if (!abort.signal.aborted) timer = setTimeout(poll, 1000);
+      }
+    };
+    void poll();
+    return () => {
+      abort.abort();
+      clearTimeout(timer);
+    };
+  }, [busy, connectionId]);
   const [managers, setManagers] = useState<PasswordManager[]>();
   const [managerUsername, setManagerUsername] = useState(username ?? "");
   const [managerError, setManagerError] = useState("");
@@ -47,6 +95,7 @@ export function NativeLoginPanel({
     if (controller.current && !controller.current.signal.aborted) return;
     setBusy(true);
     setError("");
+    setProgress([]);
     const abort = new AbortController();
     let sent = false;
     controller.current = abort;
@@ -113,12 +162,26 @@ export function NativeLoginPanel({
         form.current?.reset();
         setShowPassword(false);
         // Submit once. Polling below never resends credentials, including after uncertain responses.
-        await request<View>(
+        const result = await request<View>(
           "/native",
           { connectionId, action: automatic ? "login" : action, ...input },
           abort.signal,
         );
         fields = {};
+        if (!active.current || abort.signal.aborted) return;
+        setView(result);
+        if (result.status === "connected") {
+          onClose();
+          return;
+        }
+        if (result.requiresOrigin) {
+          setWebsiteView(true);
+          return;
+        }
+        if (result.fields?.includes("code")) {
+          setError("Enter your verification code to finish connecting.");
+          return;
+        }
       }
       for (let attempt = 0; attempt < 6; attempt++) {
         if (action !== "form" || attempt > 0) await pause();
@@ -162,12 +225,14 @@ export function NativeLoginPanel({
       setError(
         "This website needs an additional check. Try again after completing any verification on your phone.",
       );
-    } catch {
+    } catch (failure) {
       if (active.current && !abort.signal.aborted)
         setError(
-          sent || submitted
-            ? "Could not confirm sign-in. Check its status before trying again; your credentials won’t be resent."
-            : "Could not open this app’s sign-in page. Your login was not sent. Please try Connect again.",
+          failure instanceof MiniAppAuthenticationError
+            ? failure.message
+            : sent || submitted
+              ? "Could not confirm sign-in. Check its status before trying again; your credentials won’t be resent."
+              : "Could not open this app’s sign-in page. Your login was not sent. Please try Connect again.",
         );
     } finally {
       if (controller.current === abort) controller.current = undefined;
@@ -199,14 +264,18 @@ export function NativeLoginPanel({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const managerEntries = (managers ?? []).flatMap((manager) =>
-    manager.entries.map((entry) => ({
-      ...entry,
-      managerId: manager.id,
-      kind: manager.kind,
-      managerName: manager.name,
-    })),
-  );
+  const managerEntries = (managers ?? [])
+    .filter((manager) => manager.status === "connected")
+    .flatMap((manager) =>
+      manager.entries
+        .filter((entry) => !entry.website || entry.website === domain)
+        .map((entry) => ({
+          ...entry,
+          managerId: manager.id,
+          kind: manager.kind,
+          managerName: manager.name,
+        })),
+    );
   const sortedEntries = managerEntries.sort((a, b) => {
     const match = (entry: typeof a) =>
       entry.website ? Number(entry.website === (domain ?? "")) : 0;
@@ -337,12 +406,14 @@ export function NativeLoginPanel({
             abort.signal,
           ),
         );
-    } catch {
+    } catch (failure) {
       if (!abort.signal.aborted)
         setError(
-          action === "finish"
-            ? "Sign-in is not confirmed yet. Finish signing in and return to the app’s website, then check again."
-            : "This step could not be confirmed. Refresh the website before repeating it.",
+          failure instanceof MiniAppAuthenticationError
+            ? failure.message
+            : action === "finish"
+              ? "Sign-in is not confirmed yet. Finish signing in and return to the app’s website, then check again."
+              : "This step could not be confirmed. Refresh the website before repeating it.",
         );
     } finally {
       if (controller.current === abort) controller.current = undefined;
@@ -367,10 +438,12 @@ export function NativeLoginPanel({
       )
         throw new Error("Private cleanup pending");
       if (active.current) onClose();
-    } catch {
+    } catch (failure) {
       if (active.current)
         setError(
-          "Cancellation could not be confirmed. Please try closing again.",
+          failure instanceof MiniAppAuthenticationError
+            ? failure.message
+            : "Cancellation could not be confirmed. Please try closing again.",
         );
     } finally {
       cancelling.current = false;
@@ -413,6 +486,25 @@ export function NativeLoginPanel({
                 ? "Verifying your connection…"
                 : "Getting your login ready…"}
           </p>
+        )}
+        {!!progress.length && (
+          <details className="credential-setup" open>
+            <summary>Connection progress</summary>
+            <ol role="log" aria-live="polite" aria-label="Connection progress">
+              {progress.map((entry) => (
+                <li key={`${entry.at}:${entry.stage}`}>
+                  <time dateTime={new Date(entry.at).toISOString()}>
+                    {new Date(entry.at).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    })}
+                  </time>
+                  <span>{entry.message}</span>
+                </li>
+              ))}
+            </ol>
+          </details>
         )}
         {!websiteView && (
           <form

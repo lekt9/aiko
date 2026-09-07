@@ -11,6 +11,28 @@ import { describe, expect, it } from "vitest";
  * act on. The miner must fall back to the error and keep the attempt number.
  */
 describe("harness-learn miner", () => {
+  it("discovers account fields and distinguishes blocked responses from successful receipts", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "harness-remote-"));
+    try {
+      const preload = path.join(root, "fetch.mjs");
+      fs.writeFileSync(preload, `globalThis.fetch = async (input) => {
+        const url = new URL(input);
+        if (url.pathname.endsWith('/accounts')) return Response.json({accounts:[{account:'fixture-owner',threads:1}]});
+        if (url.searchParams.get('account') !== 'fixture-owner') return Response.json({threads:[]});
+        return Response.json({threads:[{thread:'user-fixture-owner',events:[
+          ...['queued','completed','listed','processed','ready'].map(status=>({type:'ToolReturned',result:{kind:'fixture',status}})),
+          {type:'AikoResponseRequested',outcome:'blocked',output:'private user content'},
+          {type:'AikoDeliverySettled',result:{status:'rejected',reason:'invalid_request'}}
+        ]}]});
+      };`);
+      execFileSync("node", ["--import", preload, "scripts/harness-learn.mjs", "--logs", path.join(root,"empty"), "--out", path.join(root,"out"), "--remote-url", "https://fixture.invalid", "--remote-token", "fixture", "--tardigrade", path.join(root,"none")], {timeout:15000});
+      const report = JSON.parse(fs.readFileSync(path.join(root,"out",fs.readdirSync(path.join(root,"out")).find(f=>f.startsWith("lessons-")&&f.endsWith(".json"))!),"utf8"));
+      expect(report.remote).toMatchObject({accounts_found:1,threads:1,events:7});
+      expect(report.lessons.map((l: any)=>l.kind).sort()).toEqual(["delivery_rejected","response_blocked"]);
+      expect(report.lessons.find((l:any)=>l.kind==="delivery_rejected").detail).toContain("invalid_request");
+      expect(JSON.stringify(report)).not.toContain("private user content");
+    } finally { fs.rmSync(root,{recursive:true,force:true}); }
+  }, 20000);
   it("surfaces the error and attempt of harness_retry events with empty reason", () => { // spawns node; needs headroom beyond the default 5s under parallel workers
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "harness-learn-"));
     try {

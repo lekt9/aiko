@@ -1,4 +1,5 @@
 const actions = new Set([
+  "session",
   "connect",
   "apps/connect",
   "native",
@@ -8,6 +9,12 @@ const actions = new Set([
   "browser",
   "execute",
   "route",
+  "password-managers/add",
+  "password-managers/remove",
+  "password-managers/fill",
+  "password-managers/authorize",
+  "password-managers/callback",
+  "imports/logins",
 ]);
 
 /** Forward end-user authentication only; never attach an operator token. */
@@ -24,7 +31,7 @@ export async function handleConnectorRequest(
   );
   const allowed =
     request.method === "GET"
-      ? action === "" || (!secretary && ["/connections", "/apps"].includes(action))
+      ? action === "" || (!secretary && ["/connections", "/apps", "/password-managers", "/native/progress"].includes(action))
       : request.method === "POST" &&
         (approvals ? action === "" : secretary
           ? ["/contact", "/history"].includes(action)
@@ -40,7 +47,7 @@ export async function handleConnectorRequest(
     (request.headers.has("x-telegram-init-data")
       ? `tma ${request.headers.get("x-telegram-init-data")}`
       : "");
-  if (!auth.startsWith("tma ") && !auth.startsWith("Bearer "))
+  if (!auth.startsWith("tma ") && !auth.startsWith("tms ") && !auth.startsWith("Bearer "))
     return json("authentication_required", 401);
   const configured = process.env.AIKO_CONNECTOR_ORIGIN;
   if (!configured) return json("connector_service_unavailable", 503);
@@ -96,7 +103,7 @@ export async function handleConnectorRequest(
       headers,
       body,
       redirect: "error",
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(["/native", "/password-managers/fill"].includes(action) ? 120_000 : 30_000)]),
     });
     if (!response.headers.get("content-type")?.includes("application/json"))
       return json("connector_service_unavailable", 502);

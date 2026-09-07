@@ -20,6 +20,8 @@ import {
 import { AIKO_TELEGRAM_URL } from "../lib/telegram";
 import {
   connectorRequest,
+  MiniAppAuthenticationError,
+  clearMiniAppSession,
   loginConnectionId,
   safeAuthorizationUrl,
   websiteDomain,
@@ -161,6 +163,7 @@ export function ConnectorOnboarding() {
           break;
         } catch (failure) {
           lastFailure = failure;
+          if (failure instanceof MiniAppAuthenticationError) break;
           await new Promise((resolve) => setTimeout(resolve, 2000));
         }
       }
@@ -247,9 +250,15 @@ export function ConnectorOnboarding() {
           setApprovalLoading(false);
           setApprovalError("");
         }
-      } catch {
-        if (!abort.signal.aborted)
-          setApprovalError("Could not refresh approvals. Retrying…");
+      } catch (failure) {
+        if (!abort.signal.aborted) {
+          setApprovalError(
+            failure instanceof MiniAppAuthenticationError
+              ? failure.message
+              : "Could not refresh approvals. Retrying…",
+          );
+          if (failure instanceof MiniAppAuthenticationError) abort.abort();
+        }
       } finally {
         if (!abort.signal.aborted) timer = setTimeout(refreshQueue, 3000);
       }
@@ -279,6 +288,7 @@ export function ConnectorOnboarding() {
     }
   }
   function clearAccount() {
+    clearMiniAppSession();
     accountRequests.current?.abort();
     accountRequests.current = null;
     setAccountVersion((value) => value + 1);

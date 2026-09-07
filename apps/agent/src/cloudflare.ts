@@ -1,3 +1,4 @@
+import { parseManagerProviders } from "./password-manager-mcp.ts";
 import { approvalMenu } from "./telegram-mini-app.ts";
 import { agentKeys } from "tardie/log/events";
 import {
@@ -103,6 +104,8 @@ import {
   redactor,
   safeUserId,
   verifyInitData,
+  createMiniAppSession,
+  verifyMiniAppSession,
 } from "./security.ts";
 import { withSpokenHistory } from "./inference.ts";
 import { controlApi } from "./control-api.ts";
@@ -132,9 +135,7 @@ import type { AikoConfig } from "./config.ts";
 import { CloudBackups } from "./cloud-backup.ts";
 import { backupApi, type AccountBackup } from "./backup-api.ts";
 import {
-  parseConnectUrl,
   parseManagerKey,
-  parseVaultAddress,
 } from "./password-managers.ts";
 
 export interface AikoCloudflareEnv {
@@ -155,6 +156,9 @@ export interface AikoCloudflareEnv {
   AIKO_BROWSER_MODEL?: string;
   AIKO_CONVERSATION_PROVIDER?: string;
   AIKO_CONVERSATION_MODEL?: string;
+  AIKO_CONVERSATION_FALLBACKS?: string;
+  AIKO_RAG_FALLBACKS?: string;
+  AIKO_BROWSER_FALLBACKS?: string;
   ARCADE_API_KEY?: string;
   AIKO_CARTESIA_KEY?: string;
   AIKO_CARTESIA_VOICE_ID?: string;
@@ -162,9 +166,7 @@ export interface AikoCloudflareEnv {
   AIKO_CODE_MODE?: string;
   AIKO_CONNECTOR_VAULT_JSON?: string;
   AIKO_MANAGER_KEY?: string;
-  AIKO_HASHICORP_VAULT_ADDRESS?: string;
-  AIKO_HASHICORP_VAULT_NAMESPACE?: string;
-  AIKO_ONEPASSWORD_CONNECT_URL?: string;
+  AIKO_MANAGER_PROVIDERS_JSON?: string;
   AIKO_MODEL?: string;
   AIKO_VISION_MODEL?: string;
   AIKO_VISION_PROVIDER?: "codegraff" | "cerebras";
@@ -237,6 +239,9 @@ function configOf(env: AikoCloudflareEnv): AikoConfig {
         AIKO_BROWSER_MODEL: env.AIKO_BROWSER_MODEL,
         AIKO_CONVERSATION_PROVIDER: env.AIKO_CONVERSATION_PROVIDER,
         AIKO_CONVERSATION_MODEL: env.AIKO_CONVERSATION_MODEL,
+        AIKO_CONVERSATION_FALLBACKS: env.AIKO_CONVERSATION_FALLBACKS,
+        AIKO_RAG_FALLBACKS: env.AIKO_RAG_FALLBACKS,
+        AIKO_BROWSER_FALLBACKS: env.AIKO_BROWSER_FALLBACKS,
       },
       {
         contextWindowTokens:
@@ -251,11 +256,7 @@ function configOf(env: AikoCloudflareEnv): AikoConfig {
     codeMode: env.AIKO_CODE_MODE === "true",
     connectorVault: parseConnectorVault(env.AIKO_CONNECTOR_VAULT_JSON),
     managerKey: parseManagerKey(env.AIKO_MANAGER_KEY),
-    hashicorpVault: parseVaultAddress(
-      env.AIKO_HASHICORP_VAULT_ADDRESS,
-      env.AIKO_HASHICORP_VAULT_NAMESPACE,
-    ),
-    onePasswordConnectUrl: parseConnectUrl(env.AIKO_ONEPASSWORD_CONNECT_URL),
+    managerProviders: parseManagerProviders(env.AIKO_MANAGER_PROVIDERS_JSON),
     port: 0,
     stateDir: "durable-object",
     operatorToken: env.AIKO_OPERATOR_TOKEN,
@@ -302,6 +303,10 @@ function authenticate(
       equalSecret(digest, key.digest),
     );
     if (key) return { owner: key.account, scopes: key.scopes, operator: false };
+  }
+  if (auth.startsWith("tms ") && config.botToken) {
+    const owner = verifyMiniAppSession(auth.slice(4), config.botToken);
+    if (owner && validOwner(config, owner)) return { owner, scopes: ["read", "write"], operator: false };
   }
   if (auth.startsWith("tma ") && config.botToken) {
     const owner = verifyInitData(auth.slice(4), config.botToken);
@@ -573,7 +578,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         (capabilities
           ? nativeBrowserConnector(owner, capabilities.sandbox.browserFactory(), async (record) => {
               await host.commitRoot(host.self(`user-${owner}`), record as Event);
-            })
+            }, () => capabilities.sandbox.progress())
           : undefined),
       env: { ARCADE_API_KEY: config.arcadeKey },
       store: doStore,
@@ -582,19 +587,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
             store: doStore,
             owner,
             key: config.managerKey,
-            vault: config.hashicorpVault,
-            onePasswordConnectUrl: config.onePasswordConnectUrl,
-            sandboxResolvers: capabilities
-              ? {
-                  onepassword: (token: string, reference: string) =>
-                    browserOperation((signal) =>
-                      capabilities.sandbox.managerResolve(
-                        { token, reference },
-                        signal,
-                      ),
-                    ),
-                }
-              : undefined,
+            providers: config.managerProviders,
           })
         : undefined,
       onEvent: async (e) => {
@@ -1216,8 +1209,12 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     const url = new URL(request.url);
     if (/^\/(?:api|v1)\/secretary(?:\/|$)/.test(url.pathname))
       return this.serialize(() => secretaryApi(request, owner, host, redact));
-    if (/^\/(?:api|v1)\/connectors(?:\/|$)/.test(url.pathname))
+    if (/^\/(?:api|v1)\/connectors(?:\/|$)/.test(url.pathname)) {
+      // The connector engine serializes its own mutations. Private login and
+      // progress must not wait behind an unrelated long-running actor slice.
+      if (/\/native(?:\/progress)?$/.test(url.pathname)) return connectorApi(request, connectors, route);
       return this.serialize(() => connectorApi(request, connectors, route));
+    }
     if (["/api/control/backup","/api/control/backups","/api/control/restore"].includes(url.pathname)) {
       if (!principal.operator) return json({error:"forbidden"},403);
       if (!this.env.AIKO_BACKUPS || !this.env.AIKO_BACKUP_KEY || !capabilities) return json({error:"backup_not_configured"},503);
@@ -1754,6 +1751,7 @@ export default {
         request.method === "GET" &&
         (url.pathname === "/connect" ||
           url.pathname === "/connect.html" ||
+          url.pathname === "/password-manager-callback.html" ||
           url.pathname.startsWith("/assets/")) &&
         env.CONNECTOR_ASSETS
       ) {
@@ -1764,7 +1762,7 @@ export default {
         );
         const response = new Response(asset.body, asset);
         response.headers.set("Referrer-Policy", "no-referrer");
-        if (url.pathname.startsWith("/connect"))
+        if (url.pathname.startsWith("/connect") || url.pathname === "/password-manager-callback.html")
           response.headers.set("Cache-Control", "no-store");
         return response;
       }
@@ -1798,7 +1796,10 @@ export default {
               Object.entries(config.modelRouting!.roles).map(
                 ([role, route]) => [
                   role,
-                  { provider: route.provider, model: route.model },
+                  { provider: route.provider, model: route.model,
+                    ...(config.modelRouting!.fallbacks?.[role as "conversation" | "rag" | "browser"]?.length
+                      ? { fallbacks: config.modelRouting!.fallbacks![role as "conversation" | "rag" | "browser"]!.map(({provider, model}) => ({provider, model})) } : {}),
+                  },
                 ],
               ),
             ),
@@ -1943,6 +1944,11 @@ export default {
           raced === "conflict" ? 409 : raced === "limited" ? 429 : 200,
         );
       }
+    if (url.pathname === "/api/connectors/session" && request.method === "POST") {
+      const owner = config.botToken && verifyInitData(request.headers.get("x-telegram-init-data") ?? (request.headers.get("authorization")?.startsWith("tma ") ? request.headers.get("authorization")!.slice(4) : ""), config.botToken);
+      if (!owner || !validOwner(config, owner)) return json({ error: "unauthorized" }, 401);
+      return json({ token: createMiniAppSession(owner, config.botToken!) });
+    }
       const principal = authenticate(request, config);
       if (!principal) return json({ error: "unauthorized" }, 401);
       if (

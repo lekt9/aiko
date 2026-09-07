@@ -16,8 +16,8 @@ export interface ActorConnectorBinding {
 }
 export function createActorConnectorTools(binding: ActorConnectorBinding): NativeTool<Self | EventLog>[] {
   const definitions = [
-    ["connector_search", "Search all Arcade connector catalog entries before recommending a connection or browser fallback. Unavailable does not mean absent.", { query: { type: "string" } }, ["query"]],
-    ["connector_recommend", "Queue a sign-in prompt that opens the selected connection in the native Telegram Mini App. Searches Arcade first. Pass exact connectorId from search; for password sign-in pass the explicit domain. Never supply credentials.", { query: { type: "string" }, connectorId: { type: "string" }, domain: { type: "string" } }, ["query"]],
+    ["connector_search", "Search Arcade API capabilities. Unavailable does not mean absent. Native website sign-in through connector_recommend does not require catalog absence.", { query: { type: "string" } }, ["query"]],
+    ["connector_recommend", "Open inline login in Telegram: queue the native Sign in button for this website account when the user's task needs authentication. Pass query=service name and domain=website hostname. A domain opens private sign-in directly, including when the API catalog is unavailable. The user enters credentials privately in the Mini App; never supply credentials here. Queued is not proof of delivery or completed login.", { query: { type: "string" }, connectorId: { type: "string" }, domain: { type: "string" } }, ["query"]],
     ["connector_connections", "List this owner's connections without authorization URLs.", {}, []],
     ["connector_execute", "Execute the exact connected Arcade tool for the user's authorized task. Do not repeat uncertain outcomes.", { connectionId: { type: "string" }, toolId: { type: "string", description: "Exact tool ID from the app connection; required for app connections" }, input: { type: "object" } }, ["connectionId", "input"]],
   ] as const;

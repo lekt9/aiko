@@ -470,3 +470,19 @@ test("a pre-existing signed-in page cannot verify an unsubmitted new password",a
   const row=f.db.query("SELECT envelope FROM native_vault WHERE id=?").get(id) as {envelope:string};
   expect(await f.cipher.open<any>(`unlock:native-login:v1:123:${id}:service.net`,JSON.parse(row.envelope))).not.toHaveProperty("credentials");
 });
+
+test("password manager fills persist the reference and session without copying the external password", async () => {
+  const f = await fixture();
+  const credentialReference = { managerId: id, reference: "op://Vault/Item/password" };
+  await f.run("credentials", { username: "fixture-user", password: "external-password", credentialReference });
+  // A subsequent OTP submission must retain the external-source binding.
+  await f.run("credentials", { code: "123456" });
+  f.authenticate();
+  expect(await f.run("finish")).toMatchObject({ status: "connected", credentialsSaved: false });
+  const row = f.db.query("SELECT envelope FROM native_vault WHERE id=?").get(id) as { envelope: string };
+  const saved = await f.cipher.open<any>(`unlock:native-login:v1:123:${id}:service.net`, JSON.parse(row.envelope));
+  expect(saved.credentialReference).toEqual(credentialReference);
+  expect(saved.credentials).toBeUndefined();
+  expect(JSON.stringify(saved)).not.toContain("external-password");
+  expect(saved.cookies).toEqual([cookie]);
+});

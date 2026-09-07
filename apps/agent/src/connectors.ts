@@ -64,7 +64,9 @@ export type Connection = {
 };
 export type ConnectionEvent = {
   type:
-    "AikoConnectionChanged" | "AikoLoginSubmitted" | "AikoLoginAttemptFailed";
+    "AikoConnectionChanged" | "AikoLoginSubmitted" | "AikoLoginAttemptFailed" | "AikoLoginProgress";
+  stage?: string;
+  message?: string;
   id: string;
   owner: string;
   connectionId: string;
@@ -394,15 +396,36 @@ export class ConnectorEngine {
       .catch(() => undefined);
     return next;
   }
+  // Progress reads must remain available while this owner's mutation queue waits
+  // for the browser. load() still enforces the owner/connection binding.
+  async nativeProgress(id: string) {
+    const row = await this.load(id);
+    if (row.provider !== "browser") throw Error("Private sign-in unavailable");
+    const progress = await this.options.store.get(`${this.prefix}login-progress:${id}`) as { stage: string; message: string; at: number }[] | undefined;
+    const setup = await this.options.secureBrowser?.progress?.() ?? [];
+    const since = progress?.[0]?.at ?? Date.now();
+    return { progress: [...(progress ?? []), ...setup.filter(e => e.at >= since)].sort((a,b) => a.at-b.at).slice(-24) };
+  }
   nativeControl(
     id: string,
     input: Omit<
       import("./native-login.ts").NativeLoginInput,
       "connectionId" | "domain"
     >,
+    signal?: AbortSignal,
   ) {
+    const deadline = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(100_000)]);
     return this.serial(async () => {
+      deadline.throwIfAborted();
       const row = await this.load(id);
+      // A saved session may finish renewing while the owner has this panel open.
+      // Read-only retries should return its verified result, not reject success.
+      if (row.provider === "browser" && row.status === "connected" &&
+          ["form", "view", "finish"].includes(input.action) &&
+          row.browserVerification?.verified && row.browserVerification.expiresAt > Date.now()) {
+        return { status: "connected" as const, domain: this.browserBinding(row).domain,
+          expiresAt: row.browserVerification.expiresAt, revision: row.browserVerification.revision };
+      }
       if (
         row.provider !== "browser" ||
         row.status !== "pending" ||
@@ -422,6 +445,16 @@ export class ConnectorEngine {
         ].includes(input.action)
       )
         throw Error("Private sign-in unavailable");
+      const key = `${this.prefix}login-progress:${id}`;
+      const progress: { stage: string; message: string; at: number }[] = [];
+      const report = async (stage: string, message: string) => {
+        const entry = { stage, message, at: Date.now() };
+        progress.push(entry);
+        await this.options.store.set(key, progress);
+        await this.options.onEvent?.({ type: "AikoLoginProgress", id: `login-progress:${randomUUID()}`, provider: row.provider, status: row.status, owner: this.options.owner, connectionId: id, ...entry });
+      };
+      await report("opening", ["login", "credentials"].includes(input.action) ? "Submitting your sign-in securely…" : input.action === "finish" ? "Checking whether sign-in completed…" : "Opening the website’s sign-in page…");
+      deadline.throwIfAborted();
       if (["credentials", "login"].includes(input.action))
         await this.recordEvent(row, "AikoLoginSubmitted");
       let result;
@@ -429,13 +462,16 @@ export class ConnectorEngine {
         result = await this.options.secureBrowser.control(
           this.browserBinding(row),
           input,
+          deadline,
         );
       } catch (error) {
+        await report("failed", deadline.aborted ? "Sign-in timed out. Check its status before submitting again." : "This sign-in step could not be completed. Check its status or continue on the website.");
         if (["credentials", "login"].includes(input.action))
           await this.recordEvent(row, "AikoLoginAttemptFailed");
         throw error;
       }
       if (result.status === "connected") await this.completeBrowser(row);
+      await report("complete", result.status === "connected" ? "Connected successfully." : result.requiresOrigin ? "The website needs your permission to continue." : result.fields?.includes("code") ? "Enter the website’s verification code." : result.fields?.length ? "The sign-in form is ready." : "Waiting for the website to finish loading…");
       return result;
     });
   }
@@ -456,6 +492,21 @@ export class ConnectorEngine {
       return this.options.managers.list();
     });
   }
+  managerProviders() {
+    return this.options.managers?.providers() ?? [];
+  }
+  authorizeManager(id: string) {
+    return this.serial(async () => {
+      if (!this.options.managers) throw new Error("Password managers are not available on this host");
+      return this.options.managers.authorize(id);
+    });
+  }
+  finishManagerAuthorization(id: string, state: string, code: string) {
+    return this.serial(async () => {
+      if (!this.options.managers) throw new Error("Password managers are not available on this host");
+      return this.options.managers.finishAuthorization(id, state, code);
+    });
+  }
   removeManager(id: string) {
     return this.serial(async () => {
       if (!this.options.managers)
@@ -471,8 +522,9 @@ export class ConnectorEngine {
     managerId: string;
     reference: string;
     username?: string;
-  }) {
+  }, signal?: AbortSignal) {
     return this.serial(async () => {
+      signal?.throwIfAborted();
       if (!this.options.managers)
         throw new Error("Password managers are not available on this host");
       const row = await this.load(input.connectionId);
@@ -498,6 +550,8 @@ export class ConnectorEngine {
         password = await this.options.managers.resolvePassword(
           input.managerId,
           reference,
+          binding.domain,
+          signal,
         );
       } catch (error) {
         throw error instanceof Error && error.message
@@ -513,7 +567,8 @@ export class ConnectorEngine {
           action: this.options.secureBrowser.native ? "login" : "credentials",
           username,
           password,
-        });
+          credentialReference: { managerId: input.managerId, reference },
+        }, signal);
       } catch {
         await this.recordEvent(row, "AikoLoginAttemptFailed");
         throw new Error(

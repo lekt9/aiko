@@ -1026,7 +1026,8 @@ summary {
   min-height: 56px;
   padding: 8px 16px;
   background: var(--tg-theme-bg-color, var(--app-bg));
-  border-bottom: 1px solid var(--tg-theme-section-separator-color, var(--app-line));
+  border-bottom: 1px solid
+    var(--tg-theme-section-separator-color, var(--app-line));
 }
 .mini-app-screen-header h2 {
   font-size: 17px;
@@ -1234,4 +1235,30 @@ summary {
 }
 .import-row.is-invalid .import-row-status {
   color: #c0392b;
+}
+
+.credential-setup {
+  margin: 12px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.credential-setup summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+.credential-setup ol {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.credential-setup li {
+  display: flex;
+  gap: 10px;
+  padding: 4px 0;
+}
+.credential-setup time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }

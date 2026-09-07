@@ -5,6 +5,7 @@ import { BrowserLearning } from "../src/browser-learning.ts";
 import { executableObservedReads } from "../src/capability-builder-network.ts";
 import type { Event } from "tardie/core/event";
 import { connectionRoute } from "../src/connection-index.ts";
+import { connectorApi } from "../src/connector-api.ts";
 class Store implements ConnectorStore {
  rows = new Map<string, any>();
  async get(key: string) { return structuredClone(this.rows.get(key)); }
@@ -15,6 +16,44 @@ const catalogFetch = async (url: Parameters<typeof fetch>[0]) => new Response(JS
 const engine = (secureBrowser: SecureBrowserAdapter, store = new Store(), owner = "123") => new ConnectorEngine({ owner, store, env: { ARCADE_API_KEY: "fixture-only-browser-key" }, fetch: catalogFetch, secureBrowser });
 const begin = async () => ({ authorizationUrl: "https://signin.aiko.com/owner-only-relay" });
 const verified = (binding: SecureBrowserBinding, revision = 1) => ({ ...binding, status: "connected" as const, verification: { verified: true as const, revision, expiresAt: Date.now() + 600000 } });
+
+test("a panel opened before background renewal receives its connected result without resubmission", async () => {
+  let calls = 0;
+  const e = engine({native:true,begin,status:async b=>verified(b),control:async()=>{calls++;throw Error("Must not repeat a verified login");}});
+  const connection = await e.connectBrowser("service.net");
+  await e.completeAuth(connection.id);
+  for (const action of ["form","view","finish"] as const)
+    expect((await e.nativeControl(connection.id,{action})).status).toBe("connected");
+  await expect(e.nativeControl(connection.id,{action:"login",username:"fixture",password:"fixture"})).rejects.toThrow("Private sign-in unavailable");
+  expect(calls).toBe(0);
+});
+
+test("login progress stays readable during private browser work and cancellation releases its queue", async () => {
+  const store = new Store();
+  let started!: () => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  let received: AbortSignal | undefined;
+  const e = engine({ native: true, begin,
+    progress: async () => [{ stage: "installing", message: "Preparing browser software…", at: Date.now() }],
+    control: async (_binding, _input, signal) => {
+      received = signal; started();
+      return new Promise((_resolve, reject) => signal!.addEventListener("abort", () => reject(Error("private-secret-failure")), { once: true }));
+    },
+  }, store);
+  const c = await e.connectBrowser("service.net");
+  const abort = new AbortController();
+  const operation = connectorApi(new Request("http://localhost/api/connectors/native", {method:"POST", body:JSON.stringify({connectionId:c.id,action:"form"}),signal:abort.signal}), e);
+  await ready;
+  const response = await connectorApi(new Request(`http://localhost/api/connectors/native/progress?connectionId=${c.id}`), e);
+  expect(response.status).toBe(200);
+  expect((await response.json() as any).progress.some((p:any) => p.stage === "installing")).toBe(true);
+  await expect(engine({native:true,begin},store,"456").nativeProgress(c.id)).rejects.toThrow();
+  abort.abort();
+  expect((await operation).status).toBe(409);
+  expect(received!.aborted).toBe(true);
+  expect(JSON.stringify(await e.nativeProgress(c.id))).not.toContain("private-secret");
+  expect((await e.connections())[0]!.id).toBe(c.id);
+});
 
 test("expired native connections renew in place and expose a resumable MFA challenge",async()=>{
  for(const challenge of [false,true]) {

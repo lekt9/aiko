@@ -1,6 +1,6 @@
 /** Private browser control. Only the authenticated owner API can call this, never an actor tool. */
 import { publicTarget } from "./browser-proxy.ts";
-export type NativeLoginInput = { connectionId: string; domain: string; action: "login" | "renew" | "begin" | "status" | "form" | "credentials" | "view" | "click" | "type" | "key" | "scroll" | "finish" | "disconnect" | "navigate" | "allow_origin"; url?: string; username?: string; password?: string; code?: string; x?: number; y?: number; text?: string; key?: string; delta?: number };
+export type NativeLoginInput = { connectionId: string; domain: string; action: "login" | "renew" | "begin" | "status" | "form" | "credentials" | "view" | "click" | "type" | "key" | "scroll" | "finish" | "disconnect" | "navigate" | "allow_origin"; url?: string; credentialReference?: { managerId: string; reference: string }; username?: string; password?: string; code?: string; x?: number; y?: number; text?: string; key?: string; delta?: number };
 export type NativeLoginState = { connectionId: string; domain: string; targetId?: string; preserveTargetIds?: string[]; approvedOrigins?: string[]; status: "pending" | "connected" | "disconnected"; expiresAt: number; revision: number; credentialsSaved?: boolean; verifiedSession?: { expiresAt: number; revision: number; credentialsSaved?: boolean } };
 export type NativeLoginView = { status: NativeLoginState["status"]; domain: string; currentHost?: string; requiresOrigin?: string; fields?: string[]; screenshot?: string; width?: number; height?: number; expiresAt: number; revision: number; credentialsSaved?: boolean };
 export type PrivateCdp = {send(method:string,params:object,sessionId?:string):Promise<any>;close():void};
@@ -98,7 +98,19 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{cdp:Priv
     if(["form","view"].includes(input.action)) return {...summary(),fields:[]};
     throw Error("Sign-in verified; finish closing private pages first");
   }
-  const {sessionId}=await cdp.send("Target.attachToTarget",{targetId:state.targetId,flatten:true});
+  let sessionId: string;
+  try { ({sessionId}=await cdp.send("Target.attachToTarget",{targetId:state.targetId,flatten:true})); }
+  catch (error) {
+    // Chromium target IDs do not survive a browser/VM restart. Only an explicit
+    // form/view read may recreate the page; credential and interaction requests
+    // must fail rather than run against a different document.
+    if (["form","view"].includes(input.action)) {
+      const targets=await cdp.send("Target.getTargets",{});
+      if (Array.isArray(targets.targetInfos) && !targets.targetInfos.some((target:any)=>target.targetId===state!.targetId))
+        return nativeLogin({...input,action:"begin"},dependencies);
+    }
+    throw error;
+  }
   const evaluate=async(expression:string)=>(await cdp.send("Runtime.evaluate",{expression,returnByValue:true},sessionId)).result?.value;
   if(input.action==="navigate") {
     const url=publicTarget(input.url!);

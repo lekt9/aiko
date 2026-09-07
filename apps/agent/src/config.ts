@@ -1,3 +1,4 @@
+import { parseManagerProviders, type ManagerProvider } from "./password-manager-mcp.ts";
 import { parseModelRouting, type ModelRoutingConfig } from "./model-routing.ts";
 import {
   parseConnectorVault,
@@ -12,12 +13,10 @@ import { parsePlaneCredentials, type PlaneCredential } from "./plane-auth.ts";
 import { DEFAULT_MODEL_LIMITS, type ModelLimits } from "./model-budget.ts";
 import { safeUserId } from "./security.ts";
 import {
-  parseConnectUrl,
   parseManagerKey,
-  parseVaultAddress,
 } from "./password-managers.ts";
 
-export { parseManagerKey, parseVaultAddress, parseConnectUrl };
+export { parseManagerKey };
 
 export const PERSONA = "3c36e929-50ac-4971-919f-70e6fc6273b7";
 export type AikoConfig = {
@@ -48,12 +47,9 @@ export type AikoConfig = {
   /** Selected by the host's loaded configuration, never inferred from ambient
    * process state when constructing an isolated service. */
   connectorStorage?: "postgres" | "file";
-  /** Base64 32-byte AES key that seals password manager tokens at rest. Omitting it keeps the feature off. */
+  /** Base64 32-byte AES key that seals password manager OAuth grants at rest. Omitting it keeps the feature off. */
   managerKey?: string;
-  /** Operator-level HashiCorp Vault cluster for the hashicorp-vault manager kind. */
-  hashicorpVault?: { address: string; namespace?: string };
-  /** Operator-level 1Password Connect server for the onepassword-connect manager kind. */
-  onePasswordConnectUrl?: string;
+  managerProviders?: ManagerProvider[];
   voiceKey?: string;
   persona: string;
   voiceEnabled: boolean;
@@ -346,6 +342,9 @@ export async function loadConfig(
           "AIKO_MODEL",
           "AIKO_CONVERSATION_PROVIDER",
           "AIKO_CONVERSATION_MODEL",
+          "AIKO_CONVERSATION_FALLBACKS",
+          "AIKO_RAG_FALLBACKS",
+          "AIKO_BROWSER_FALLBACKS",
           "AIKO_RAG_PROVIDER",
           "AIKO_RAG_MODEL",
           "AIKO_BROWSER_PROVIDER",
@@ -360,11 +359,7 @@ export async function loadConfig(
     codeMode: get("AIKO_CODE_MODE") === "true",
     connectorVault: parseConnectorVault(get("AIKO_CONNECTOR_VAULT_JSON")),
     managerKey: parseManagerKey(get("AIKO_MANAGER_KEY")),
-    hashicorpVault: parseVaultAddress(
-      get("AIKO_HASHICORP_VAULT_ADDRESS"),
-      get("AIKO_HASHICORP_VAULT_NAMESPACE"),
-    ),
-    onePasswordConnectUrl: parseConnectUrl(get("AIKO_ONEPASSWORD_CONNECT_URL")),
+    managerProviders: parseManagerProviders(get("AIKO_MANAGER_PROVIDERS_JSON")),
     voiceKey,
     persona: get("THINKFEEL_PERSONA_ID") ?? PERSONA,
     voiceEnabled,

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { Infer, type InferRequest } from "tardie";
 import { ModelBudget } from "../src/model-budget.ts";
-import { createModelRouting, parseModelRouting, MODEL_PROVIDERS, type ModelRole } from "../src/model-routing.ts";
+import { createModelRouting, parseModelRouting, orderedToolMessages, MODEL_PROVIDERS, type ModelRole } from "../src/model-routing.ts";
 import type { HttpFetch } from "../src/security.ts";
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
@@ -15,7 +15,7 @@ async function fixture(upstream: HttpFetch, overrides = {}, limits = { globalPer
  const budget = new ModelBudget(directory, limits);
  cleanup.push(async () => { budget.close(); await rm(directory, { recursive: true, force: true }); });
  const vars = { ...env, ...overrides };
- return { router: createModelRouting({ owner: "123", config: parseModelRouting(vars), env: vars, budget, fetch: upstream }), budget, directory, vars };
+ return { router: createModelRouting({ owner: "123", config: parseModelRouting(vars), env: vars, budget, fetch: upstream, throttleRetryDelaysMs: [] }), budget, directory, vars };
 }
 const bodyFor = (role: ModelRole, extra = {}) => JSON.stringify({ model: role === "conversation" ? "glm-5.3-flash" : "qwen-3.8-27b", messages: [{ role: "user", content: "Use verified evidence" }], max_tokens: 1024, stream: true, ...extra });
 const requestFor = (role: ModelRole, extra = {}) => ({ method: "POST", body: bodyFor(role, extra) });
@@ -28,6 +28,75 @@ const nativeRequest: InferRequest = { trajectory: [{ type: "MessageReceived", id
 
 // Uses the installed native model.ts and streaming adapter, not a mocked inference binding.
 const react = (router: ReturnType<typeof createModelRouting>, role: ModelRole, request = nativeRequest) => Effect.runPromise(Effect.gen(function* () { const infer = yield* Infer; return yield* infer.react(request); }).pipe(Effect.provide(router.layer(role))));
+
+test("queued user messages cannot split tool calls from their recorded replies", async () => {
+ const request = { ...nativeRequest, trajectory: [
+  { type: "MessageReceived", id: "old", text: "Read a page", at: 1 },
+  { type: "ToolCalled", turn: "old", callId: "browser-old", name: "agent_browser_navigate", arguments: {}, at: 2 },
+  { type: "MessageReceived", id: "turn", text: "hi", at: 3 },
+  { type: "ToolReturned", turn: "old", callId: "browser-old", result: { status: "unknown", text: "Interrupted; do not replay" }, at: 4 },
+  { type: "TurnCompleted", turn: "old", output: "Unconfirmed", at: 5 },
+ ] };
+ const original = structuredClone(request);
+ let wire: any;
+ const { router } = await fixture(async (_, init) => { wire = JSON.parse(String(init?.body)); return streamReply(); });
+ expect(await react(router, "rag", request)).toMatchObject({ kind: "complete" });
+ const call = wire.messages.findIndex((m: any) => m.tool_calls?.[0]?.id === "browser-old");
+ expect(wire.messages[call + 1]).toMatchObject({ role: "tool", tool_call_id: "browser-old" });
+ expect(wire.messages[call + 1].content).toContain("Interrupted; do not replay");
+ expect(wire.messages[call + 2]).toMatchObject({ role: "user", content: "hi" });
+ expect(request).toEqual(original);
+});
+
+test("parallel tool blocks retain every real receipt and reject unmatched history", () => {
+ const call = { role: "assistant", tool_calls: [{ id: "a" }, { id: "b" }] };
+ const user = { role: "user", content: "next" };
+ const a = { role: "tool", tool_call_id: "a", content: "unknown" };
+ const b = { role: "tool", tool_call_id: "b", content: "done" };
+ expect(orderedToolMessages([call, user, b, a])).toEqual([call, a, b, user]);
+ expect(() => orderedToolMessages([call, a])).toThrow("Unpaired tool call");
+ expect(() => orderedToolMessages([a])).toThrow("Unpaired tool response");
+});
+
+test("native provider retries recover transient HTTP errors and retain permanent diagnostics", async () => {
+ for (const status of [400, 401, 429, 503]) {
+  let calls = 0;
+  const router = createModelRouting({ owner: "123", env, config: parseModelRouting(env), throttleRetryDelaysMs: [1],
+   fetch: async () => ++calls === 1 ? new Response("private provider diagnostic", { status }) : streamReply() });
+  const result = await react(router, "rag");
+  expect(calls).toBe(status >= 429 ? 2 : 1);
+  expect(result.kind).toBe(status >= 429 ? "complete" : "fail");
+  if (result.kind === "fail") expect(result.error).toContain(String(status));
+  expect(JSON.stringify(result)).not.toContain("private provider diagnostic");
+ }
+});
+
+test("configured Codegraff fallbacks serve exhausted Cerebras roles with their own endpoint stamp", async () => {
+ const fallbackEnv = { ...env, AIKO_RAG_FALLBACKS: JSON.stringify([{provider:"codegraff",model:"muse-spark-1.3-contributor"}]) };
+ const calls: {url:string;model:string;key:string|null}[] = [];
+ const router = createModelRouting({ owner:"123",env:fallbackEnv,config:parseModelRouting(fallbackEnv),throttleRetryDelaysMs:[],fetch:async(url,init)=>{
+  const model=JSON.parse(String(init?.body)).model;
+  calls.push({url:String(url),model,key:new Headers(init?.headers).get("Authorization")});
+  return model==="qwen-3.8-27b" ? new Response("unavailable",{status:503}) : streamReply();
+ } });
+ const result = await react(router,"rag");
+ expect(result).toMatchObject({kind:"complete",endpoint:{provider:"codegraff",model:"muse-spark-1.3-contributor"}});
+ expect(result.usage).toMatchObject({promptTokens:12,completionTokens:3});
+ expect(result.usage?.costUsd).toBeUndefined();
+ expect(calls).toEqual([
+  {url:endpointFor("rag"),model:"qwen-3.8-27b",key:"Bearer fixture-cerebras-private"},
+  {url:endpointFor("conversation"),model:"muse-spark-1.3-contributor",key:"Bearer fixture-codegraff-private"},
+ ]);
+});
+
+test("permanent failures and completed tool calls never trigger configured fallbacks", async () => {
+ const fallbackEnv = {...env, AIKO_RAG_FALLBACKS:'[{"provider":"codegraff","model":"muse-spark-1.3-contributor"}]'};
+ let calls=0;
+ const router=createModelRouting({owner:"123",env:fallbackEnv,config:parseModelRouting(fallbackEnv),throttleRetryDelaysMs:[],fetch:async()=>{calls++;return new Response("invalid history",{status:400});}});
+ expect(await react(router,"rag")).toMatchObject({kind:"fail"});expect(calls).toBe(1);
+ expect(()=>parseModelRouting({...fallbackEnv,AIKO_RAG_FALLBACKS:'[{"provider":"unknown","model":"bad"}]'})).toThrow();
+ expect(()=>parseModelRouting({...fallbackEnv,AIKO_RAG_FALLBACKS:'[{"provider":"cerebras","model":"qwen-3.8-27b"}]'})).toThrow();
+});
 
 test("default roles preserve Codegraff and public config contains env references only", () => {
  const config = parseModelRouting({ CODEGRAFF_API_KEY: "fixture-secret", CEREBRAS_API_KEY: "fixture-other-secret" });
@@ -175,7 +244,7 @@ test("Cloudflare-style native routing works without a ledger through direct pinn
 test("direct mode rejects redirects, exhausted providers and invalid destinations without retry", async () => {
  for (const status of [302, 429, 503]) {
   const seen: string[] = [];
-  const router = createModelRouting({ owner: "123", config: parseModelRouting(env), env, fetch: async url => { seen.push(String(url)); return new Response("private upstream", { status, headers: { Location: "https://untrusted.net/steal" } }); } });
+  const router = createModelRouting({ owner: "123", config: parseModelRouting(env), env, throttleRetryDelaysMs: [], fetch: async url => { seen.push(String(url)); return new Response("private upstream", { status, headers: { Location: "https://untrusted.net/steal" } }); } });
   expect(await react(router, "rag")).toMatchObject({ kind: "fail" }); expect(seen).toEqual([endpointFor("rag")]);
   await expect(router.transport("rag")("https://untrusted.net/v1/chat/completions", requestFor("rag"))).rejects.toThrow("request_rejected");
   expect(seen).toHaveLength(1);

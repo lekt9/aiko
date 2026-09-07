@@ -1,0 +1,19 @@
+diff --git a/src/agent/component/compaction.ts b/src/agent/component/compaction.ts
+index 050780c8cfbbab2c9da07343485a9fd2c51f331a..1b8590c9edf1db41cbdc733c44e928e46d60c1fe 100644
+--- a/src/agent/component/compaction.ts
++++ b/src/agent/component/compaction.ts
+@@ -486,10 +486,11 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
+     }
+   }
+   const transitions = (state: State, resolved: ContextPolicy, model: ModelRef | undefined) => {
+-    const transcriptOutput = transcript.output(state.transcript)
+-    const overFireLine = Math.ceil(transcriptOutput.weight / 4) > resolved.fireTokens
++    // Weight is maintained incrementally. Materialize history only when the
++    // compaction guard fires; replay otherwise scans the growing log per event.
++    const overFireLine = Math.ceil(state.transcript.visibleWeight / 4) > resolved.fireTokens
+     if (!(state.fires > state.passes || (overFireLine && atRoundBoundary(turnViewFrom(state.turns))))) return []
+-    const suffix = transcriptOutput.events
++    const suffix = transcript.output(state.transcript).events
+     const cut = cutOf(suffix, resolved, new Set(state.served))
+     if (cut === undefined) return []
+     const prior = checkpointOf(suffix)

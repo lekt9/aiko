@@ -15,8 +15,9 @@ function fixture(status: "available" | "absent" | "unavailable" = "available", a
   const run = (name: string, input: unknown, thread = binding.thread): Promise<any> => Effect.runPromise(createActorConnectorTools(binding).find(t => t.spec.name === name)!.run(input, { callId: name, turn: "turn", signal: new AbortController().signal }).pipe(Effect.provideService(Self, { actor: "aiko", instance: "test", thread }), Effect.provideService(EventLog, { read: Effect.sync(() => events), head: Effect.sync(() => events.length), readFrom: n => Effect.sync(() => events.slice(n)), append: items => Effect.sync(() => { events.push(...items); }) })));
   return { calls, deliveries, events, run, binding };
 }
-test("a website domain queues the private password sign-in durably and auth links stay out of receipts/logs", async () => {
-  const f = fixture();
+for (const catalog of ["available", "absent", "unavailable"] as const)
+test(`a website domain queues inline sign-in with catalog ${catalog} and keeps auth links private`, async () => {
+  const f = fixture(catalog);
   const result = await f.run("connector_recommend", { query: "service", domain: "service.com" });
   expect(f.calls).toEqual(["browser"]);
   expect(f.deliveries).toEqual([]);

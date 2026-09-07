@@ -112,6 +112,8 @@ import {
   redactor,
   safeUserId,
   verifyInitData,
+  createMiniAppSession,
+  verifyMiniAppSession,
   type HttpFetch,
 } from "./security.ts";
 import { RELEASE_GATES } from "./capabilities.ts";
@@ -138,7 +140,7 @@ export async function createService(
       owner: string,
     ) => import("./connectors-browser.ts").SecureBrowserAdapter;
     /** Test seam: deterministic password manager resolution without provider networks. */
-    managerResolvers?: import("./password-managers.ts").ManagerResolvers;
+    managerFetch?: typeof fetch;
     browserFactory?: BrowserDriverFactory;
     telegramStatus?: () => object;
     // Explicit owner-bound media capability injection. The local server never provisions a VM implicitly.
@@ -201,9 +203,8 @@ export async function createService(
               store: connectorStore,
               owner,
               key: config.managerKey,
-              vault: config.hashicorpVault,
-              onePasswordConnectUrl: config.onePasswordConnectUrl,
-              resolvers: overrides.managerResolvers,
+              providers: config.managerProviders,
+              fetch: overrides.managerFetch,
             })
           : undefined,
         onEvent: async (e) => {
@@ -822,6 +823,10 @@ export async function createService(
       if (key)
         return { owner: key.account, scopes: key.scopes, operator: false };
     }
+  if (auth.startsWith("tms ") && config.botToken) {
+    const owner = verifyMiniAppSession(auth.slice(4), config.botToken);
+    if (owner && validOwner(owner)) return { owner, scopes: ["read", "write"], operator: false };
+  }
     if (auth.startsWith("tma ") && config.botToken) {
       const user = verifyInitData(auth.slice(4), config.botToken);
       if (user && validOwner(user))
@@ -896,6 +901,11 @@ export async function createService(
         if (status === "conflict") return json({ error: status }, 409);
       }
       return json({ ok: result.status === 200 }, result.status);
+    }
+    if (url.pathname === "/api/connectors/session" && request.method === "POST") {
+      const owner = config.botToken && verifyInitData(request.headers.get("x-telegram-init-data") ?? (request.headers.get("authorization")?.startsWith("tma ") ? request.headers.get("authorization")!.slice(4) : ""), config.botToken);
+      if (!owner || !validOwner(owner)) return json({ error: "unauthorized" }, 401);
+      return json({ token: createMiniAppSession(owner, config.botToken!) });
     }
     const principal = authenticate(request);
     if (!principal) return json({ error: "unauthorized" }, 401);

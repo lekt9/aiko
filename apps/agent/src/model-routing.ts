@@ -4,6 +4,7 @@ import { modelAdapters } from "tardie/model/adapter";
 import { openAICompatibleAdapter } from "tardie/model/openai";
 import { Effect, Layer } from "effect";
 import { safeUserId, type HttpFetch } from "./security.ts";
+import { sumUsage, type Usage } from "tardie/inference/usage";
 
 export const MODEL_ROLES = ["conversation", "rag", "browser"] as const;
 export type ModelRole = typeof MODEL_ROLES[number];
@@ -20,6 +21,7 @@ export type ModelRoute = {
 };
 export type ModelRoutingConfig = {
   readonly roles: Readonly<Record<ModelRole, ModelRoute>>;
+  readonly fallbacks?: Partial<Readonly<Record<ModelRole, readonly ModelRoute[]>>>;
   readonly contextWindowTokens: number;
   readonly maxOutputTokens: number;
 };
@@ -57,7 +59,26 @@ export function parseModelRouting(env: ModelRoutingEnv, defaults: ModelRoutingDe
     if (routeModel === env.CODEGRAFF_API_KEY || routeModel === env.CEREBRAS_API_KEY) throw new Error("Model identifier must not contain a credential");
     return [role, Object.freeze({ provider, model: routeModel, secretEnv: MODEL_PROVIDERS[provider].secretEnv })];
   })) as Record<ModelRole, ModelRoute>;
-  return Object.freeze({ roles: Object.freeze(roles), contextWindowTokens, maxOutputTokens });
+  const fallbacks: Partial<Record<ModelRole, readonly ModelRoute[]>> = {};
+  for (const role of MODEL_ROLES) {
+    const raw = env[`AIKO_${role.toUpperCase()}_FALLBACKS`];
+    if (!raw) continue;
+    const values = JSON.parse(raw);
+    if (!Array.isArray(values) || values.length > 3) throw new Error("Invalid model fallbacks");
+    const seen = new Set([`${roles[role].provider}/${roles[role].model}`]);
+    fallbacks[role] = Object.freeze(values.map((value: any) => {
+      if (!value || Object.keys(value).sort().join(",") !== "model,provider" ||
+          !Object.hasOwn(MODEL_PROVIDERS, value.provider) || typeof value.model !== "string")
+        throw new Error("Invalid fallback model route");
+      const provider = value.provider as ModelProvider, model = modelOf(value.model);
+      if (model === env.CODEGRAFF_API_KEY || model === env.CEREBRAS_API_KEY || seen.has(`${provider}/${model}`))
+        throw new Error("Invalid or duplicate fallback model");
+      seen.add(`${provider}/${model}`);
+      return Object.freeze({ provider, model, secretEnv: MODEL_PROVIDERS[provider].secretEnv });
+    }));
+  }
+  return Object.freeze({ roles: Object.freeze(roles), contextWindowTokens, maxOutputTokens,
+    ...(Object.keys(fallbacks).length ? { fallbacks: Object.freeze(fallbacks) } : {}) });
 }
 
 /** Drop unsupported strict-decoder constraints only at wire schema nodes; native validators retain the original constraints. */
@@ -113,6 +134,35 @@ function adaptCerebras(body: Record<string, any>) {
   return adapted;
 }
 
+/** Keep recorded tool replies adjacent on the wire when a queued user message arrived during tool I/O. */
+export function orderedToolMessages(messages: readonly Record<string, any>[]) {
+  const returns = new Map<string, number>();
+  messages.forEach((message, index) => {
+    if (message.role === "tool" && typeof message.tool_call_id === "string") {
+      if (returns.has(message.tool_call_id)) throw new Error("Duplicate tool response");
+      returns.set(message.tool_call_id, index);
+    }
+  });
+  const moved = new Set<number>();
+  const ordered: Record<string, any>[] = [];
+  messages.forEach((message, index) => {
+    if (moved.has(index)) return;
+    if (message.role === "tool") throw new Error("Unpaired tool response");
+    ordered.push(message);
+    if (message.role !== "assistant" || !Array.isArray(message.tool_calls)) return;
+    for (const call of message.tool_calls) {
+      const result = returns.get(call.id);
+      if (result === undefined || result <= index || moved.has(result))
+        throw new Error("Unpaired tool call");
+      ordered.push(messages[result]!);
+      moved.add(result);
+    }
+  });
+  return ordered;
+}
+
+export const DEFAULT_MODEL_RETRY_DELAYS_MS: readonly number[] = [500, 1500];
+
 export type ModelRoutingOptions = {
   owner: string;
   config: ModelRoutingConfig;
@@ -121,6 +171,7 @@ export type ModelRoutingOptions = {
   fetch?: HttpFetch;
   /** Preserve host stream timing; the supplied budget transport may impose a stricter deadline. */
   stream?: { firstChunkMs: number; idleMs: number; totalMs: number };
+  throttleRetryDelaysMs?: readonly number[];
 };
 /**
  * Root integration: routing.layer(role) replaces only modelInfer(...). Keep withSpokenHistory and actor/browser gates.
@@ -136,12 +187,18 @@ export function createModelRouting(options: ModelRoutingOptions) {
   if (!safeUserId(options.owner)) throw new Error("Invalid model routing owner");
   // Re-validate supplied structural config; it may have arrived as untrusted JSON at a host boundary.
   const configEnv: Record<string, string> = {};
-  if (Object.keys(options.config).some(key => !["roles", "contextWindowTokens", "maxOutputTokens"].includes(key))) throw new Error("Invalid model routing configuration");
+  if (Object.keys(options.config).some(key => !["roles", "fallbacks", "contextWindowTokens", "maxOutputTokens"].includes(key))) throw new Error("Invalid model routing configuration");
   for (const role of MODEL_ROLES) {
     const route = options.config.roles[role];
     if (!route || !Object.hasOwn(MODEL_PROVIDERS, route.provider) || route.secretEnv !== MODEL_PROVIDERS[route.provider].secretEnv || Object.keys(route).some(k => !["provider", "model", "secretEnv"].includes(k))) throw new Error("Invalid model route configuration");
     configEnv[`AIKO_${role.toUpperCase()}_PROVIDER`] = route.provider;
     configEnv[`AIKO_${role.toUpperCase()}_MODEL`] = route.model;
+    const fallbacks = options.config.fallbacks?.[role];
+    if (fallbacks) {
+      if (fallbacks.some(f => !Object.hasOwn(MODEL_PROVIDERS, f.provider) || f.secretEnv !== MODEL_PROVIDERS[f.provider].secretEnv || Object.keys(f).some(k => !["provider", "model", "secretEnv"].includes(k))))
+        throw new Error("Invalid fallback model route");
+      configEnv[`AIKO_${role.toUpperCase()}_FALLBACKS`] = JSON.stringify(fallbacks.map(({provider, model}) => ({provider, model})));
+    }
   }
   const config = parseModelRouting(configEnv, { contextWindowTokens: options.config.contextWindowTokens, maxOutputTokens: options.config.maxOutputTokens });
   const status = (rawRole: ModelRole): ModelRouteStatus => {
@@ -167,6 +224,7 @@ export function createModelRouting(options: ModelRoutingOptions) {
       try {
         body = JSON.parse(init.body);
         if (!body || typeof body !== "object" || Array.isArray(body) || body.model !== route.model || !Array.isArray(body.messages) || !Number.isInteger(body.max_tokens) || body.max_tokens < 1 || body.max_tokens > config.maxOutputTokens) throw new Error("invalid model request");
+        body.messages = orderedToolMessages(body.messages);
         if (route.provider === "cerebras") body = adaptCerebras(body);
         else if (Array.isArray(body.tools)) body = {...body,tools:body.tools.map((tool:any) =>
           tool?.function?.strict === true ? {...tool,function:{...tool.function,parameters:strictWireSchema(tool.function.parameters)}} : tool)};
@@ -187,7 +245,14 @@ export function createModelRouting(options: ModelRoutingOptions) {
         });
         if (!response.ok || !response.body) {
           await response.body?.cancel().catch(() => undefined);
-          throw new Error("Provider request unavailable");
+          // Let the native adapter retain HTTP status and classify retries. Never retain the provider body.
+          const status = response.ok ? 502 : response.status;
+          const retryAfter = response.headers.get("retry-after");
+          return Response.json({ error: { message: `Model provider HTTP ${status}` } }, {
+            status: status >= 300 && status < 400 ? 400 : status,
+            ...(retryAfter && /^(?:\d+(?:\.\d+)?|[A-Za-z]{3}, [\d A-Za-z:]+ GMT)$/.test(retryAfter)
+              ? { headers: { "retry-after": retryAfter } } : {}),
+          });
         }
         return response;
       };
@@ -205,7 +270,9 @@ export function createModelRouting(options: ModelRoutingOptions) {
     const native = modelInfer({
       provider: route.provider, baseUrl: MODEL_PROVIDERS[route.provider].baseUrl, apiKey: options.env[route.secretEnv]!, model: route.model,
       protocol: "openai-chat-completions", contextWindowTokens: route.provider === "cerebras" ? Math.min(config.contextWindowTokens, 32768) : config.contextWindowTokens, maxOutputTokens: config.maxOutputTokens,
-      maxTokensLadder: [config.maxOutputTokens], throttleRetryDelaysMs: [], fetch: transport(role),
+      maxTokensLadder: [config.maxOutputTokens],
+      throttleRetryDelaysMs: options.throttleRetryDelaysMs ?? DEFAULT_MODEL_RETRY_DELAYS_MS,
+      fetch: transport(role),
       stream,
     }, modelAdapters(openAICompatibleAdapter));
     // Reject model overrides from a request before I/O; choosing a role never grants another model/provider.
@@ -216,7 +283,40 @@ export function createModelRouting(options: ModelRoutingOptions) {
           return Effect.succeed({ kind: "fail" as const, error: "Model request override is outside the configured role" });
         const current = status(role);
         if (current.status !== "configured") return Effect.succeed({ kind: "fail" as const, error: new ModelRoutingUnavailable(role, route.provider, current.reason!).message });
-        return binding.react(request, key, signal);
+        return Effect.gen(function* () {
+          let action = yield* binding.react(request, key, signal);
+          const usage: Usage[] = [];
+          let missingUsage = false, attemptedFallback = false;
+          const remember = (part: Usage | undefined) => {
+            if (part && Number.isFinite(part.promptTokens) && Number.isFinite(part.completionTokens)) usage.push(part);
+            else missingUsage = true;
+          };
+          remember(action.usage);
+          for (const fallback of config.fallbacks?.[role] ?? []) {
+            // A fallback is another inference attempt, never a replay of a tool or a refusal bypass.
+            if (signal?.aborted || action.kind !== "fail" ||
+                !(action.failure?.cause === "inference_attempts_exhausted" ||
+                  (action.failure?.cause === "inference_error" && /\b(?:404|408|429|5\d\d)\b/.test(action.error)))) break;
+            const next = createModelRouting({ ...options,
+              config: { ...config, fallbacks: undefined, roles: { ...config.roles, [role]: fallback } },
+            });
+            if (next.status(role).status !== "configured") continue;
+            attemptedFallback = true;
+            action = yield* Effect.gen(function* () {
+              const infer = yield* Infer;
+              return yield* infer.react({ ...request, model: { provider: fallback.provider, model_id: fallback.model } }, key, signal);
+            }).pipe(Effect.provide(next.layer(role)));
+            remember(action.usage);
+          }
+          if (!attemptedFallback || !usage.length) return action;
+          const total = sumUsage(usage);
+          if (missingUsage) {
+            // Known token reports remain useful; an unreported attempt prevents a complete cost claim.
+            const { costUsd, costSource, reportedCostUsd, estimatedCostUsd, ...known } = total;
+            return { ...action, usage: known };
+          }
+          return { ...action, usage: total };
+        });
       } };
     })).pipe(Layer.provide(native));
   };

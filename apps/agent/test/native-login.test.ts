@@ -1,6 +1,43 @@
 import {test,expect} from "bun:test";
 import {nativeLogin,prepareNativeLogin,validateNativeInput,type NativeLoginState} from "../src/native-login.ts";
 const id="12345678-1234-1234-1234-123456789abc";
+test("form reads reopen a missing private target after restart without replaying credentials",async()=>{
+ for(const action of ["form","view","credentials"] as const) {
+  let state:NativeLoginState={connectionId:id,domain:"linkedin.com",targetId:"old",status:"pending",expiresAt:Date.now()+60000,revision:3,approvedOrigins:["https://old-sso.example"]};
+  const calls:any[]=[];
+  const deps={read:()=>state,save:(next:NativeLoginState)=>{state=next;},cdp:{close(){},async send(method:string,params:any){
+   calls.push({method,params});
+   if(method==="Target.attachToTarget"){if(params.targetId==="old")throw Error("Missing target");return {sessionId:"new-session"};}
+   if(method==="Target.getTargets")return {targetInfos:[{targetId:"other-page",type:"page"}]};
+   if(method==="Target.createTarget")return {targetId:"fresh"};
+   if(method==="Runtime.evaluate")return {result:{value:""}};
+   return {};
+  }}};
+  const result=nativeLogin({connectionId:id,domain:"linkedin.com",action,...(action==="credentials"?{password:"test-value"}:{})},deps);
+  if(action==="credentials") {
+   await expect(result).rejects.toThrow("Missing target");
+   expect(calls.some(c=>c.method==="Target.createTarget")).toBe(false);
+  } else {
+   expect(await result).toMatchObject({status:"pending",revision:4,fields:[]});
+   expect(state.targetId).toBe("fresh");
+   expect(state.approvedOrigins).toBeUndefined();
+   expect(calls.find(c=>c.method==="Page.navigate")?.params.url).toBe("https://linkedin.com/login");
+  }
+  expect(calls.some(c=>c.method.startsWith("Input."))).toBe(false);
+ }
+});
+test("an attach failure does not replace a private page that still exists",async()=>{
+ const state:NativeLoginState={connectionId:id,domain:"linkedin.com",targetId:"existing",status:"pending",expiresAt:Date.now()+60000,revision:1};
+ let created=false;
+ const deps={read:()=>state,save:()=>{},cdp:{close(){},async send(method:string){
+  if(method==="Target.attachToTarget")throw Error("Connection failed");
+  if(method==="Target.getTargets")return {targetInfos:[{targetId:"existing"}]};
+  if(method==="Target.createTarget")created=true;
+  return {};
+ }}};
+ await expect(nativeLogin({connectionId:id,domain:"linkedin.com",action:"form"},deps)).rejects.toThrow("Connection failed");
+ expect(created).toBe(false);
+});
 test("expired private locks are cleaned before a new login; live locks still isolate credentials", async () => {
  const old: NativeLoginState={connectionId:"22222222-2222-2222-2222-222222222222",domain:"linkedin.com",status:"pending",expiresAt:100,revision:1};
  const input={connectionId:id,domain:"linkedin.com",action:"form" as const};
