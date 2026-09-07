@@ -82,6 +82,7 @@ import {
   type TelegramInbound,
 } from "./telegram.ts";
 import { readReactionFor } from "./telegram-reactions.ts";
+import { FOREGROUND_STALL_MS, turnWatchdog } from "./turn-watchdog.ts";
 import {
   createTelegramTools,
   createTelegramTyping,
@@ -710,6 +711,9 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         parent === `user-${owner}` &&
         /^ag\.[0-9]+:/.test(child) &&
         child.length < 2048,
+      watchdog: (thread, log) => thread === `user-${owner}`
+        ? turnWatchdog(log, FOREGROUND_STALL_MS)
+        : undefined,
       nextWake: async () => {
         const times = [
           await this.sandboxDeadline(host, capabilities),

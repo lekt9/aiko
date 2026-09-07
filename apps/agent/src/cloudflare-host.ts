@@ -80,6 +80,11 @@ export interface CloudflareAccountHostOptions<R> {
   >;
   keyOf?(event: Event): string | undefined;
   recoveryDelayMs?: number;
+  /** Application-owned fallback deadline; the event must use native cancellation semantics. */
+  watchdog?(thread: string, events: readonly Event[]): {
+    deadlineAt: number;
+    event(at: number): Event;
+  } | undefined;
   /** Host-owned durable capability deadline, composed with native method deadlines. */
   nextWake?(): Promise<number | undefined>;
   /** Synchronous application precondition checked inside the append transaction, after all awaits. */
@@ -210,8 +215,8 @@ export async function createCloudflareAccountHost<R>(
     threadKeys.keyOf(event) ??
     options.keyOf?.(event) ??
     options.actorFor(thread)?.keyOf?.(event);
-  const arm = async () => {
-    const at = Date.now() + delay;
+  const arm = async (deadline?: number) => {
+    const at = Math.max(Date.now() + 1, Math.min(Date.now() + delay, deadline ?? Infinity));
     const current = await storage.getAlarm();
     if (current === null || current > at) await storage.setAlarm(at);
   };
@@ -433,6 +438,17 @@ export async function createCloudflareAccountHost<R>(
             new Error("No provider route is mounted on this account host"),
           ),
   });
+  const watchdogFor = (thread: string) => options.watchdog?.(thread, readSync(thread));
+  const expireWatchdog = async (thread: string) => {
+    const deadline = watchdogFor(thread)?.deadlineAt;
+    if (deadline === undefined || deadline > Date.now()) return;
+    await append(thread, () => {
+      // append() arms storage first. Recheck after that await so concurrent
+      // progress, completion or owner cancellation wins over this timeout.
+      const current = watchdogFor(thread), at = Date.now();
+      return current && current.deadlineAt <= at ? [current.event(at)] : [];
+    });
+  };
   const sliceStop = Object.freeze({ slice: true as const });
   let sliceBudget = Infinity;
   let sliceThread: string | undefined;
@@ -483,8 +499,21 @@ export async function createCloudflareAccountHost<R>(
       const layer = options
         .layersFor(thread)
         .pipe(Layer.provideMerge(ports)) as Layer.Layer<R | EventLog>;
+      const monitor = Effect.gen(function* () {
+        for (;;) {
+          const current = watchdogFor(thread);
+          // A cancellation can finish and enable the next queued head inside
+          // this same settlement. Keep monitoring until the settlement exits.
+          yield* Effect.sleep(current ? Math.max(1, current.deadlineAt - Date.now()) : 1_000);
+          yield* Effect.promise(() => expireWatchdog(thread));
+        }
+      });
       await Effect.runPromise(
-        runtime.reconciler.settle.pipe(Effect.provide(layer)),
+        // A live hung effect can hold an alarm handler open. Monitor inside
+        // this settlement too; append() interrupts it through Tardie's registry.
+        // raceFirst cancels the monitor on settlement (or propagates its failure).
+        (options.watchdog ? Effect.raceFirst(runtime.reconciler.settle, monitor) : runtime.reconciler.settle)
+          .pipe(Effect.provide(layer)),
       );
       runtime.settled = true;
     },
@@ -509,7 +538,7 @@ export async function createCloudflareAccountHost<R>(
     const observed = revision;
     const idle = await resting();
     const deadlines = threadsSync()
-      .map(deadlineFor)
+      .flatMap(thread => [deadlineFor(thread), watchdogFor(thread)?.deadlineAt])
       .filter((n): n is number => n !== undefined);
     const external = await options.nextWake?.();
     if (external !== undefined) {
@@ -518,7 +547,7 @@ export async function createCloudflareAccountHost<R>(
       deadlines.push(external);
     }
     const next = deadlines.length ? Math.min(...deadlines) : undefined;
-    if (revision !== observed || !idle) return arm();
+    if (revision !== observed || !idle) return arm(next);
     if (next !== undefined)
       await storage.setAlarm(Math.max(Date.now() + 1, next));
     else await storage.deleteAlarm();
@@ -681,6 +710,7 @@ export async function createCloudflareAccountHost<R>(
     alarm: async () => {
       await arm();
       for (const thread of threadsSync()) {
+        await expireWatchdog(thread);
         const deadline = deadlineFor(thread);
         if (deadline !== undefined && deadline <= Date.now())
           await append(thread, [
