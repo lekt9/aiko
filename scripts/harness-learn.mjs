@@ -439,28 +439,103 @@ async function mineTardigrade(root) {
 }
 
 /**
+ * Parse a KEY=VALUE env file (0600 owner-only, e.g.
+ * ~/.config/unbrowse/aiko-operator.env). Values are never logged.
+ */
+function readEnvFile(file) {
+  const out = {};
+  try {
+    for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+      const m = /^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
+      if (m) out[m[1]] = m[2].replace(/^"|"$/g, "");
+    }
+  } catch {}
+  return out;
+}
+
+// Production Aiko deployment (also hardcoded in apps/agent src as the
+// connectors URL). Overridable; discovery order below.
+const PRODUCTION_URL = "https://aiko-agent.lewis-6d8.workers.dev";
+const OPERATOR_ENV_FILES = [
+  path.join(os.homedir(), ".config/unbrowse/aiko-operator.env"),
+  path.join(os.homedir(), ".config/unbrowse/aiko-cloudflare.env"),
+];
+
+function discoverRemote() {
+  const url =
+    flag("remote-url", "") ||
+    process.env.AIKO_EXPORT_URL ||
+    process.env.AIKO_CLOUDFLARE_URL ||
+    PRODUCTION_URL;
+  let token = flag("remote-token", "") || process.env.AIKO_OPERATOR_TOKEN || "";
+  for (const file of OPERATOR_ENV_FILES) {
+    if (token) break;
+    token = readEnvFile(file).AIKO_OPERATOR_TOKEN ?? "";
+  }
+  return { url, token };
+}
+
+/**
  * Mine a remote Aiko deployment via the operator export endpoint
- * (GET /api/control/export, AIKO_OPERATOR_TOKEN-gated): threads + full event
- * journals. The raw export is cached under OUT for evidence; thread names are
- * hashed — account/chat identifiers never enter lessons or PR bodies.
+ * (GET /api/control/export, AIKO_OPERATOR_TOKEN-gated): every account's
+ * threads + full event journals. The raw export is cached under OUT for
+ * evidence (memory archives stripped); account/thread names are hashed —
+ * identifiers never enter lessons or PR bodies.
  */
 async function mineTardigradeRemote({ url, token, exportFile }) {
+  const base = url.replace(/\/$/, "");
+  const auth = { authorization: `Bearer ${token}` };
+  const skippedAccounts = [];
+  let accountsFound = 0;
   let payload;
   if (exportFile) {
     payload = JSON.parse(fs.readFileSync(exportFile, "utf8"));
   } else {
-    const res = await fetch(`${url.replace(/\/$/, "")}/api/control/export`, {
-      headers: { authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(120_000),
-    });
-    if (!res.ok) throw new Error(`export failed: HTTP ${res.status}`);
-    payload = await res.json();
-    fs.mkdirSync(path.join(OUT, "tardigrade-remote"), { recursive: true });
-    fs.writeFileSync(
-      path.join(OUT, `tardigrade-remote/export-${stamp}.json`),
-      JSON.stringify(payload),
-    );
+    // enumerate accounts, then export each; fall back to the operator's own
+    // account if the registry listing is unavailable
+    let owners = null;
+    try {
+      const res = await fetch(`${base}/api/control/accounts`, {
+        headers: auth,
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (res.ok) {
+        const list = await res.json();
+        owners = (list.accounts ?? [])
+          .map((a) => (typeof a === "string" ? a : a?.owner))
+          .filter(Boolean);
+        accountsFound = owners.length;
+      }
+    } catch {}
+    if (!owners?.length) owners = [null];
+    payload = { threads: [] };
+    for (const owner of owners) {
+      const qs = owner ? `?account=${encodeURIComponent(owner)}` : "";
+      let res;
+      try {
+        res = await fetch(`${base}/api/control/export${qs}`, {
+          headers: auth,
+          signal: AbortSignal.timeout(120_000),
+        });
+      } catch (err) {
+        skippedAccounts.push({ account: sha16(owner ?? "default"), error: String(err.message) });
+        continue;
+      }
+      if (!res.ok) {
+        skippedAccounts.push({ account: sha16(owner ?? "default"), status: res.status });
+        continue;
+      }
+      const data = await res.json();
+      payload.threads.push(...(data.threads ?? []));
+    }
   }
+  // never cache entity-learn memory archives — events only
+  const cache = { threads: payload.threads };
+  fs.mkdirSync(path.join(OUT, "tardigrade-remote"), { recursive: true });
+  fs.writeFileSync(
+    path.join(OUT, `tardigrade-remote/export-${stamp}.json`),
+    JSON.stringify(cache),
+  );
   const threads = payload.threads ?? [];
   let mined = 0;
   for (const { thread, events } of threads) {
@@ -472,7 +547,14 @@ async function mineTardigradeRemote({ url, token, exportFile }) {
       pushEventSignals(e, run);
     }
   }
-  return { threads: threads.length, events: mined, source: exportFile ? "export-file" : "live" };
+  return {
+    threads: threads.length,
+    events: mined,
+    accounts_found: accountsFound,
+    accounts_skipped: skippedAccounts,
+    url: new URL(url).host,
+    source: exportFile ? "export-file" : "live",
+  };
 }
 
 // ---------- distillation ----------
@@ -563,28 +645,33 @@ let tardigrade = { root: tardigradeRoot, events: 0, skipped: [] };
 if (tardigradeRoot !== "none")
   tardigrade = { ...tardigrade, ...(await mineTardigrade(tardigradeRoot)) };
 
-// Remote Tardigrade (production Aiko on Cloudflare): enabled when
-// AIKO_EXPORT_URL + AIKO_OPERATOR_TOKEN are set, or --remote-export points at
-// a saved /api/control/export payload. Thread names are hashed; raw export is
-// cached under OUT (gitignored) for evidence.
+// Remote Tardigrade (production Aiko on Cloudflare): ON by default. Token
+// discovery: --remote-token > AIKO_OPERATOR_TOKEN env >
+// ~/.config/unbrowse/aiko-operator.env (0600). URL: --remote-url >
+// AIKO_EXPORT_URL > AIKO_CLOUDFLARE_URL > production workers.dev. Disable
+// with --no-remote; mine a saved export with --remote-export <file>.
 const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
 let remote = null;
-const remoteUrl = flag("remote-url", process.env.AIKA_EXPORT_URL ?? "");
-const remoteToken = flag("remote-token", process.env.AIKA_OPERATOR_TOKEN ?? "");
-const remoteExport = flag("remote-export", "");
-if (remoteExport || (remoteUrl && remoteToken)) {
-  try {
-    remote = await mineTardigradeRemote({
-      url: remoteUrl,
-      token: remoteToken,
-      exportFile: remoteExport || undefined,
-    });
-  } catch (err) {
-    remote = { error: String(err.message) };
+if (!hasFlag("no-remote")) {
+  const { url, token } = discoverRemote();
+  const remoteExport = flag("remote-export", "");
+  if (remoteExport || token) {
+    try {
+      remote = await mineTardigradeRemote({
+        url,
+        token,
+        exportFile: remoteExport || undefined,
+      });
+    } catch (err) {
+      remote = { url: new URL(url).host, error: String(err.message) };
+      process.stderr.write(
+        `harness-learn: remote tardigrade mining failed (${new URL(url).host}): ${err.message}\n`,
+      );
+    }
+  } else
     process.stderr.write(
-      `harness-learn: remote tardigrade mining failed: ${err.message}\n`,
+      "harness-learn: no operator token found (AIKO_OPERATOR_TOKEN or ~/.config/unbrowse/aiko-operator.env) — skipping remote mining\n",
     );
-  }
 }
 
 const state = loadState(path.join(OUT, "state.json"));
