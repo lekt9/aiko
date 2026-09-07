@@ -47,7 +47,6 @@ const credentials = [
   },
 ];
 const secrets = {
-  AIKO_ARCADE_OAUTH_ENABLED: String(config.arcadeOAuthEnabled === true),
   AIKO_CODE_MODE: String(config.codeMode === true),
   ...(config.arcadeKey ? { ARCADE_API_KEY: config.arcadeKey } : {}),
   ...(config.cerebrasKey ? { CEREBRAS_API_KEY: config.cerebrasKey } : {}),

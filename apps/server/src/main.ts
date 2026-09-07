@@ -5,7 +5,14 @@ import { Runtime } from "./runtime.js";
 import { Maintainer } from "./worker.js";
 import { OwnerAuth } from "./owner-auth.js";
 import { OAuth } from "./oauth.js";
-import { OnePasswordSource, createHttpRecipe } from "./recipes.js";
+import { createHttpRecipe } from "./recipes.js";
+import {
+  DopplerSource,
+  HashiCorpVaultSource,
+  KeeperSource,
+  OnePasswordSource,
+  SourceRegistry,
+} from "./sources.js";
 import { createHttpServer } from "./api.js";
 async function main() {
   if (!process.env.UNLOCK_CONFIG) throw new Error("UNLOCK_CONFIG is required");
@@ -30,12 +37,19 @@ async function main() {
   const recipes = new Map(
       recipeConfigs(config).map((c) => [c.id, createHttpRecipe(c)]),
     ),
-    runtime = new Runtime(
-      vault,
-      recipes,
-      new OnePasswordSource(),
-      config.runtimeId,
-    ),
+    sources = new SourceRegistry({
+      onepassword: new OnePasswordSource(),
+      keeper: new KeeperSource(),
+      doppler: new DopplerSource(),
+      ...(config.sources.hashicorpVault
+        ? {
+            "hashicorp-vault": new HashiCorpVaultSource(
+              config.sources.hashicorpVault,
+            ),
+          }
+        : {}),
+    }),
+    runtime = new Runtime(vault, recipes, sources, config.runtimeId),
     worker = new Maintainer(runtime);
   const server = createHttpServer(vault, owner, oauth, runtime, worker);
   await new Promise<void>((resolve, reject) => {

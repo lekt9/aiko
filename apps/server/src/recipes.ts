@@ -2,7 +2,6 @@ import { lookup } from "node:dns";
 import { Agent, request, type Dispatcher } from "undici";
 import ipaddr from "ipaddr.js";
 import { Cookie, CookieJar, getPublicSuffix } from "tough-cookie";
-import { createClient } from "@1password/sdk";
 import { cookieJar, type VaultCookie } from "@unlock/protocol";
 import { VaultError } from "./errors.js";
 export interface Verified {
@@ -31,23 +30,6 @@ export interface AuthRecipe {
   runtimeId?: string;
   verify(ctx: RecipeContext): Promise<Verified>;
   renew(ctx: RecipeContext): Promise<Verified>;
-}
-export interface PasswordSource {
-  resolve(token: string, reference: string): Promise<string>;
-}
-export class OnePasswordSource implements PasswordSource {
-  async resolve(token: string, reference: string) {
-    try {
-      const client = await createClient({
-        auth: token,
-        integrationName: "Unlock",
-        integrationVersion: "0.2.0",
-      });
-      return await client.secrets.resolve(reference);
-    } catch {
-      throw new VaultError("SOURCE_UNAVAILABLE", 503);
-    }
-  }
 }
 export function validateCookies(
   cookies: unknown,

@@ -138,23 +138,90 @@ export const clientMetadata = z
   })
   .strict();
 export type VaultOAuthClient = z.infer<typeof clientMetadata>;
-export const sourceInput = z
-  .object({
-    name: label,
-    kind: z.literal("onepassword"),
-    token: z.string().min(1).max(16384),
-    references: z
-      .array(
-        z
-          .string()
-          .max(500)
-          .refine((s) => !/\p{C}/u.test(s))
-          .regex(/^op:\/\/[^/?#]+\/[^/?#]+\/[^/?#]+$/),
-      )
-      .min(1)
-      .max(1000),
-  })
-  .strict();
+/**
+ * Natively supported password managers and secret stores. Each kind fixes the
+ * reference syntax its provider resolves; the token is always the provider's
+ * service credential (sealed server-side, never returned by the API).
+ */
+export const passwordManagerKinds = [
+  "onepassword",
+  "keeper",
+  "hashicorp-vault",
+  "doppler",
+] as const;
+export type PasswordManagerKind = (typeof passwordManagerKinds)[number];
+const sourceReference = (pattern: RegExp) =>
+  z
+    .string()
+    .max(500)
+    .refine((s) => !/\p{C}/u.test(s))
+    .regex(pattern);
+export const sourceInput = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("onepassword"),
+      name: label,
+      /** 1Password service account token. */
+      token: z.string().min(1).max(16384),
+      // op://vault/item/field and op://vault/item/section/field
+      references: z
+        .array(
+          sourceReference(/^op:\/\/[^/?#]+\/[^/?#]+(?:\/[^/?#]+)?\/[^/?#]+$/),
+        )
+        .min(1)
+        .max(1000),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("keeper"),
+      name: label,
+      /** Keeper Secrets Manager one-line config token. */
+      token: z.string().min(1).max(16384),
+      // keeper://RECORD_UID/field/NAME (or custom_field/NAME)
+      references: z
+        .array(
+          sourceReference(
+            /^keeper:\/\/[A-Za-z0-9_-]{22}\/(?:field|custom_field)\/[A-Za-z0-9_.-]+$/,
+          ),
+        )
+        .min(1)
+        .max(1000),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("hashicorp-vault"),
+      name: label,
+      /** Vault service token for the operator-configured cluster. */
+      token: z.string().min(1).max(16384),
+      // vault://MOUNT/PATH/TO/SECRET#FIELD (KV v2 data)
+      references: z
+        .array(
+          sourceReference(
+            /^vault:\/\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_.-]+)+#[A-Za-z0-9_.-]+$/,
+          ).refine(
+            (s) => !s.split(/[#/]/).some((seg) => seg === "." || seg === ".."),
+          ),
+        )
+        .min(1)
+        .max(1000),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("doppler"),
+      name: label,
+      /** Doppler service token, scoped to its project and config. */
+      token: z.string().min(1).max(16384),
+      // doppler://SECRET_NAME (service tokens already pin project/config)
+      references: z
+        .array(sourceReference(/^doppler:\/\/[A-Za-z0-9_.-]+$/))
+        .min(1)
+        .max(1000),
+    })
+    .strict(),
+]);
 export const sourceMetadata = z
   .object({
     id,

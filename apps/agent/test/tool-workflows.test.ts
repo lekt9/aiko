@@ -167,7 +167,7 @@ test("pre-cancelled runs have no claim; deadline bounds an uncooperative resolve
 });
 
 test("actual host workflowDispatcher executes connected Arcade engine using connection ID and exact schema",async()=>{
- const {ConnectorEngine}=await import("../src/connectors.ts");
+ const {ConnectorEngine,connectorStorePrefix}=await import("../src/connectors.ts");
  const {workflowDispatcher}=await import("../src/workflow-host.ts");
  const rows=new Map<string,unknown>();let outbound=0;
  const connector=new ConnectorEngine({owner:"123",env:{ARCADE_API_KEY:"fixture-only-workflow-key"},store:{
@@ -175,11 +175,10 @@ test("actual host workflowDispatcher executes connected Arcade engine using conn
  },fetch:async(url,init)=>{
   const path=new URL(String(url)).pathname;
   if(path.endsWith("/tools"))return Response.json({items:[{qualified_name:"Example.Read",toolkit:{name:"Example"},metadata:{behavior:{read_only:true,destructive:false}},formatted_schema:{type:"object",properties:{count:{type:"integer",minimum:1,maximum:3}},required:["count"],additionalProperties:false}}],offset:0,total_count:1});
-  if(path.endsWith("/authorize"))return Response.json({status:"completed",user_id:"123"});
   if(path.endsWith("/execute")){outbound++;const body=JSON.parse(String(init?.body));expect(body.user_id).toBe("123");expect(body.tool_name).toBe("Example.Read");return Response.json({success:true,output:{value:{items:Array.from({length:body.input.count},(_,i)=>i)}}});}
   throw new Error("Unexpected fixture endpoint");
  }});
- await connector.connect("arcade:Example.Read");
+ const fixtureId=crypto.randomUUID();rows.set(`${connectorStorePrefix("123")}connection:${fixtureId}`,{id:fixtureId,owner:"123",connectorId:"arcade:Example.Read",provider:"arcade",status:"connected",createdAt:Date.now(),expiresAt:Date.now()+600000,toolName:"Example.Read"});
  const store=new Store();const outputs:unknown[]=[];
  const engine=new ToolWorkflows({owner:"123",store,dispatcher:workflowDispatcher({owner:"123",engine:connector,readEvents:async()=>[],redact:s=>s}),consume:async v=>{outputs.push(v.output);}});
  const d:WorkflowDefinition={version:1,id:"arcade_workflow",parameters:["count"],steps:[{id:"read",toolId:"arcade:Example.Read",dependsOn:[],arguments:{count:{kind:"input",name:"count"}}}]};

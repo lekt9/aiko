@@ -622,14 +622,15 @@ export class Vault {
     const input = sourceInput.parse(body);
     return this.db.transaction(async (sql) => {
       await this.lock(sql, tenant);
-      requireValue(
+      const existing = requireValue(
         (
-          await sql.query("SELECT id FROM sources WHERE tenant=$1 AND id=$2", [
-            tenant,
-            sourceId,
-          ])
+          await sql.query<{ kind: string }>(
+            "SELECT kind FROM sources WHERE tenant=$1 AND id=$2",
+            [tenant, sourceId],
+          )
         ).rows[0],
       );
+      if (existing.kind !== input.kind) throw new VaultError("INVALID_INPUT");
       const secret = await this.cipher.seal(
         context(tenant, "source", sourceId),
         { token: input.token },

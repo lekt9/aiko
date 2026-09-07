@@ -1,10 +1,10 @@
-import { oauthLaunch, type OAuthBrowserConfig } from "./connector-oauth.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { boundedText, redactor, safeUserId, type HttpFetch } from "./security.ts";
 import { publicTarget } from "./browser-proxy.ts";
 import { readPublicPage } from "./public-web.ts";
 import { CatalogCache, type ConnectorDescription, type ConnectorAuthProvider } from "./connectors-catalog.ts";
 import { browserOperation, validateBrowserStatus, type SecureBrowserAdapter, type SecureBrowserBinding, type SecureBrowserVerification } from "./connectors-browser.ts";
+import type { ManagerHost, ManagerView } from "./password-managers.ts";
 export type { SecureBrowserAdapter, SecureBrowserBinding, SecureBrowserStatus, SecureBrowserVerification } from "./connectors-browser.ts";
 export type { ConnectorDescription, ConnectorAuthProvider } from "./connectors-catalog.ts";
 
@@ -19,9 +19,9 @@ export type ConnectorExecution = {
   value?: unknown;
   message?: string;
 };
-export type Connection = { id: string; connectorId: string; provider: "arcade" | "browser"; status: "pending" | "connected" | "disconnected" | "failed"; authorizationUrl?: string; createdAt: number; appName?: string; toolIds?: string[]; relayDisconnectStatus?: "pending" | "confirmed" | "unavailable" | "unknown" };
+export type Connection = { id: string; connectorId: string; provider: "arcade" | "browser"; status: "pending" | "connected" | "disconnected" | "failed"; authorizationUrl?: string; createdAt: number; appName?: string; toolIds?: string[]; importedUsername?: string; relayDisconnectStatus?: "pending" | "confirmed" | "unavailable" | "unknown" };
 export type ConnectionEvent = {type:"AikoConnectionChanged"|"AikoLoginSubmitted"|"AikoLoginAttemptFailed";id:string;owner:string;connectionId:string;provider:"browser"|"arcade";status:Connection["status"];domain?:string;at:number};
-type StoredConnection = Connection & { owner: string; authId?: string; expiresAt: number; toolName?: string; authorizationDomains?: string[]; authProviderId?: string; oauthLaunchUrl?: string; browserVerification?: SecureBrowserVerification; eventSequence?:number; pendingEvents?:ConnectionEvent[]; lastAuthCheckAt?: number };
+type StoredConnection = Connection & { owner: string; authId?: string; expiresAt: number; toolName?: string; authorizationDomains?: string[]; browserVerification?: SecureBrowserVerification; eventSequence?:number; pendingEvents?:ConnectionEvent[] };
 export type GeneratedCapability = { id: string; domain: string; method: string; path: string; source: { kind: "owned-log" | "public"; reference: string }; status: "review_required"; version: 1; createdAt: number };
 export type ConnectorSearch = { status: "available" | "absent" | "unavailable"; connectors: Connector[]; fallbackAllowed: boolean; message: string; totalMatches?: number; catalogSize?: number; authProviders?: ConnectorAuthProvider[]; authProvidersStatus?: "available" | "unavailable" };
 export type ConnectorOptions = {
@@ -29,11 +29,18 @@ export type ConnectorOptions = {
   readOwnedLogs?: (owner: string, domain: string) => Promise<Array<{ owner: string; id: string; text: string }>>;
   readPublicEvidence?: (url: string) => Promise<{ url: string; text: string; truncated: boolean }>;
   secureBrowser?: SecureBrowserAdapter;
+  /** Host-provided password manager bindings; absent on hosts without the sealing key. */
+  managers?: ManagerHost;
   onEvent?: (event: ConnectionEvent) => Promise<void>;
   /** Hosts explicitly opt in only after production OAuth configuration is verified. */
-  arcadeOAuthEnabled?: boolean;
 };
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
+export const MAX_IMPORT_ROWS_PER_REQUEST = 500;
+export const MAX_STAGED_IMPORTS_PER_OWNER = 1000;
+export type ImportLoginRow = { name?: string; website: string; username?: string };
+export type ImportLoginResult = { imported: number; updated: number; skipped: { row: number; reason: string }[] };
+/** Durable per-owner key prefix for connection records; exported for store tooling and tests. */
+export const connectorStorePrefix = (owner: string) => `connectors:${hash(owner)}:`;
 const object = (v: unknown): Record<string, any> => {
   if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("Invalid connector response");
   return v as Record<string, any>;
@@ -50,10 +57,10 @@ const clean = (v: unknown, secrets: string[] = []): unknown => {
   if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).filter(([k]) => !/password|secret|token|cookie|authorization|api.?key|headers|logs|context/i.test(k)).map(([k, value]) => [k, clean(value, secrets)]));
   return v;
 };
-function authUrl(value: unknown, arcade: boolean, allowedDomains: string[] = []): string {
+function authUrl(value: unknown): string {
   if (typeof value !== "string" || value.length > 4096) throw new Error("Authorization unavailable");
   const url = publicTarget(value);
-  if (url.protocol !== "https:" || (arcade && url.hostname !== "arcade.dev" && !url.hostname.endsWith(".arcade.dev") && !allowedDomains.includes(url.hostname))) throw new Error("Authorization unavailable");
+  if (url.protocol !== "https:") throw new Error("Authorization unavailable");
   return url.href;
 }
 
@@ -65,7 +72,7 @@ export class ConnectorEngine {
   private prefix: string;
   constructor(private options: ConnectorOptions) {
     if (!safeUserId(options.owner)) throw new Error("Invalid connector owner");
-    this.prefix = `connectors:${hash(options.owner)}:`;
+    this.prefix = connectorStorePrefix(options.owner);
   }
   private clean(value: unknown) { return clean(value, [this.options.env?.ARCADE_API_KEY ?? process.env.ARCADE_API_KEY ?? ""]); }
   private async api(path: string, body?: unknown, maxBytes = 2_000_000, catalogKey?: string, timeoutMs = 15_000): Promise<Record<string, any>> {
@@ -122,86 +129,12 @@ export class ConnectorEngine {
     const { cache, api, text } = this.catalogAccess();
     return structuredClone(await cache.authProviders(api, text));
   }
-  /** App identities are toolkit/provider pairs, never matches in another tool's description. */
-  private appCatalog?: { value: Array<{ id: string; name: string; providerId: string; authProviderId: string; scopes: string[]; toolIds: string[]; domains: string[]; authorizationDomains: string[] }>; until: number };
-  private appCatalogLoading?: Promise<void>;
-  /** The computed app catalog persists per account, so a cold isolate serves the
-   * Mini App instantly instead of re-walking an 8,000-tool Arcade catalog. */
-  private async appsAll(): Promise<ReturnType<ConnectorEngine["computeApps"]>> {
-    if (this.appCatalog && this.appCatalog.until > Date.now()) return this.appCatalog.value;
-    const key = `${this.prefix}catalog:apps`;
-    const stored = await this.options.store.get(key).catch(() => undefined);
-    const parsed = typeof stored === "string" ? JSON.parse(stored) as { value: ReturnType<ConnectorEngine["computeApps"]>; at: number } : undefined;
-    if (parsed && Array.isArray(parsed.value)) {
-      // Fresh for 6 hours since persistence; afterwards served stale once while
-      // a background refresh recomputes the catalog.
-      const fresh = typeof parsed.at === "number" && parsed.at > Date.now() - 21_600_000;
-      this.appCatalog = { value: parsed.value, until: fresh ? Date.now() + 1_800_000 : Date.now() };
-      if (fresh) return this.appCatalog.value;
-      if (!this.appCatalogLoading) {
-        this.appCatalogLoading = this.computeApps().then(value => {
-          this.appCatalog = { value, until: Date.now() + 1_800_000 };
-          return this.options.store.set(key, JSON.stringify({ value, at: Date.now() }));
-        }).catch(() => undefined).finally(() => { this.appCatalogLoading = undefined; });
-      }
-      return this.appCatalog.value;
-    }
-    const value = await this.computeApps();
-    this.appCatalog = { value, until: Date.now() + 1_800_000 };
-    await this.options.store.set(key, JSON.stringify({ value, at: Date.now() })).catch(() => undefined);
-    return value;
+  /** Arcade OAuth login flows were removed: connections are password sign-ins on
+   * the owner's private browser session. The response shape stays for the
+   * connector capability layer, which then proposes the native sign-in screen. */
+  async apps(_query = "") {
+    return { apps: [], oauthEnabled: false, nativeAvailable: !!this.options.secureBrowser, nativeInline: this.options.secureBrowser?.native === true };
   }
-  private async computeApps() {
-    const [tools, providers] = await Promise.all([this.listCatalog(), this.listAuthProviders()]);
-    const groups = new Map<string, { id: string; name: string; providerId: string; authProviderId: string; scopes: string[]; toolIds: string[]; domains: string[]; authorizationDomains: string[] }>();
-    for (const tool of tools) {
-      const auth = tool.requirements.authorization as any;
-      const activeProviders = providers.filter(p => p.type === "oauth2" && p.status === "active");
-      const provider = activeProviders.find(p => p.id === auth?.id) ?? activeProviders.find(p => p.providerId === auth?.provider_id);
-      if (!provider || auth?.provider_type !== "oauth2" || provider.providerId === "linkedin") continue;
-      if ((tool.requirements.secrets as any[] | undefined)?.some(secret => secret.met !== true)) continue;
-      const id = `app:${provider.providerId}:${tool.toolkit.name.toLowerCase()}`;
-      const app = groups.get(id) ?? { id, name: tool.toolkit.name, providerId: provider.providerId, authProviderId: provider.id, scopes: [], toolIds: [], domains: [], authorizationDomains: provider.authorizationDomains };
-      app.toolIds.push(tool.id);
-      app.scopes = [...new Set([...app.scopes, ...(auth.oauth2?.scopes ?? [])])].sort();
-      app.domains = [...new Set([...app.domains, ...tool.domains])];
-      groups.set(id, app);
-    }
-    return [...groups.values()].filter(app => app.toolIds.length >= 3).sort((a, b) => a.name.localeCompare(b.name));
-  }
-  async apps(query = "") {
-    if (this.options.arcadeOAuthEnabled === false) return {apps: [], oauthEnabled: false, nativeAvailable: !!this.options.secureBrowser, nativeInline: this.options.secureBrowser?.native === true};
-    const all = await this.appsAll();
-    const q = query.trim().toLowerCase();
-    return { oauthEnabled: true, apps: all.filter(app => !q || app.name.toLowerCase().includes(q) || app.domains.some(d => d === q)), nativeAvailable: !!this.options.secureBrowser, nativeInline: this.options.secureBrowser?.native === true };
-  }
-  connectApp(appId: string, browser?: OAuthBrowserConfig) { return this.serial(async () => {
-    if (this.options.arcadeOAuthEnabled === false) throw Error("App OAuth is temporarily disabled");
-    const app = (await this.apps()).apps.find(app => app.id === appId);
-    if (!app) throw new Error("App OAuth unavailable");
-    const existing = (await this.connections()).find(c => c.connectorId === appId && ["pending", "connected"].includes(c.status));
-    if (existing && (existing.status === "connected" || (existing.authorizationUrl && (!browser || existing.authorizationUrl.startsWith(`${browser.origin}/connect/oauth/launch?`))))) return existing;
-    const connectionId = randomUUID();
-    const auth = await this.api("auth/authorize", { user_id: this.options.owner, auth_requirement: { id: app.authProviderId, oauth2: { scopes: app.scopes } } });
-    if (![app.providerId, app.authProviderId].includes(auth.provider_id)) throw Error("Authorization provider mismatch");
-    const authorizationDomains = auth.url ? [new URL(authUrl(auth.url, false)).hostname] : app.authorizationDomains;
-    const row: StoredConnection = { id: connectionId, ...(browser ? {oauthLaunchUrl:oauthLaunch(browser,this.options.owner,connectionId)} : {}), owner: this.options.owner, connectorId: app.id, appName: app.name, toolIds: app.toolIds, authorizationDomains, authProviderId: auth.provider_id, provider: "arcade", status: "pending", createdAt: Date.now(), expiresAt: Date.now() + 600000 };
-    this.applyAuth(row, auth); await this.save(row); return this.view(row);
-  }); }
-  oauthBrowser(id:string,action:"launch"|"verify"|"status",flowId?:string) { return this.serial(async()=>{
-    if (this.options.arcadeOAuthEnabled === false) throw Error("App OAuth is temporarily disabled");
-    const row=await this.load(id);
-    if(row.provider!=="arcade"||!row.oauthLaunchUrl||row.expiresAt<=Date.now()||!["pending","connected"].includes(row.status))throw Error("OAuth handoff unavailable");
-    if(action==="launch")return {status:row.status,authorizationUrl:row.authorizationUrl};
-    if(action==="verify"){
-      if(!flowId||!/^[A-Za-z0-9_-]{1,256}$/.test(flowId)||!row.authId)throw Error("Invalid OAuth verification");
-      const response=await (this.options.fetch??fetch)("https://cloud.arcade.dev/api/v1/oauth/confirm_user",{method:"POST",redirect:"manual",signal:AbortSignal.timeout(15000),headers:{Authorization:`Bearer ${this.options.env?.ARCADE_API_KEY??process.env.ARCADE_API_KEY}`,"Content-Type":"application/json"},body:JSON.stringify({flow_id:flowId,user_id:row.owner})});
-      if(!response.ok)throw Error("OAuth user verification failed");
-      const verified=object(JSON.parse(await boundedText(response,16000)));
-      if(verified.auth_id!==row.authId)throw Error("OAuth verification flow mismatch");
-    }
-    return this.completeAuthUnlocked(id);
-  }); }
   async search(query: string): Promise<ConnectorSearch> {
     if (typeof query !== "string" || query.length > 200) throw new Error("Invalid connector query");
     try {
@@ -249,6 +182,79 @@ export class ConnectorEngine {
     return result;
   }); }
   connectBrowser(domain: string) { return this.serial(() => this.connectBrowserUnlocked(domain)); }
+  addManager(input: unknown) { return this.serial(async () => {
+    if (!this.options.managers) throw new Error("Password managers are not available on this host");
+    return this.options.managers.add(input);
+  }); }
+  managers() { return this.serial(async (): Promise<ManagerView[]> => {
+    if (!this.options.managers) throw new Error("Password managers are not available on this host");
+    return this.options.managers.list();
+  }); }
+  removeManager(id: string) { return this.serial(async () => {
+    if (!this.options.managers) throw new Error("Password managers are not available on this host");
+    await this.options.managers.remove(id);
+    return { ok: true as const };
+  }); }
+  /** Resolves the saved reference server-side and submits it into the owner's
+   * private sign-in page. The password never reaches the mini app or the model. */
+  fillFromManager(input: { connectionId: string; managerId: string; reference: string; username?: string }) { return this.serial(async () => {
+    if (!this.options.managers) throw new Error("Password managers are not available on this host");
+    const row = await this.load(input.connectionId);
+    if (row.provider !== "browser" || row.status !== "pending" || !this.options.secureBrowser?.control) throw new Error("Private sign-in unavailable");
+    const reference = typeof input.reference === "string" ? input.reference : "";
+    if (!reference || reference.length > 500 || /\p{C}/u.test(reference)) throw new Error("Pick a saved login to fill");
+    const binding = this.browserBinding(row);
+    const username = (typeof input.username === "string" ? input.username.trim() : "") || row.importedUsername || "";
+    if (!username || username.length > 2048 || /\p{C}/u.test(username)) throw new Error("Add the username for this sign-in once");
+    let password: string;
+    try { password = await this.options.managers.resolvePassword(input.managerId, reference); }
+    catch (error) { throw error instanceof Error && error.message ? error : new Error("Could not use the saved password manager"); }
+    if (!password || password.length > 2048) throw new Error("The saved login did not resolve to a usable password");
+    await this.recordEvent(row, "AikoLoginSubmitted");
+    let result;
+    try { result = await this.options.secureBrowser.control(binding, { action: "credentials", username, password }); }
+    catch { await this.recordEvent(row, "AikoLoginAttemptFailed"); throw new Error("The saved login could not be submitted. Finish by typing your credentials instead."); }
+    if (result.status === "connected") await this.completeBrowser(row);
+    return result;
+  }); }
+  /** Stages login metadata from a password manager CSV export. Password columns
+   * never reach this engine: the mini app drops them during local parsing. */
+  importLogins(rows: unknown) { return this.serial(async (): Promise<ImportLoginResult> => {
+    if (!Array.isArray(rows) || rows.length < 1 || rows.length > MAX_IMPORT_ROWS_PER_REQUEST) throw new Error("Import between 1 and 500 logins at a time");
+    const existing = await this.options.store.list(`${this.prefix}connection:`);
+    const staged = existing.map(v => object(v) as StoredConnection).filter(r => r.owner === this.options.owner && r.provider === "browser");
+    if (staged.length >= MAX_STAGED_IMPORTS_PER_OWNER) throw new Error("This account already has the maximum number of staged logins");
+    const result: ImportLoginResult = { imported: 0, updated: 0, skipped: [] };
+    const seen = new Set<string>();
+    for (const [index, raw] of rows.entries()) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) { result.skipped.push({ row: index + 1, reason: "Not a login row." }); continue; }
+      const row = raw as Record<string, unknown>;
+      const username = typeof row.username === "string" ? row.username.trim() : "";
+      for (const value of [row.name, row.website, row.username]) if (value !== undefined && (typeof value !== "string" || /\p{C}/u.test(value))) { result.skipped.push({ row: index + 1, reason: "Unsupported characters." }); break; }
+      if (result.skipped.some(s => s.row === index + 1)) continue;
+      let domain: string;
+      try { domain = connectorDomain(String(row.website ?? "")); }
+      catch { result.skipped.push({ row: index + 1, reason: "A public HTTPS website is required." }); continue; }
+      const name = typeof row.name === "string" && row.name.trim() && row.name.trim().length <= 60 ? row.name.trim() : domain;
+      if (username.length > 120) { result.skipped.push({ row: index + 1, reason: "Username is too long." }); continue; }
+      const key = `${domain}\n${username.toLowerCase()}`;
+      if (seen.has(key)) { result.skipped.push({ row: index + 1, reason: "Repeated in this import." }); continue; }
+      seen.add(key);
+      const match = staged.find(r => r.connectorId === `browser:${domain}` && ["pending", "connected"].includes(r.status));
+      if (match) {
+        if (!match.importedUsername && username) { match.importedUsername = username; if (!match.appName) match.appName = name; await this.options.store.set(`${this.prefix}connection:${match.id}`, match); result.updated++; }
+        else result.skipped.push({ row: index + 1, reason: "This app is already connected or staged." });
+        continue;
+      }
+      if (staged.length >= MAX_STAGED_IMPORTS_PER_OWNER) { result.skipped.push({ row: index + 1, reason: "Staged login limit reached." }); continue; }
+      const id = randomUUID();
+      const record: StoredConnection = { id, owner: this.options.owner, connectorId: `browser:${domain}`, provider: "browser", status: "pending", createdAt: Date.now(), expiresAt: Date.now() + 30 * 86400_000, appName: name, ...(username ? { importedUsername: username } : {}) };
+      await this.options.store.set(`${this.prefix}connection:${id}`, record);
+      staged.push(record);
+      result.imported++;
+    }
+    return result;
+  }); }
   completeAuth(id: string) { return this.serial(() => this.completeAuthUnlocked(id)); }
   disconnect(id: string) { return this.serial(() => this.disconnectUnlocked(id)); }
   execute(id: string, input: Record<string, unknown>, toolId?: string) { return this.serial(() => this.executeUnlocked(id, input, toolId)); }
@@ -297,10 +303,10 @@ export class ConnectorEngine {
   }
   private view(row: StoredConnection): Connection {
     const { id, connectorId, provider, createdAt, relayDisconnectStatus, appName, toolIds } = row;
-    const authorizationUrl = row.provider === "arcade" && this.options.arcadeOAuthEnabled === false ? undefined : row.oauthLaunchUrl ?? row.authorizationUrl;
+    const authorizationUrl = row.provider === "browser" ? row.authorizationUrl : undefined;
     let status = row.status;
     if (provider === "browser" && ((status === "pending" && row.expiresAt <= Date.now()) || (status === "connected" && (!row.browserVerification || row.browserVerification.expiresAt <= Date.now())))) status = "failed";
-    return { id, connectorId, provider, status, createdAt, ...(appName ? { appName, toolIds: [...(toolIds ?? [])] } : {}), ...(authorizationUrl && status === "pending" && row.expiresAt > Date.now() ? { authorizationUrl } : {}), ...(relayDisconnectStatus ? { relayDisconnectStatus } : {}) };
+    return { id, connectorId, provider, status, createdAt, ...(appName ? { appName, toolIds: [...(toolIds ?? [])] } : {}), ...(provider === "browser" && row.importedUsername && status !== "disconnected" ? { importedUsername: row.importedUsername } : {}), ...(authorizationUrl && status === "pending" && row.expiresAt > Date.now() ? { authorizationUrl } : {}), ...(relayDisconnectStatus ? { relayDisconnectStatus } : {}) };
   }
   private async load(id: string): Promise<StoredConnection> {
     if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error("Connection unavailable");
@@ -308,47 +314,11 @@ export class ConnectorEngine {
     if (row.owner !== this.options.owner || row.id !== id) throw new Error("Connection unavailable");
     return row;
   }
-  async connect(connectorId: string): Promise<Connection> {
-    if (this.options.arcadeOAuthEnabled === false) throw Error("App OAuth is temporarily disabled");
-    const tool = await this.describe(connectorId);
-    const auth = await this.api("tools/authorize", { tool_name: tool.toolName, user_id: this.options.owner });
-    const row: StoredConnection = { id: randomUUID(), owner: this.options.owner, connectorId, provider: "arcade", status: "pending", createdAt: Date.now(), expiresAt: Date.now() + 600000, toolName: tool.toolName };
-    this.applyAuth(row, auth);
-    await this.save(row);
-    return this.view(row);
-  }
-  private applyAuth(row: StoredConnection, auth: Record<string, any>) {
-    if (row.authProviderId && auth.provider_id !== row.authProviderId) throw Error("Authorization provider mismatch");
-    if ((auth.user_id !== undefined && auth.user_id !== row.owner) || (row.authId && auth.id !== row.authId) || !["completed", "pending", "not_started", "failed"].includes(auth.status)) throw new Error("Authorization binding invalid");
-    if (auth.status === "completed") { row.status = "connected"; delete row.authorizationUrl; }
-    else if (auth.status === "failed") { row.status = "failed"; delete row.authorizationUrl; }
-    else {
-      if (typeof auth.id !== "string" || !auth.id || auth.id.length > 256) throw new Error("Authorization binding invalid");
-      row.authId = auth.id;
-      if (auth.url !== undefined) row.authorizationUrl = authUrl(auth.url, true, row.authorizationDomains);
-      else if (!row.authorizationUrl) throw Error("Authorization URL missing");
-    }
-  }
   private async completeAuthUnlocked(id: string): Promise<Connection> {
     const row = await this.load(id);
     if (row.provider === "browser") return this.completeBrowser(row);
-    if (row.status !== "pending") return this.view(row);
-    if (this.options.arcadeOAuthEnabled === false) throw Error("App OAuth is temporarily disabled");
-    if (row.expiresAt <= Date.now()) { row.status = "failed"; delete row.authorizationUrl; await this.save(row); return this.view(row); }
-    if (row.provider !== "arcade" || !row.authId) throw new Error("Secure browser completion is not configured");
-    // Auth-status polls run through the owner-serial queue; without a cooldown an
-    // eager poller fills it with slow Arcade round-trips and starves user actions
-    // such as disconnect for minutes. A recent check answers from the stored view.
-    if (row.lastAuthCheckAt && Date.now() - row.lastAuthCheckAt < 4_000) return this.view(row);
-    row.lastAuthCheckAt = Date.now();
-    await this.save(row);
-    const auth = await this.api(`auth/status?id=${encodeURIComponent(row.authId)}`, undefined, 2_000_000, undefined, 5_000);
-    // Re-read after network wait so a concurrent disconnect cannot be undone.
-    const current = await this.load(id);
-    if (current.status !== "pending") return this.view(current);
-    this.applyAuth(current, auth);
-    await this.save(current);
-    return this.view(current);
+    // Legacy Arcade OAuth rows can no longer complete; the owner disconnects them.
+    return this.view(row);
   }
   async connections(): Promise<Connection[]> {
     return (await this.options.store.list(`${this.prefix}connection:`)).map(v => object(v) as StoredConnection).filter(r => r.owner === this.options.owner).map(r => this.view(r));
@@ -434,7 +404,19 @@ export class ConnectorEngine {
     const domain = connectorDomain(value);
     const connections=await this.connections();
     const existing=connections.find(row=>row.connectorId===`browser:${domain}` && ["pending","connected"].includes(row.status));
-    if(existing) return existing;
+    if(existing) {
+      // Staged (imported) rows have no relay authorization yet; start it on first open.
+      if (!this.options.secureBrowser?.native && existing.status === "pending" && !existing.authorizationUrl && this.options.secureBrowser?.begin) {
+        try {
+          const result = await browserOperation(signal => this.options.secureBrowser!.begin!({ owner: this.options.owner, domain, connectionId: existing.id }, signal));
+          const row = await this.load(existing.id);
+          row.authorizationUrl = authUrl(result.authorizationUrl);
+          await this.save(row);
+          return this.view(row);
+        } catch { /* Fall through to the staged tile; the owner can retry. */ }
+      }
+      return existing;
+    }
     // A locally revoked connection may still own the private browser lock after a lost reply.
     // Retry only that already-authorized revocation before opening another credential flow.
     if(this.options.secureBrowser?.native) for(const value of await this.options.store.list(`${this.prefix}connection:`)) {
@@ -456,7 +438,7 @@ export class ConnectorEngine {
     await this.save(row);
     try {
       const result = await browserOperation(signal => this.options.secureBrowser!.begin({ owner: row.owner, domain, connectionId: row.id }, signal));
-      row.authorizationUrl = authUrl(result.authorizationUrl, false);
+      row.authorizationUrl = authUrl(result.authorizationUrl);
     } catch { row.status = "failed"; await this.save(row); throw new Error("Secure browser connection could not be started"); }
     await this.save(row); return this.view(row);
   }

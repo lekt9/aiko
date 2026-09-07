@@ -5,10 +5,11 @@ import { Vault, type RuntimePrincipal } from "../../apps/server/src/vault.js";
 import { Runtime } from "../../apps/server/src/runtime.js";
 import { Maintainer } from "../../apps/server/src/worker.js";
 import { VaultError } from "../../apps/server/src/errors.js";
-import type {
-  AuthRecipe,
-  PasswordSource,
-} from "../../apps/server/src/recipes.js";
+import {
+  SourceRegistry,
+  type PasswordSource,
+} from "../../apps/server/src/sources.js";
+import type { AuthRecipe } from "../../apps/server/src/recipes.js";
 import type { VaultCookie } from "@unlock/protocol";
 export const enabled = !!process.env.UNLOCK_TEST_DATABASE_URL;
 export const secret = "SYNTHETIC-PASSWORD-CANARY-NOT-REAL";
@@ -64,7 +65,7 @@ export async function fixture(
   db: Database,
   options: {
     recipe?: AuthRecipe;
-    source?: PasswordSource;
+    sources?: Record<string, PasswordSource>;
     now?: () => number;
     runtimeId?: string;
   } = {},
@@ -101,11 +102,7 @@ export async function fixture(
   const runtime = new Runtime(
       vault,
       new Map([[recipe.id, recipe]]),
-      options.source ?? {
-        async resolve() {
-          throw new VaultError("SOURCE_UNAVAILABLE", 409);
-        },
-      },
+      new SourceRegistry(options.sources ?? {}),
       options.runtimeId,
     ),
     worker = new Maintainer(runtime);

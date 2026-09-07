@@ -48,6 +48,23 @@ export const configSchema = z
       .strict()
       .optional(),
     runtimeId: z.string().uuid().optional(),
+    sources: z
+      .object({
+        hashicorpVault: z
+          .object({
+            address: z.url(),
+            namespace: z
+              .string()
+              .min(1)
+              .max(200)
+              .refine((s) => !/\p{C}/u.test(s))
+              .optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .default({}),
     recipes: z
       .array(
         z
@@ -91,6 +108,27 @@ export const configSchema = z
     }
     if (new Set(c.recipes.map((r) => r.id)).size !== c.recipes.length)
       ctx.addIssue({ code: "custom", message: "Duplicate recipe IDs" });
+    const vaultAddress = c.sources.hashicorpVault?.address;
+    if (vaultAddress) {
+      const u = new URL(vaultAddress);
+      if (
+        u.username ||
+        u.password ||
+        u.hash ||
+        u.search ||
+        (u.protocol !== "https:" &&
+          !(
+            c.localDevelopment &&
+            u.protocol === "http:" &&
+            loopback(vaultAddress)
+          ))
+      )
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "Vault address must be an origin-only HTTPS URL outside loopback development",
+        });
+    }
   });
 export type ServerConfig = z.infer<typeof configSchema>;
 export async function readConfig(path: string) {

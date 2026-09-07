@@ -21,8 +21,32 @@ export type ConnectorConnection = {
   appName?: string;
   toolIds?: string[];
   authorizationUrl?: string;
+  /** Staged from a password manager CSV export; prefills the private sign-in. */
+  importedUsername?: string;
 };
 export type ConnectorConnect = ConnectorConnection;
+
+export type ManagerKind = "onepassword" | "keeper" | "hashicorp-vault" | "doppler";
+export type ManagerEntry = { reference: string; label: string; website?: string };
+export type PasswordManager = {
+  id: string;
+  kind: ManagerKind;
+  name: string;
+  entries: ManagerEntry[];
+  createdAt: number;
+};
+export const managerKindLabels: Record<ManagerKind, string> = {
+  onepassword: "1Password",
+  keeper: "Keeper",
+  "hashicorp-vault": "HashiCorp Vault",
+  doppler: "Doppler",
+};
+export const managerKindHints: Record<ManagerKind, string> = {
+  onepassword: "Service account token · references like op://Vault/Item/password",
+  keeper: "One-line config · references like keeper://RECORD_UID/field/password",
+  "hashicorp-vault": "Service token · references like vault://secret/data/app/token#value",
+  doppler: "Service token · references like doppler://API_KEY",
+};
 
 /** Launch data selects a screen, never an account or an authorization grant. */
 export function loginConnectionId(search: string): string | undefined {
@@ -99,6 +123,18 @@ export async function connectorRequest<T>(
       throw new Error(
         "This Telegram identity was not accepted. Reopen Aiko from the Connect apps menu and try again.",
       );
+    if (path.startsWith("/password-managers") || path.startsWith("/imports")) {
+      const detail = (await response.json().catch(() => ({}))) as {
+        error?: string;
+        message?: string;
+      };
+      if (detail.message) throw new Error(detail.message);
+      throw new Error(
+        path.startsWith("/password-managers")
+          ? "Password managers are unavailable right now. Try again."
+          : "The import could not be completed. Try again.",
+      );
+    }
     if (path.startsWith("/secretary")) {
       const detail = (await response.json().catch(() => ({}))) as {
         error?: string;

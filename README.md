@@ -35,6 +35,8 @@ This installation is configured for **live GLM 5.3 Flash inference**, with durab
 
 New SDK imports: `/vault` (owner metadata), `/owner` (owner secrets), `/agent` (private runtime), `/cdp`, `/oauth`, and `/tools` (MCP metadata helper). The old root and `/runtime` imports retain the demo protocol. A JSON CLI is available as `unlock-agent` when packaged, or `node packages/sdk/dist/cli.js help` locally.
 
+Connections can natively resolve credentials from password managers instead of stored passwords: `@unlock/sdk/sources` builds source authorizations for **1Password** (official SDK), **Keeper Secrets Manager** (official SDK), **HashiCorp Vault** KV v2 and **Doppler** (documented REST APIs). The server dispatches resolution by source kind, seals provider tokens at rest, and fails closed on unregistered kinds; see [SDK entry points and examples](packages/sdk/README.md).
+
 **Core implementation is not production certification.** Custody deployment, authenticated browser recipes, operations and independent security review remain activation gates. No private app accounts have been connected. The assistant's real inference and public-page reader are separately verified.
 
 ## Run

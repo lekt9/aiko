@@ -1,7 +1,6 @@
 import { approvalMenu } from "./telegram-mini-app.ts";
 import { agentKeys } from "tardie/log/events";
 import { cancellationKeys, methodCallKeys, methodResponseKeys, methodTimeoutKeys, methodIngressKeyOf } from "tardie/core/method";
-import { oauthBrowserRoute } from "./connector-oauth.ts";
 import { turnEpochOf, turnTerminalOf } from "tardie/code/execution/turns";
 import { validateActor } from "tardie/core/actor";
 import { withRequiredResponse } from "./channel-response.ts";
@@ -104,7 +103,6 @@ export interface AikoCloudflareEnv {
   AIKO_CONVERSATION_PROVIDER?: string;
   AIKO_CONVERSATION_MODEL?: string;
   ARCADE_API_KEY?: string;
-  AIKO_ARCADE_OAUTH_ENABLED?: string;
   AIKO_CODE_MODE?: string;
   AIKO_CONNECTOR_VAULT_JSON?: string;
   AIKO_MODEL?: string;
@@ -171,7 +169,6 @@ function configOf(env: AikoCloudflareEnv): AikoConfig {
     cerebrasKey: env.CEREBRAS_API_KEY,
     modelRouting: parseModelRouting({AIKO_MODEL: env.AIKO_MODEL, AIKO_RAG_PROVIDER: env.AIKO_RAG_PROVIDER, AIKO_RAG_MODEL: env.AIKO_RAG_MODEL, AIKO_BROWSER_PROVIDER: env.AIKO_BROWSER_PROVIDER, AIKO_BROWSER_MODEL: env.AIKO_BROWSER_MODEL, AIKO_CONVERSATION_PROVIDER: env.AIKO_CONVERSATION_PROVIDER, AIKO_CONVERSATION_MODEL: env.AIKO_CONVERSATION_MODEL}, {contextWindowTokens: env.AIKO_MODEL === "glm-5.3-flash" ? 1000000 : 32768, maxOutputTokens:4096}),
     arcadeKey: env.ARCADE_API_KEY,
-    arcadeOAuthEnabled: env.AIKO_ARCADE_OAUTH_ENABLED === "true",
     codeMode: env.AIKO_CODE_MODE === "true",
     connectorVault: parseConnectorVault(env.AIKO_CONNECTOR_VAULT_JSON),
     port: 0,
@@ -420,7 +417,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       redact,
       mediaProcessor: capabilities?.sandbox.processMedia,
     });
-    const connectors: ConnectorEngine = new ConnectorEngine({ owner, arcadeOAuthEnabled: config.arcadeOAuthEnabled === true, secureBrowser: connectorVault(config.connectorVault, owner) ?? (capabilities ? nativeBrowserConnector(owner, capabilities.sandbox.browserFactory()) : undefined), env: { ARCADE_API_KEY: config.arcadeKey }, store: {
+    const connectors: ConnectorEngine = new ConnectorEngine({ owner, secureBrowser: connectorVault(config.connectorVault, owner) ?? (capabilities ? nativeBrowserConnector(owner, capabilities.sandbox.browserFactory()) : undefined), env: { ARCADE_API_KEY: config.arcadeKey }, store: {
       get: key => this.ctx.storage.get(key),
       set: (key, value) => this.ctx.storage.put(key, value),
       list: async prefix => [...(await this.ctx.storage.list({ prefix })).values()],
@@ -597,9 +594,6 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     // native driver; an RPC return must not own a long-running inference lifetime.
     const alarm = await this.ctx.storage.getAlarm();
     await this.ctx.storage.setAlarm(Math.min(alarm ?? Infinity, Date.now() + 1));
-  }
-  async oauthConnection(owner:string,id:string,action:"launch"|"verify"|"status",flowId?:string) {
-    const {connectors}=await this.open(owner);return connectors.oauthBrowser(id,action,flowId);
   }
   private async sandboxDeadline(
     host: CloudflareAccountHost,
@@ -796,7 +790,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     const url = new URL(request.url);
     if (/^\/(?:api|v1)\/secretary(?:\/|$)/.test(url.pathname))
       return this.serialize(() => secretaryApi(request, owner, host, redact));
-    if (/^\/(?:api|v1)\/connectors(?:\/|$)/.test(url.pathname)) return connectorApi(request, connectors, route, {origin:new URL(request.url).origin,key:config.operatorToken});
+    if (/^\/(?:api|v1)\/connectors(?:\/|$)/.test(url.pathname)) return connectorApi(request, connectors, route);
     if (
       url.pathname === "/api/control/sandbox/reconcile" &&
       request.method === "POST"
@@ -1270,8 +1264,6 @@ export default {
           },
         );
       const config = configOf(env);
-      if (url.pathname.startsWith("/connect/oauth/") && !config.arcadeOAuthEnabled) return new Response("App OAuth connections are temporarily unavailable.", {status:404,headers:{"cache-control":"no-store"}});
-      if (url.pathname.startsWith("/connect/oauth/")) return oauthBrowserRoute(request,config.operatorToken,(owner,id,action,flowId)=>env.AIKO_ACCOUNTS.getByName(accountObjectName(owner)).oauthConnection(owner,id,action,flowId));
       if (
         ["/health", "/ready"].includes(url.pathname) &&
         request.method === "GET"

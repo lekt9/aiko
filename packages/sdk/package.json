@@ -20,6 +20,10 @@
       "types": "./dist/owner.d.ts",
       "default": "./dist/owner.js"
     },
+    "./sources": {
+      "types": "./dist/sources.d.ts",
+      "default": "./dist/sources.js"
+    },
     "./agent": {
       "types": "./dist/agent.d.ts",
       "default": "./dist/agent.js"

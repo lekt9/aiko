@@ -13,6 +13,7 @@ import { createToolRouterActor, routerEventKey } from "./tool-router.ts";
 import { routerCaller, validateRouterInput } from "./connector-router-host.ts";
 import { ConnectorEngine } from "./connectors.ts";
 import { FileConnectorStore } from "./connectors-store.ts";
+import { FilePasswordManagerHost } from "./password-managers.ts";
 import { WorkflowController, createWorkflowStore, workflowDispatcher } from "./workflow-host.ts";
 import { sqliteWorkflowKV } from "./workflow-store.ts";
 import { withUnlockBrowser } from "./browser-unlock-factory.ts";
@@ -109,6 +110,8 @@ export async function createService(
     embeddingFetch?: HttpFetch;
     connectorFetch?: HttpFetch;
     connectorBrowser?: (owner:string) => import("./connectors-browser.ts").SecureBrowserAdapter;
+    /** Test seam: deterministic password manager resolution without provider networks. */
+    managerResolvers?: import("./password-managers.ts").ManagerResolvers;
     browserFactory?: BrowserDriverFactory;
     telegramStatus?: () => object;
     // Explicit owner-bound media capability injection. The local server never provisions a VM implicitly.
@@ -149,7 +152,8 @@ export async function createService(
   const connectorsFor = (owner: string) => {
     let engine = connectorEngines.get(owner);
     if (!engine) {
-      engine = new ConnectorEngine({ owner, arcadeOAuthEnabled: config.arcadeOAuthEnabled === true, secureBrowser: overrides.connectorBrowser?.(owner) ?? connectorVault(config.connectorVault, owner), store: connectorStore, env: { ARCADE_API_KEY: config.arcadeKey }, fetch: overrides.connectorFetch,
+      engine = new ConnectorEngine({ owner, secureBrowser: overrides.connectorBrowser?.(owner) ?? connectorVault(config.connectorVault, owner), store: connectorStore, env: { ARCADE_API_KEY: config.arcadeKey }, fetch: overrides.connectorFetch,
+        managers: config.managerKey ? new FilePasswordManagerHost({ store: connectorStore, owner, key: config.managerKey, vault: config.hashicorpVault, resolvers: overrides.managerResolvers }) : undefined,
         onEvent:async e=>{await host.commitRoot(host.self(`user-${owner}`),event("AikoHooksActivated",{id:"background-v1"}));await host.commitRoot(host.self(`user-${owner}`),e);wake(owner);},
         readOwnedLogs: async (boundOwner) => (await host.read(`user-${boundOwner}`)).filter(e => e.type === "AikoApiObserved" && e.owner === boundOwner).map(e => ({ owner: boundOwner, id: String(e.id), text: `${e.method} ${e.url}` })),
       });

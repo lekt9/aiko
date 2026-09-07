@@ -25,9 +25,12 @@ export type AikoConfig = {
   cerebrasKey?: string;
   modelRouting?: ModelRoutingConfig;
   arcadeKey?: string;
-  arcadeOAuthEnabled?: boolean;
   codeMode?: boolean;
   connectorVault?: ConnectorVaultConfig;
+  /** Base64 32-byte AES key that seals password manager tokens at rest. Omitting it keeps the feature off. */
+  managerKey?: string;
+  /** Operator-level HashiCorp Vault cluster for the hashicorp-vault manager kind. */
+  hashicorpVault?: { address: string; namespace?: string };
   voiceKey?: string;
   persona: string;
   voiceEnabled: boolean;
@@ -72,6 +75,39 @@ export async function privateEnv(
     result[match[1]] = value;
   }
   return result;
+}
+
+function parseManagerKey(value?: string) {
+  if (!value) return undefined;
+  if (!/^[A-Za-z0-9+/=_-]{43,44}$/.test(value.trim()))
+    throw new Error("AIKO_MANAGER_KEY must be a base64 32-byte key");
+  const key = Buffer.from(value.trim(), "base64");
+  if (key.length !== 32)
+    throw new Error("AIKO_MANAGER_KEY must decode to exactly 32 bytes");
+  return value.trim();
+}
+
+function parseVaultAddress(address?: string, namespace?: string) {
+  if (!address) {
+    if (namespace)
+      throw new Error("AIKO_HASHICORP_VAULT_NAMESPACE requires an address");
+    return undefined;
+  }
+  const url = new URL(address);
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    (url.pathname && url.pathname !== "/")
+  )
+    throw new Error(
+      "AIKO_HASHICORP_VAULT_ADDRESS must be an origin-only HTTPS address",
+    );
+  if (namespace && (namespace.length > 200 || /\p{C}/u.test(namespace)))
+    throw new Error("Invalid AIKO_HASHICORP_VAULT_NAMESPACE");
+  return { address, ...(namespace ? { namespace } : {}) };
 }
 
 export async function loadConfig(
@@ -283,9 +319,10 @@ export async function loadConfig(
     cerebrasKey: get("CEREBRAS_API_KEY"),
     modelRouting: parseModelRouting(Object.fromEntries(["AIKO_MODEL", "AIKO_CONVERSATION_PROVIDER", "AIKO_CONVERSATION_MODEL", "AIKO_RAG_PROVIDER", "AIKO_RAG_MODEL", "AIKO_BROWSER_PROVIDER", "AIKO_BROWSER_MODEL"].map(k => [k, get(k)]))),
     arcadeKey: get("ARCADE_API_KEY"),
-    arcadeOAuthEnabled: get("AIKO_ARCADE_OAUTH_ENABLED") === "true",
     codeMode: get("AIKO_CODE_MODE") === "true",
     connectorVault: parseConnectorVault(get("AIKO_CONNECTOR_VAULT_JSON")),
+    managerKey: parseManagerKey(get("AIKO_MANAGER_KEY")),
+    hashicorpVault: parseVaultAddress(get("AIKO_HASHICORP_VAULT_ADDRESS"), get("AIKO_HASHICORP_VAULT_NAMESPACE")),
     voiceKey,
     persona: get("THINKFEEL_PERSONA_ID") ?? PERSONA,
     voiceEnabled,

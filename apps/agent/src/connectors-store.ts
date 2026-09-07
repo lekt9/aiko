@@ -14,7 +14,7 @@ export class FileConnectorStore implements ConnectorStore {
     if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077)) throw new Error("Connector store requires a private directory");
   }
   private name(key: string) {
-    if (!/^connectors:[a-f0-9]{64}:(?:connection|capability):[a-f0-9-]+$/.test(key)) throw new Error("Invalid connector storage key");
+    if (!/^connectors:[a-f0-9]{64}:(?:connection|capability|manager):[a-f0-9-]+$/.test(key)) throw new Error("Invalid connector storage key");
     return `${key}.json`;
   }
   async get(key: string): Promise<unknown> {
@@ -43,7 +43,7 @@ export class FileConnectorStore implements ConnectorStore {
     try { await directory.sync(); } finally { await directory.close(); }
   }
   async list(prefix: string): Promise<unknown[]> {
-    if (!/^connectors:[a-f0-9]{64}:(?:connection|capability):$/.test(prefix)) throw new Error("Invalid connector storage prefix");
+    if (!/^connectors:[a-f0-9]{64}:(?:connection|capability|manager):$/.test(prefix)) throw new Error("Invalid connector storage prefix");
     await this.ready();
     const result: unknown[] = [];
     for (const name of await readdir(this.directory)) {

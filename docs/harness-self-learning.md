@@ -39,7 +39,8 @@ SELFLEARN_NO_PR=1   pnpm harness:selflearn   # agent fix + checks, no push/PR
 ## What gets mined
 
 `scripts/harness-learn.mjs` (no dependencies) reads `.graff/` within a time
-window (default 14 days) and extracts:
+window (default 14 days) **and the Tardigrade server-side event logs** and
+extracts:
 
 | signal | source | meaning |
 |---|---|---|
@@ -48,6 +49,46 @@ window (default 14 days) and extracts:
 | `harness_retry` | traces | harness-level `retry` / `subagent_retry` events |
 | `stuck_todo` | session meta | checklist items still open when the session ended |
 | `turn_stall` | behavior | long gaps between turns |
+
+Server-side **Tardigrade** logs (the Aiko runtime itself) are mined from
+`~/.local/share/unbrowse/aiko` (override with `--tardigrade <dir>`, disable
+with `--tardigrade none`): every `*.sqlite` event store — `actor.sqlite`,
+per-account `thread.sqlite`, background role dbs, and cutover exports — is
+opened read-only and its `events` rows parsed. Reads never give up on
+transient contention: `busy_timeout` (3s) plus bounded backoff retries
+(`--tardigrade-retries`, default 4, 150ms→9.6s). A store that stays locked
+beyond that is recorded in the report under `tardigrade.skipped` (db, error,
+attempts made) instead of being silently dropped.
+
+| signal | source event | meaning |
+|---|---|---|
+| `turn_failed` | `TurnFailed` | a turn ended in failure (error output mined) |
+| `turn_cancelled` | `TurnCancelled` | turn cancelled mid-flight |
+| `delivery_unknown` / `delivery_rejected` | `AikoDeliverySettled` | message delivery not confirmed |
+| `receipt_unknown` / `receipt_*` | `ToolReturned` | browser/telegram receipt not `ok`/`delivered` |
+| `event_error` | any event with `error` | model/budget/provider errors |
+
+Privacy: user message content (`MessageReceived`) is never mined — only
+failure outcomes and receipt statuses.
+
+### Production (remote) Tardigrade logs
+
+Production Aiko runs on Cloudflare Durable Objects. The loop mines them from
+the operator export endpoint — `GET /api/control/export`, gated by
+`AIKO_OPERATOR_TOKEN` — when these are set:
+
+```sh
+export AIKO_EXPORT_URL="https://aiko-agent.<account>.workers.dev"  # or --remote-url
+export AIKO_OPERATOR_TOKEN="..."                                  # or --remote-token
+```
+
+Alternatively, mine a saved export offline: `--remote-export <file.json>`.
+The raw export is cached (gitignored) under
+`artifacts/harness-learn/tardigrade-remote/` as evidence; **thread names are
+hashed** (`remote-<sha>`) so account/chat identifiers never enter lessons or
+PR bodies. Export endpoint requires the account to be resting (`409
+account_busy` otherwise); a failed fetch is recorded in the report under
+`remote.error` and never aborts the loop.
 
 Signals are normalized (numbers/hex/paths scrubbed, secrets redacted) and
 grouped into **lessons** with fingerprints. A local state file,
@@ -68,12 +109,35 @@ hard guardrails:
   (default 40 min), with `--dedupe-tool-calls` and `--learning-privacy local`.
 - Must run `pnpm typecheck` and `pnpm test:aiko` itself, then the script
   re-runs them; a failed check aborts the PR.
-- Must write a decision report to `docs/harness-learn/<stamp>.md` (lessons
-  addressed → root cause → changes → deliberately not done).
+- Fixer mission: **fix our code** — Tardigrade runtime failures
+  (`turn_failed`, `delivery_*`, `receipt_*`, `event_error`) map to changes in
+  `apps/agent/**` or `packages/**`; `.graff` coding-session lessons are
+  secondary; the loop's own scripts are owned by the operator and off-limits.
+- When the fix is code (not only instruction text), add or extend a test under
+apps/agent/test/ or tests/. Write the report `docs/harness-learn/<stamp>.md`
+(lessons addressed → root cause → changes → deliberately not done).
 
 Only then does the script commit, push, and open a PR whose body embeds the
 lessons table, the fixer's summary, and verification output. After the PR
 opens, fingerprints are marked fixed so the next mining run starts clean.
+
+### First-run hardening (2026-09-06)
+
+The inaugural run taught the loop its own first lesson: the fixer agent edited
+`scripts/harness-selflearn.sh` — while bash was executing it — because nothing
+forbade touching the loop's live infrastructure. The orchestrator died on the
+mid-run script edit (the agent's work survived in the checkout and was landed
+by hand). The loop now enforces two guards learned from that incident:
+
+- **Loop-infrastructure denial** — the fixer may not modify
+  `scripts/harness-selflearn.sh` / `scripts/harness-learn.mjs`; the diff review
+  rejects them outright.
+- **Main-checkout freeze** — `git status` is snapshotted before the agent runs
+  and re-checked after; any drift (self-modification or a peer session
+  committing mid-run) aborts the PR path instead of building on a moving tree.
+- **Recovery notes in the fixer prompt** — mined tool-error patterns
+  (`read_file contains` misuse, partial batched edits, identical-call retries)
+  are fed back as explicit do-not-repeat guidance.
 
 ## Knobs
 

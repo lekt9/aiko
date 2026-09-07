@@ -4,8 +4,19 @@ import type { ConnectorEngine } from "./connectors.ts";
 import { boundedText } from "./security.ts";
 
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" } });
+/** Owner-facing validation messages are static strings; storage faults stay generic. */
+async function managerRoute(run: () => Promise<unknown>): Promise<Response> {
+  try {
+    return json(await run());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message && !/storage|store|unavailable|private sign-in/i.test(message))
+      return json({ error: "invalid_input", message: message.slice(0, 300) }, 400);
+    throw error;
+  }
+}
 /** Called only after host authentication/scope checks; engine is bound to that principal. */
-export async function connectorApi(request: Request, engine: ConnectorEngine, route?: ReturnType<typeof routerCaller>, oauth?: import("./connector-oauth.ts").OAuthBrowserConfig): Promise<Response> {
+export async function connectorApi(request: Request, engine: ConnectorEngine, route?: ReturnType<typeof routerCaller>): Promise<Response> {
   const url = new URL(request.url), path = url.pathname.replace(/^\/v1\//, "/api/");
   try {
     await engine.flushEvents();
@@ -14,8 +25,8 @@ export async function connectorApi(request: Request, engine: ConnectorEngine, ro
         if ([...url.searchParams.keys()].some(k => k !== "query") || (url.searchParams.get("query") ?? "").length > 256) return json({ error: "invalid_query" }, 400);
         return json(await engine.search(url.searchParams.get("query") ?? ""));
       }
-      if (path === "/api/connectors/apps") return json(await engine.apps(url.searchParams.get("query") ?? ""));
       if (path === "/api/connectors/connections") return json({ connections: await engine.connections() });
+      if (path === "/api/connectors/password-managers") return json({ managers: await engine.managers() });
       return json({ error: "not_found" }, 404);
     }
     if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
@@ -26,21 +37,31 @@ export async function connectorApi(request: Request, engine: ConnectorEngine, ro
       return json(await route("route", input, { callId: randomUUID(), turn: "http", signal: request.signal }));
     }
     const fields: Record<string, string[]> = {
-      "/api/connectors/apps/connect": ["appId"],
       "/api/connectors/native": ["connectionId", "action", "username", "password", "code", "x", "y", "text", "key", "delta", "url"],
-      "/api/connectors/connect": ["connectorId"],
       "/api/connectors/complete": ["connectionId"],
       "/api/connectors/disconnect": ["connectionId"],
       "/api/connectors/discover": ["domain", "evidenceUrls"],
       "/api/connectors/browser": ["domain"],
       "/api/connectors/execute": ["connectionId", "input", "toolId"],
     };
+    if (path === "/api/connectors/password-managers/add") return json(await managerRoute(() => engine.addManager(body)));
+    if (path === "/api/connectors/password-managers/remove") {
+      if (typeof body.managerId !== "string" || !/^[a-f0-9-]{36}$/.test(body.managerId)) return json({ error: "invalid_body" }, 400);
+      return json(await managerRoute(() => engine.removeManager(body.managerId)));
+    }
+    if (path === "/api/connectors/password-managers/fill") {
+      if (typeof body.connectionId !== "string" || typeof body.managerId !== "string" || typeof body.reference !== "string" || Object.keys(body).some(k => !["connectionId", "managerId", "reference", "username"].includes(k))) return json({ error: "invalid_body" }, 400);
+      if (body.username !== undefined && typeof body.username !== "string") return json({ error: "invalid_body" }, 400);
+      return json(await managerRoute(() => engine.fillFromManager(body as { connectionId: string; managerId: string; reference: string; username?: string })));
+    }
+    if (path === "/api/connectors/imports/logins") {
+      if (!Array.isArray(body.rows) || Object.keys(body).some(k => k !== "rows")) return json({ error: "invalid_body" }, 400);
+      return json(await managerRoute(() => engine.importLogins(body.rows)));
+    }
     const allowed = fields[path];
     if (!allowed) return json({ error: "not_found" }, 404);
     if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).some(k => !allowed.includes(k)) || typeof body[allowed[0]] !== "string" || !body[allowed[0]].trim() || body[allowed[0]].length > 2048) return json({ error: "invalid_body" }, 400);
     if (path === "/api/connectors/native") { const {connectionId, ...input} = body; return json(await engine.nativeControl(connectionId, input)); }
-    if (path === "/api/connectors/apps/connect") return json(await engine.connectApp(body.appId, oauth));
-    if (path.endsWith("/connect")) return json(await engine.connect(body.connectorId));
     if (path.endsWith("/complete")) return json(await engine.completeAuth(body.connectionId));
     if (path.endsWith("/disconnect")) return json(await engine.disconnect(body.connectionId));
     if (path.endsWith("/browser")) return json(await engine.connectBrowser(body.domain));

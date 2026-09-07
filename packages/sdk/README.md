@@ -13,6 +13,7 @@ pnpm build:backend
 | `@unlock/sdk/aiko` | Account-bound Aiko messages, cancellation, memory reads and browser approval | Trusted agents with an account credential; Telegram-independent |
 | `@unlock/sdk/vault` | Owner metadata, profiles, assignments, OAuth client registration | Trusted owner UI |
 | `@unlock/sdk/owner` | Passwords, full CSVs, source authorization, private session/SSO imports | Trusted owner UI, **never model tools** |
+| `@unlock/sdk/sources` | Password manager source builders for 1Password, Keeper, HashiCorp Vault and Doppler | Trusted owner UI, **never model tools** |
 | `@unlock/sdk/agent` | Destination session retrieval/sync, maintenance request, browser bridge | Trusted runtime, **never model tools** |
 | `@unlock/sdk/cdp` | Scoped cookie adapter for an isolated Chromium context | Trusted runtime |
 | `@unlock/sdk/oauth` | Agent PKCE, refresh/revocation, private token stores | Trusted host/CLI |
@@ -20,6 +21,43 @@ pnpm build:backend
 | `@unlock/sdk`, `@unlock/sdk/runtime` | Original **synthetic demo** protocol | Existing preview only |
 
 The original entry points are preserved, not silently repointed at the real service. Their historical guide is `docs/sdk-demo.md` in the workspace. The web preview still uses those fixtures.
+
+## Password manager sources
+
+Connections can resolve their password from a natively supported password manager instead of a stored credential. Add a source with `owner.addSource`, then reference one of its validated references when creating a connection (`sourceId` + `sourceReference`). The provider token is sealed server-side and never returned by the API; source-backed connections refuse native password overwrites.
+
+```ts
+import { passwordManagers } from '@unlock/sdk/sources'
+
+// 1Password service account token, references like op://vault/item/field
+const source = await owner.addSource(
+  passwordManagers.onePassword({
+    name: '1Password',
+    token: process.env.OP_SERVICE_ACCOUNT_TOKEN!,
+    references: ['op://Vault/service/password'],
+  }),
+)
+
+// Keeper Secrets Manager one-line config, references like keeper://RECORD_UID/field/NAME
+passwordManagers.keeper({ name: 'Keeper', token: ksmConfig, references: ['keeper://abcdefghijklmnopqrstuv/field/password'] })
+
+// HashiCorp Vault KV v2, references like vault://MOUNT/PATH#FIELD
+// (the cluster address is operator server configuration, not per-source)
+passwordManagers.hashicorpVault({ name: 'Vault', token: vaultToken, references: ['vault://secret/data/app/token#value'] })
+
+// Doppler service token (project/config scoped), references like doppler://SECRET_NAME
+passwordManagers.doppler({ name: 'Doppler', token: dopplerToken, references: ['doppler://API_KEY'] })
+
+await owner.add({
+  name: 'Work account', identity: 'owner@company.test',
+  website: 'https://service.test', domains: ['service.test'],
+  credential: undefined,
+  sourceId: source.id, sourceReference: 'op://Vault/service/password',
+  recipeId: 'operator-approved-recipe', maintenance: true,
+})
+```
+
+Each builder validates the kind's reference syntax locally before anything is sent to the service. The server resolves references through the matching provider SDK (official 1Password and Keeper SDKs; documented REST APIs for Vault KV v2 and Doppler) during renewal, and every resolution failure collapses to `SOURCE_UNAVAILABLE` so provider internals never leak. Reconnection cannot change a source's kind. Model tools never see this plane: resolution happens inside the trusted runtime only.
 
 ## Aiko account plane
 

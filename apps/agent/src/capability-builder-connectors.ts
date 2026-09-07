@@ -9,7 +9,7 @@ import type { ConnectorEngine, Connection } from "./connectors.ts";
 export interface ActorConnectorBinding {
   owner: string;
   thread: string;
-  engine: Pick<ConnectorEngine, "search" | "connect" | "connectBrowser" | "connections" | "execute"> & Partial<Pick<ConnectorEngine, "apps">>;
+  engine: Pick<ConnectorEngine, "search" | "connectBrowser" | "connections" | "execute">;
   miniAppUrl?: string;
   /** Host-only native Mini App buttons; no credential-bearing URL enters the log. */
   deliverConnection: (input: { owner: string; text: string; buttons: TelegramButton[][] }, signal: AbortSignal) => Promise<{ status: "delivered" | "unknown" | "rejected" }>;
@@ -53,23 +53,19 @@ export function createActorConnectorTools(binding: ActorConnectorBinding): Nativ
           if (url.protocol !== "https:" || url.username || url.password) throw new Error("Invalid secure authorization URL");
           return { status: connection.status, connectionId: connection.id, loginRequested: true };
         };
-        // An explicit host OAuth switch is configuration, not an outage or catalog absence.
-        if (name === "connector_recommend" && binding.engine.apps) {
-          const apps = await binding.engine.apps(typeof args.domain === "string" ? args.domain : args.query);
-          if (apps.oauthEnabled === false) {
-            if (!apps.nativeAvailable || !apps.nativeInline || typeof args.domain !== "string")
-              return { status: "rejected", message: "OAuth is disabled here. Supply the website domain for the available private sign-in screen." };
-            return requestLogin(await binding.engine.connectBrowser(args.domain));
-          }
+        // Connections are password sign-ins on the owner's private browser
+        // session; a website domain opens it directly, no OAuth handoff exists.
+        if (typeof args.domain === "string" && name === "connector_recommend") {
+          return requestLogin(await binding.engine.connectBrowser(args.domain));
         }
         const search = await binding.engine.search(args.query);
         if (name === "connector_search") return search;
         if (search.status === "unavailable") return search;
-        const match = search.connectors.find(c => c.id === args.connectorId);
-        const connection = search.status === "available"
-          ? match ? await binding.engine.connect(match.id) : undefined
-          : search.fallbackAllowed && typeof args.domain === "string" ? await binding.engine.connectBrowser(args.domain) : undefined;
-        if (!connection) return { status: "rejected", message: "Choose a discovered Arcade connector; browser fallback requires confirmed absence" };
+        if (search.fallbackAllowed && typeof args.domain === "string") {
+          return requestLogin(await binding.engine.connectBrowser(args.domain));
+        }
+        const connection = undefined;
+        if (!connection) return { status: "rejected", message: "Supply the app's website domain to open its private password sign-in screen" };
         return requestLogin(connection);
       }).pipe(Effect.catch(() => Effect.succeed({ status: "unknown", message: "Connector operation could not be confirmed; inspect connection state before retrying" })));
       if ("loginRequested" in result) {

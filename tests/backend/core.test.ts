@@ -5,6 +5,7 @@ import { Vault } from "../../apps/server/src/vault.js";
 import { postgres, migrate } from "../../apps/server/src/db.js";
 import { Imports } from "../../apps/server/src/imports.js";
 import { VaultError } from "../../apps/server/src/errors.js";
+import { sourceInput } from "@unlock/protocol";
 import { validateCookies } from "../../apps/server/src/recipes.js";
 import {
   database,
@@ -65,6 +66,67 @@ describe("envelope encryption and cookie validation", () => {
     expect(() =>
       validateCookies([cookie(), cookie()], ["service.test"]),
     ).toThrow();
+  });
+});
+describe("password manager source validation", () => {
+  const valid = [
+    {
+      name: "1Password",
+      kind: "onepassword" as const,
+      token: "t",
+      references: ["op://vault/item/password", "op://vault/item/section/field"],
+    },
+    {
+      name: "Keeper",
+      kind: "keeper" as const,
+      token: "t",
+      references: ["keeper://abcdefghijklmnopqrstuv/field/password"],
+    },
+    {
+      name: "Vault",
+      kind: "hashicorp-vault" as const,
+      token: "t",
+      references: ["vault://secret/data/app/token#value"],
+    },
+    {
+      name: "Doppler",
+      kind: "doppler" as const,
+      token: "t",
+      references: ["doppler://API_KEY"],
+    },
+  ];
+  it("accepts each password manager's own reference syntax", () => {
+    for (const input of valid)
+      expect(sourceInput.parse(input).kind).toBe(input.kind);
+  });
+  it.each([
+    ["unknown provider", { ...valid[0], kind: "bitwarden" }],
+    [
+      "truncated 1Password reference",
+      { ...valid[0], references: ["op://vault/item"] },
+    ],
+    [
+      "short Keeper record UID",
+      { ...valid[1], references: ["keeper://abc/field/password"] },
+    ],
+    [
+      "Keeper record without a field",
+      { ...valid[1], references: ["keeper://abcdefghijklmnopqrstuv"] },
+    ],
+    [
+      "Vault path without a field",
+      { ...valid[2], references: ["vault://secret/data/app/token"] },
+    ],
+    [
+      "Vault path traversal",
+      { ...valid[2], references: ["vault://secret/data/../etc#value"] },
+    ],
+    [
+      "multi-segment Doppler reference",
+      { ...valid[3], references: ["doppler://project/config/NAME"] },
+    ],
+  ])("rejects %s", (_reason, body) => {
+    expect(() => sourceInput.parse(body)).toThrow();
   });
 });
 describe.runIf(enabled)("real PostgreSQL vault and runtime", () => {
@@ -406,12 +468,14 @@ describe.runIf(enabled)("real PostgreSQL vault and runtime", () => {
   it("resolves selected 1Password references privately and refuses native overwrite", async () => {
     let calls = 0;
     const f = await fixture(pg.db, {
-      source: {
-        async resolve(token, reference) {
-          expect(token).toBe("synthetic-source-token");
-          expect(reference).toBe("op://vault/item/password");
-          calls++;
-          return secret;
+      sources: {
+        onepassword: {
+          async resolve(token, reference) {
+            expect(token).toBe("synthetic-source-token");
+            expect(reference).toBe("op://vault/item/password");
+            calls++;
+            return secret;
+          },
         },
       },
     });
@@ -454,6 +518,137 @@ describe.runIf(enabled)("real PostgreSQL vault and runtime", () => {
         ).rows,
       ),
     ).not.toContain("synthetic-source-token");
+  });
+  it("dispatches each password manager kind to its registered provider", async () => {
+    const calls: string[] = [];
+    const f = await fixture(pg.db, {
+      sources: {
+        onepassword: {
+          async resolve(token, reference) {
+            calls.push(`onepassword ${token} ${reference}`);
+            return "SYNTHETIC-OP-RESOLVE";
+          },
+        },
+        doppler: {
+          async resolve(token, reference) {
+            calls.push(`doppler ${token} ${reference}`);
+            return "SYNTHETIC-DOPPLER-RESOLVE";
+          },
+        },
+      },
+    });
+    const opSource = await f.vault.addSource(f.tenant, {
+        name: "1Password",
+        kind: "onepassword",
+        token: "op-token",
+        references: ["op://vault/item/password"],
+      }),
+      dpSource = await f.vault.addSource(f.tenant, {
+        name: "Doppler",
+        kind: "doppler",
+        token: "dp-token",
+        references: ["doppler://API_KEY"],
+      }),
+      op = await f.vault.add(f.tenant, {
+        ...input,
+        name: "Op login",
+        identity: "op-user",
+        credential: undefined,
+        sourceId: opSource.id,
+        sourceReference: "op://vault/item/password",
+      }),
+      dp = await f.vault.add(f.tenant, {
+        ...input,
+        name: "Doppler login",
+        identity: "dp-user",
+        credential: undefined,
+        sourceId: dpSource.id,
+        sourceReference: "doppler://API_KEY",
+      });
+    await f.vault.assign(f.tenant, f.profile.id, [op.id, dp.id]);
+    await f.vault.updateClient(f.tenant, f.client.id, {
+      connectionIds: [op.id, dp.id],
+    });
+    const p = { ...f.principal, connections: [op.id, dp.id] };
+    await f.worker.enqueue(p, op.id);
+    await f.worker.enqueue(p, dp.id);
+    while (await f.worker.tick());
+    expect(calls).toContain("onepassword op-token op://vault/item/password");
+    expect(calls).toContain("doppler dp-token doppler://API_KEY");
+    expect(
+      calls.some((c) => c.startsWith("doppler") && c.includes("op-token")),
+    ).toBe(false);
+    const listed = await f.vault.list(f.tenant);
+    expect(
+      [op.id, dp.id].every(
+        (id) => !listed.find((x) => x.id === id)?.hasPassword,
+      ),
+    ).toBe(true);
+    // Leave no queued jobs behind: the maintainer claims across tenants.
+    await pg.db.query("DELETE FROM jobs WHERE tenant=$1", [f.tenant]);
+  });
+  it("fails closed when a connection's source kind has no registered provider", async () => {
+    const f = await fixture(pg.db),
+      reference = "keeper://abcdefghijklmnopqrstuv/field/password";
+    const source = await f.vault.addSource(f.tenant, {
+      name: "Keeper",
+      kind: "keeper",
+      token: "synthetic-keeper-config",
+      references: [reference],
+    });
+    const c = await f.vault.add(f.tenant, {
+      ...input,
+      credential: undefined,
+      sourceId: source.id,
+      sourceReference: reference,
+    });
+    await f.vault.assign(f.tenant, f.profile.id, [c.id]);
+    await f.vault.updateClient(f.tenant, f.client.id, {
+      connectionIds: [c.id],
+    });
+    const p = { ...f.principal, connections: [c.id] };
+    await f.worker.enqueue(p, c.id);
+    await f.worker.tick();
+    expect(
+      (await f.vault.list(f.tenant)).find((x) => x.id === c.id)?.hasPassword,
+    ).toBe(false);
+    // Renewal fails closed: the unregistered kind is recorded as the job error,
+    // no session can be published, and retrieval stays in recovery.
+    expect((await f.worker.jobs(f.tenant))[0]).toMatchObject({
+      connectionId: c.id,
+      error: "SOURCE_UNAVAILABLE",
+    });
+    await expect(f.runtime.retrieve(p, c.id)).rejects.toMatchObject({
+      code: "REAUTH_REQUIRED",
+    });
+    // Leave no queued jobs behind: the maintainer claims across tenants.
+    await pg.db.query("DELETE FROM jobs WHERE tenant=$1", [f.tenant]);
+  });
+  it("keeps a source's password manager kind fixed across reconnection", async () => {
+    const f = await fixture(pg.db),
+      source = await f.vault.addSource(f.tenant, {
+        name: "1Password",
+        kind: "onepassword",
+        token: "synthetic-source-token",
+        references: ["op://vault/item/password"],
+      });
+    await expect(
+      f.vault.reconnectSource(f.tenant, source.id, {
+        name: "Moved",
+        kind: "doppler",
+        token: "synthetic-source-token",
+        references: ["doppler://API_KEY"],
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await f.vault.reconnectSource(f.tenant, source.id, {
+      name: "Rotated",
+      kind: "onepassword",
+      token: "rotated-source-token",
+      references: ["op://vault/other/password"],
+    });
+    expect(
+      (await f.vault.sources(f.tenant)).find((s) => s.id === source.id),
+    ).toMatchObject({ kind: "onepassword", version: 2 });
   });
   it("supports encrypted CSV preview, selection, idempotent commit and independent snapshots", async () => {
     const f = await fixture(pg.db),

@@ -21,16 +21,12 @@ import {
 import type { RequestOptions } from "./types.js";
 import type { PrivateBrowserAdapter, VaultBinding } from "./agent.js";
 import { UnlockError } from "./transport.js";
+import type { SourceAuthorization } from "./sources.js";
+export type { SourceAuthorization } from "./sources.js";
 export type {
   VaultConnectionInput,
   VaultImportPreview,
 } from "@unlock/protocol";
-export interface SourceAuthorization {
-  name: string;
-  kind: "onepassword";
-  token: string;
-  references: string[];
-}
 export interface SsoContextInput {
   identity: string;
   runtimeId: string;

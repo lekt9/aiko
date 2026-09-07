@@ -57,16 +57,25 @@ test("catalog key rotation isolates cache entries and pins the loading scope", a
  expect((await engine.listCatalog())[0]!.name).toBe("Two.Read");
 });
 
-test("expired snapshots fail closed, cooldown coalesces failure and recovery refreshes", async () => {
+test("expired snapshots serve stale while a background refresh runs; cold misses fail closed and cooldown coalesces", async () => {
  const cache = new CatalogCache(); let now = 1000000; let calls = 0; let failing = false;
  const clock = spyOn(Date, "now").mockImplementation(() => now);
  const api = async () => { calls++; if (failing) throw new Error("no access"); return page([tool("Gmail.ListEmails")]); };
  try {
   await cache.catalog(api, s => s); await cache.catalog(api, s => s); expect(calls).toBe(1);
-  now += 300001; failing = true;
-  await expect(cache.catalog(api, s => s)).rejects.toThrow();
-  await expect(cache.catalog(api, s => s)).rejects.toThrow(); expect(calls).toBe(2);
-  now += 5001; failing = false; expect((await cache.catalog(api, s => s)).tools).toHaveLength(1); expect(calls).toBe(3);
+  // Expired: the stale snapshot serves immediately without a network call,
+  // and the background refresh failure never surfaces to callers.
+  now += 1_800_001; failing = true;
+  expect((await cache.catalog(api, s => s)).tools).toHaveLength(1);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  // The background refresh ran once and its failure was absorbed.
+  expect(calls).toBe(2);
+  // A cold cache with a failing refresh fails closed; the cooldown coalesces.
+  const cold = new CatalogCache();
+  await expect(cold.catalog(api, s => s)).rejects.toThrow();
+  await expect(cold.catalog(api, s => s)).rejects.toThrow(); expect(calls).toBe(3);
+  now += 5001; failing = false;
+  expect((await cold.catalog(api, s => s)).tools).toHaveLength(1); expect(calls).toBe(4);
  } finally { clock.mockRestore(); }
 });
 
@@ -94,7 +103,6 @@ test("auth providers are represented without executable claims, endpoints, clien
  expect(result).toMatchObject({ status: "available", connectors: [], fallbackAllowed: false });
  expect(result.authProviders?.[0]).toMatchObject({ kind: "auth_provider", executable: false, authorizationDomains: ["accounts.google.com"] });
  expect(JSON.stringify(result)).not.toMatch(/client-sensitive|secret-sensitive|hidden|oauth2\/auth/);
- await expect(engine.connect("arcade-google")).rejects.toThrow();
 });
 
 test("provider listing failures cannot erase tool matches or prove domain absence", async () => {

@@ -1,6 +1,8 @@
 import { NativeLoginPanel } from "./native-login-panel";
 import { MiniAppScreen } from "./mini-app-screen";
 import { SecretaryPanel } from "./secretary-panel";
+import { PasswordManagerPanel } from "./password-manager-panel";
+import { ImportLoginsPanel } from "./import-logins-panel";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
@@ -8,7 +10,9 @@ import {
   ShieldCheck,
   Plus,
   Check,
+  FileUp,
   Globe,
+  KeyRound,
   RefreshCw,
   LoaderCircle,
   X,
@@ -19,13 +23,11 @@ import {
   loginConnectionId,
   safeAuthorizationUrl,
   websiteDomain,
-  type Connector,
-  type ConnectorSearch,
   type ConnectorConnection,
 } from "../lib/connectors";
 
 type PendingApproval = {id:string;name:string;args:unknown;snapshot:string;expires:number};
-type DrawerApp = { name: string; domain: string; connector?: Connector };
+type DrawerApp = { name: string; domain: string };
 const suggestedApps: DrawerApp[] = [
   { name: "LinkedIn", domain: "linkedin.com" },
   { name: "Gmail", domain: "gmail.com" },
@@ -97,6 +99,9 @@ export function ConnectorOnboarding() {
   const [signedOut, setSignedOut] = useState(false);
   const [nativeConnection, setNativeConnection] = useState<string>();
   const [nativeDomain, setNativeDomain] = useState<string>();
+  const [nativeUsername, setNativeUsername] = useState<string>();
+  const [managersOpen, setManagersOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [filter, setFilter] = useState<"all" | "connected">("all");
   const [addWebsite, setAddWebsite] = useState(false);
   const [website, setWebsite] = useState("");
@@ -107,22 +112,15 @@ export function ConnectorOnboarding() {
   const [websiteError, setWebsiteError] = useState("");
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [nativeInline, setNativeInline] = useState(false);
-  const [oauthEnabled, setOauthEnabled] = useState(false);
   const [query, setQuery] = useState("");
-  const [result, setResult] = useState<ConnectorSearch>();
-  const [searching, setSearching] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [pending, setPending] = useState(false);
   const [authorization, setAuthorization] = useState<string>();
   const [connections, setConnections] = useState<ConnectorConnection[]>();
-  const search = useRef<AbortController | null>(null);
   const signingIn = useRef(false);
-  const completing = useRef(false);
-  const version = useRef(0);
   useEffect(
     () => () => {
-      search.current?.abort();
       accountRequests.current?.abort();
     },
     [],
@@ -253,10 +251,8 @@ export function ConnectorOnboarding() {
     finally {setDeciding(false);}
   }
   function clearAccount() {
-    search.current?.abort();
     accountRequests.current?.abort();
     accountRequests.current = null;
-    version.current++;
     setAccountVersion((value) => value + 1);
     telegramEnabled.current = false;
     setSignedIn(false);
@@ -264,76 +260,23 @@ export function ConnectorOnboarding() {
     setApprovalError("");
     setApprovalLoading(true);
     setSignedOut(true);
-    setSearching(false);
     setNativeConnection(undefined);
+    setNativeUsername(undefined);
+    setManagersOpen(false);
+    setImportOpen(false);
     setSelectedConnection(undefined);
     setOpeningApp(undefined);
     setAddWebsite(false);
     setAssistantOpen(false);
     setConnections(undefined);
-    setResult(undefined);
-    setOauthEnabled(false);
     setAuthorization(undefined);
     setNotice("");
     setError("");
   }
-  async function find() {
-    search.current?.abort();
-    const controller = new AbortController();
-    search.current = controller;
-    const current = ++version.current;
-    setSearching(true);
-    setResult(undefined);
-    setOauthEnabled(false);
-    setError("");
-    setNotice("");
-    setAuthorization(undefined);
-    try {
-      const found = await request<{
-        apps: Array<{
-          id: string;
-          name: string;
-          toolIds: string[];
-          domains: string[];
-        }>;
-        nativeAvailable: boolean;
-        nativeInline: boolean;
-        oauthEnabled?: boolean;
-      }>(
-        `/apps?query=${encodeURIComponent(query.trim())}`,
-        undefined,
-        controller.signal,
-      );
-      if (current === version.current) setNativeInline(found.nativeInline);
-      if (current === version.current) setOauthEnabled(found.oauthEnabled === true);
-      if (current === version.current)
-        setResult({
-          status: found.apps.length ? "available" : "absent",
-          fallbackAllowed: found.nativeAvailable,
-          message: "",
-          connectors: found.apps.map((app) => ({
-            ...app,
-            provider: "arcade",
-            toolName: "",
-            description: `${app.toolIds.length} supported actions · Secure OAuth sign-in`,
-          })),
-        });
-    } catch (failure) {
-      if (current === version.current && !controller.signal.aborted)
-        reportError(failure);
-    } finally {
-      if (current === version.current) setSearching(false);
-    }
-  }
-  useEffect(() => {
-    if (!signedIn) return;
-    const timer = window.setTimeout(() => void find(), 250);
-    return () => window.clearTimeout(timer);
-  }, [signedIn, query]);
   useEffect(() => {
     const id = launchConnection.current;
     // Wait for server-validated identity and this account's current capabilities.
-    if (!id || launchOpened.current || !signedIn || !connections || !result || pending) return;
+    if (!id || launchOpened.current || !signedIn || !connections || pending) return;
     launchOpened.current = true;
     const connection = connections.find(item => item.id === id);
     if (!connection) {
@@ -342,51 +285,19 @@ export function ConnectorOnboarding() {
     }
     if (connection.provider === "browser" && connection.status === "pending" && nativeInline) {
       setNativeDomain(connection.connectorId.replace(/^browser:/, ""));
+      setNativeUsername(connection.importedUsername);
       setSelectedConnection(undefined);
       setNativeConnection(connection.id);
     } else {
       setSelectedConnection(connection);
     }
-  }, [signedIn, connections, result, pending, nativeInline]);
-  useEffect(() => {
-    if (
-      !signedIn ||
-      !oauthEnabled ||
-      nativeConnection ||
-      !connections?.some(
-        (c) => c.status === "pending" && c.provider === "arcade",
-      )
-    )
-      return;
-    let active = true;
-    const timer = window.setInterval(() => {
-      // Never overlap completion checks: each is a serialized server op, and
-      // overlapping polls starve user actions such as disconnect behind them.
-      if (document.visibilityState !== "visible" || pending || completing.current) return;
-      completing.current = true;
-      void Promise.all(
-        connections
-          .filter((c) => c.status === "pending" && c.provider === "arcade")
-          .map((c) => request("/complete", { connectionId: c.id })),
-      )
-        .then(() => {
-          if (active) return refresh();
-        })
-        .catch(reportError)
-        .finally(() => {
-          completing.current = false;
-        });
-    }, 5000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [signedIn, connections, pending, nativeConnection, oauthEnabled]);
+  }, [signedIn, connections, pending, nativeInline]);
   async function refresh() {
     const result = await request<{
       connections: ConnectorConnection[];
     }>("/connections");
     setConnections(result.connections);
+    return result.connections;
   }
   async function openApp(app: DrawerApp) {
     if (opening.current || pending || !signedIn) return;
@@ -410,7 +321,8 @@ export function ConnectorOnboarding() {
         setNativeInline(response.nativeInline ?? nativeInline);
         setNativeDomain(app.domain);
         setNativeConnection(response.id);
-        await refresh();
+        const list = await refresh();
+        setNativeUsername(list?.find((item) => item.id === response.id)?.importedUsername);
         return;
       }
       const url = safeAuthorizationUrl(response.authorizationUrl);
@@ -460,21 +372,6 @@ export function ConnectorOnboarding() {
         });
       });
   }
-  async function checkAuthorization(connectionId: string) {
-    setPending(true);
-    setError("");
-    try {
-      const connection = await request<ConnectorConnection>("/complete", {
-        connectionId,
-      });
-      if (connection.status === "connected") setAuthorization(undefined);
-      await refresh();
-    } catch (failure) {
-      reportError(failure);
-    } finally {
-      setPending(false);
-    }
-  }
   async function manage(connectionId?: string) {
     setPending(true);
     setError("");
@@ -505,30 +402,12 @@ export function ConnectorOnboarding() {
   const visibleConnections = activeConnections.filter((c) =>
     matchesQuery(connectionName(c), c.connectorId),
   );
-  const catalogApps: DrawerApp[] = (result?.connectors ?? [])
-    .filter((connector) => Boolean(connector.domains[0]))
-    .map((connector) => ({
-      name: connector.name,
-      domain: connector.domains[0]!,
-      connector,
-    }));
-  const apps = [
-    ...catalogApps,
-    ...suggestedApps.filter(
-      (app) =>
-        !catalogApps.some(
-          (c) =>
-            c.domain === app.domain ||
-            c.name.toLowerCase() === app.name.toLowerCase(),
-        ),
-    ),
-  ].filter(
+  const apps = suggestedApps.filter(
     (app) =>
       matchesQuery(app.name, app.domain) &&
       !activeConnections.some(
         (c) =>
           c.connectorId === `browser:${app.domain}` ||
-          c.connectorId === app.connector?.id ||
           (c.appName ?? "").toLowerCase() === app.name.toLowerCase(),
       ),
   );
@@ -616,14 +495,7 @@ export function ConnectorOnboarding() {
           placeholder="Search apps or websites"
           maxLength={200}
           value={query}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            search.current?.abort();
-            version.current++;
-            setResult(undefined);
-    setOauthEnabled(false);
-            setSearching(false);
-          }}
+          onChange={(event) => setQuery(event.target.value)}
         />
         {query && (
           <button
@@ -663,6 +535,24 @@ export function ConnectorOnboarding() {
           <RefreshCw size={18} aria-hidden="true" />
         </button>
       </div>
+      {signedIn && (
+        <div className="drawer-managers">
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => setManagersOpen(true)}
+          >
+            <KeyRound size={15} aria-hidden="true" /> Password managers
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => setImportOpen(true)}
+          >
+            <FileUp size={15} aria-hidden="true" /> Import from CSV
+          </button>
+        </div>
+      )}
       {error && (
         <div role="alert" className="connector-feedback">
           <p>{error}</p>
@@ -763,6 +653,9 @@ export function ConnectorOnboarding() {
           >
             Browse apps
           </button>
+          <button className="button" onClick={() => setImportOpen(true)}>
+            <FileUp size={15} aria-hidden="true" /> Import from a CSV export
+          </button>
         </div>
       )}
       {filter === "all" && (
@@ -775,21 +668,12 @@ export function ConnectorOnboarding() {
                   ? "Add more apps"
                   : "Start with an app"}
             </h3>
-            {searching && (
-              <span role="status">
-                <LoaderCircle
-                  size={16}
-                  className="app-spinner"
-                  aria-label="Searching"
-                />
-              </span>
-            )}
           </div>
           <div className="drawer-grid">
             {apps.map((app) => (
               <button
                 type="button"
-                key={app.connector?.id ?? app.domain}
+                key={app.domain}
                 className="drawer-tile"
                 disabled={!signedIn || pending}
                 onClick={() => void openApp(app)}
@@ -821,9 +705,7 @@ export function ConnectorOnboarding() {
           </div>
           {!apps.length && (
             <p className="aiko-fineprint">
-              {searching
-                ? "Checking available apps…"
-                : "Not listed? Add its website address to check sign-in options."}
+              Not listed? Add its website address to check sign-in options.
             </p>
           )}
         </section>
@@ -905,6 +787,28 @@ export function ConnectorOnboarding() {
             Only enter a website you trust. Add your login on the next screen,
             never in chat.
           </p>
+          <div className="drawer-managers">
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => {
+                setAddWebsite(false);
+                setManagersOpen(true);
+              }}
+            >
+              <KeyRound size={15} aria-hidden="true" /> Use a password manager
+            </button>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => {
+                setAddWebsite(false);
+                setImportOpen(true);
+              }}
+            >
+              <FileUp size={15} aria-hidden="true" /> Import from a CSV export
+            </button>
+          </div>
         </MiniAppScreen>
       )}
       {selected && !nativeConnection && (
@@ -949,6 +853,7 @@ export function ConnectorOnboarding() {
                     setNativeDomain(
                       selected.connectorId.replace(/^browser:/, ""),
                     );
+                    setNativeUsername(selected.importedUsername);
                     setNativeConnection(selected.id);
                     setSelectedConnection(undefined);
                   }}
@@ -971,15 +876,6 @@ export function ConnectorOnboarding() {
                   again.
                 </p>
               )}
-              {selected.provider !== "browser" && (
-                <button
-                  className="button"
-                  disabled={pending}
-                  onClick={() => void checkAuthorization(selected.id)}
-                >
-                  Check status
-                </button>
-              )}
             </div>
           )}
           <button
@@ -999,9 +895,25 @@ export function ConnectorOnboarding() {
         <NativeLoginPanel
           key={nativeConnection}
           domain={nativeDomain}
+          username={nativeUsername}
           connectionId={nativeConnection}
           request={request}
           onClose={closeNativeLogin}
+        />
+      )}
+      {managersOpen && (
+        <PasswordManagerPanel
+          request={request}
+          onClose={() => setManagersOpen(false)}
+          onChanged={() => void refresh().catch(reportError)}
+        />
+      )}
+      {importOpen && connections && (
+        <ImportLoginsPanel
+          request={request}
+          connections={connections}
+          onClose={() => setImportOpen(false)}
+          onImported={() => void refresh().catch(reportError)}
         />
       )}
     </section>

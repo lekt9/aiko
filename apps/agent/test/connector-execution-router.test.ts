@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createBunHost } from "tardie/bun/host";
-import { ConnectorEngine, type ConnectorStore } from "../src/connectors.ts";
+import { ConnectorEngine, connectorStorePrefix, type ConnectorStore } from "../src/connectors.ts";
 import { createToolRouterActor, routerEventKey, type RouterMethod } from "../src/tool-router.ts";
 
 test("real engine auth-required transition invalidates native router readiness", async () => {
@@ -16,12 +16,13 @@ test("real engine auth-required transition invalidates native router readiness",
  const engine = new ConnectorEngine({ owner: "123", store, env: { ARCADE_API_KEY: "fixture-only-router-key" }, fetch: async url => {
   const target = String(url);
   const body = target.includes("tools?") ? { items: [{ qualified_name: "GitHub.ListIssues", toolkit: { name: "GitHub", version: "1" }, description: "List GitHub repository issues", input: { parameters: [] } }], offset: 0, total_count: 1 }
-   : target.endsWith("authorize") ? { status: "completed" }
    : target.endsWith("tools/execute") ? { success: false, output: { authorization: { status: "pending", url: "https://api.arcade.dev/auth/do-not-log" } } }
    : { items: [], offset: 0, total_count: 0 };
   return new Response(JSON.stringify(body));
  } });
- const connection = await engine.connect("arcade:GitHub.ListIssues");
+ const fixtureId = crypto.randomUUID();
+ await store.set(`${connectorStorePrefix("123")}connection:${fixtureId}`, { id: fixtureId, owner: "123", connectorId: "arcade:GitHub.ListIssues", provider: "arcade", status: "connected", createdAt: Date.now(), expiresAt: Date.now() + 600000, toolName: "GitHub.ListIssues" });
+ const connection = { id: fixtureId };
  const directory = await mkdtemp(join(tmpdir(), "connector-router-regression-"));
  const definition = createToolRouterActor({ owner: "123", engine, readOwnedEvents: async () => [] });
  const host = await createBunHost({ database: join(directory, "router.sqlite"), actorName: "aiko", actorInstance: "regression", keyOf: routerEventKey, actorFor: () => definition });

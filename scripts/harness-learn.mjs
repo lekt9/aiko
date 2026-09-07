@@ -29,6 +29,7 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
@@ -212,10 +213,10 @@ async function mineTrace(file) {
         run,
         file,
         detail: excerpt(
-          `${d.reason ?? d.error ?? ""} attempt=${d.attempt ?? "?"}`.trim(),
+          `${d.reason || d.error || ""} attempt=${d.attempt ?? "?"}`.trim(),
         ),
         fingerprintInput: `${d.ev}::${normalize(
-          `${d.reason ?? ""}${d.error ?? ""}`,
+          `${d.reason || ""}${d.error || ""}`,
         )}`,
       });
   });
@@ -238,6 +239,319 @@ async function mineBehavior(file) {
       last = d;
     }
   });
+}
+
+// ---------- tardigrade server-side event logs ----------
+
+const TARDIGRADE_DEFAULT = path.join(
+  os.homedir(),
+  ".local/share/unbrowse/aiko",
+);
+
+function walkSqlite(dir, depth, out) {
+  if (depth > 5 || !fs.existsSync(dir)) return;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return; // unreadable directory (permissions) — skip silently
+  }
+  for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      // entity-learn memory stores are a separate domain (own docs); the
+      // telegram cursor db and host locks carry no agent-turn outcomes.
+      if (entry.name === "memory" || entry.name === "node_modules") continue;
+      walkSqlite(full, depth + 1, out);
+    } else if (
+      entry.name.endsWith(".sqlite") &&
+      !/^(host-lock|model-budget)\.sqlite$/.test(entry.name)
+    )
+      out.push(full);
+  }
+}
+
+/**
+ * Mine Tardigrade per-thread event logs (actor.sqlite, thread.sqlite,
+ * background role dbs, cutover exports). Events are JSON rows in an
+ * `events` / legacy `actor_events` table. Privacy: user message content is
+ * never mined — only failure outcomes and receipt statuses.
+ */
+let DatabaseSync = null;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const SQLITE_TRANSIENT =
+  /SQLITE_(BUSY|LOCKED)|database is locked|database table is locked/i;
+
+/**
+ * Read a tardigrade event store without giving up on transient locks. A live
+ * actor holding the WAL is routine, not an error: wait on busy_timeout, then
+ * retry with backoff before conceding. Returns {table, rows} or {table:null}.
+ */
+async function readEventRows(file, attempts) {
+  let lastErr;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    let db;
+    try {
+      db = new DatabaseSync(file, { readOnly: true });
+      try {
+        db.exec("PRAGMA busy_timeout = 3000");
+      } catch {}
+      const has = (t) =>
+        db
+          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+          .get(t);
+      const table = has("events") ? "events" : has("actor_events") ? "actor_events" : null;
+      if (!table) return { table: null };
+      const rows = db.prepare(`SELECT event FROM "${table}" LIMIT 50000`).all();
+      return { table, rows };
+    } catch (err) {
+      lastErr = err;
+      err.attempts = attempt;
+      if (!SQLITE_TRANSIENT.test(String(err.message)) || attempt === attempts)
+        break;
+      await sleep(150 * 4 ** (attempt - 1)); // 150ms → 600ms → 2.4s → 9.6s
+    } finally {
+      try {
+        db?.close();
+      } catch {}
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * Shared event-signal rules for Tardigrade runtime events, used by both the
+ * local sqlite miner and the remote export miner. Privacy: user message
+ * content (MessageReceived etc.) is never mined — only failure outcomes and
+ * receipt statuses.
+ */
+function pushEventSignals(e, run) {
+  const t = String(e.type);
+  if (t === "TurnFailed")
+    push({
+      kind: "turn_failed",
+      tool: "tardigrade",
+      run,
+      detail: excerpt(String(e.output ?? e.error ?? "(no output)")),
+      fingerprintInput: `turn_failed::${normalize(
+        String(e.output ?? e.error ?? ""),
+      )}`,
+    });
+  else if (t === "TurnCancelled")
+    push({
+      kind: "turn_cancelled",
+      tool: "tardigrade",
+      run,
+      detail: excerpt(String(e.output ?? e.reason ?? "")) || "(cancelled)",
+      fingerprintInput: `turn_cancelled::${run}`,
+    });
+  else if (t === "AikoDeliverySettled") {
+    const status = e.result?.status;
+    if (status && status !== "delivered")
+      push({
+        kind: `delivery_${status}`,
+        tool: "tardigrade",
+        run,
+        detail: excerpt(
+          `${e.result.providerId ?? "(no provider)"} ${e.result.error ?? ""}`.trim(),
+        ),
+        fingerprintInput: `delivery_${status}::${normalize(
+          String(e.result.error ?? e.result.providerId ?? ""),
+        )}`,
+      });
+  } else if (t === "ToolReturned") {
+    const r = e.result;
+    if (r && typeof r === "object" && typeof r.status === "string") {
+      const good = r.status === "ok" || r.status === "delivered";
+      if (!good)
+        push({
+          kind: r.status === "unknown" ? "receipt_unknown" : `receipt_${r.status}`,
+          tool: r.kind ?? "tool",
+          run,
+          detail: excerpt(
+            String(r.error ?? r.detail ?? (r.status === "unknown" ? "effect completed, outcome unverified" : r.status)),
+          ),
+          fingerprintInput: `receipt_${r.status}::${normalize(
+            `${r.kind ?? ""}${r.error ?? r.detail ?? ""}`,
+          )}`,
+        });
+    }
+  }
+  if (e.error && !"TurnFailed,AikoDeliverySettled,ToolReturned".split(",").includes(t))
+    push({
+      kind: "event_error",
+      tool: t,
+      run,
+      detail: excerpt(String(e.error)),
+      fingerprintInput: `event_error::${t}::${normalize(String(e.error))}`,
+    });
+}
+
+/** Parse one stored event row (may be an object or double-encoded JSON). */
+function parseStoredEvent(raw) {
+  let e = raw;
+  for (let i = 0; i < 2 && typeof e === "string"; i++) {
+    try {
+      e = JSON.parse(e);
+    } catch {
+      return null;
+    }
+  }
+  return e && typeof e === "object" && e.type ? e : null;
+}
+
+async function mineTardigrade(root) {
+  try {
+    ({ DatabaseSync } = await import("node:sqlite"));
+  } catch {
+    process.stderr.write("harness-learn: node:sqlite unavailable — skipping tardigrade logs\n");
+    return { events: 0, skipped: [] };
+  }
+  const attempts = Math.max(1, Number(flag("tardigrade-retries", "4")));
+  const dbs = [];
+  walkSqlite(root, 0, dbs);
+  let mined = 0;
+  const skipped = [];
+  for (const file of dbs) {
+    const run = path.relative(root, file);
+    let result;
+    try {
+      result = await readEventRows(file, attempts);
+    } catch (err) {
+      // retries exhausted — keep this visible instead of dropping it silently
+      skipped.push({ db: run, error: String(err.message), attempts: err.attempts ?? attempts });
+      process.stderr.write(
+        `harness-learn: gave up on ${run} after ${attempts} attempts: ${err.message}\n`,
+      );
+      continue;
+    }
+    if (!result.table) continue;
+    const { rows } = result;
+    for (const row of rows) {
+      const e = parseStoredEvent(row.event);
+      if (!e) continue;
+      mined += 1;
+      pushEventSignals(e, run);
+    }
+  }
+  return { events: mined, skipped };
+}
+
+/**
+ * Parse a KEY=VALUE env file (0600 owner-only, e.g.
+ * ~/.config/unbrowse/aiko-operator.env). Values are never logged.
+ */
+function readEnvFile(file) {
+  const out = {};
+  try {
+    for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+      const m = /^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
+      if (m) out[m[1]] = m[2].replace(/^"|"$/g, "");
+    }
+  } catch {}
+  return out;
+}
+
+// Production Aiko deployment (also hardcoded in apps/agent src as the
+// connectors URL). Overridable; discovery order below.
+const PRODUCTION_URL = "https://aiko-agent.lewis-6d8.workers.dev";
+const OPERATOR_ENV_FILES = [
+  path.join(os.homedir(), ".config/unbrowse/aiko-operator.env"),
+  path.join(os.homedir(), ".config/unbrowse/aiko-cloudflare.env"),
+];
+
+function discoverRemote() {
+  const url =
+    flag("remote-url", "") ||
+    process.env.AIKO_EXPORT_URL ||
+    process.env.AIKO_CLOUDFLARE_URL ||
+    PRODUCTION_URL;
+  let token = flag("remote-token", "") || process.env.AIKO_OPERATOR_TOKEN || "";
+  for (const file of OPERATOR_ENV_FILES) {
+    if (token) break;
+    token = readEnvFile(file).AIKO_OPERATOR_TOKEN ?? "";
+  }
+  return { url, token };
+}
+
+/**
+ * Mine a remote Aiko deployment via the operator export endpoint
+ * (GET /api/control/export, AIKO_OPERATOR_TOKEN-gated): every account's
+ * threads + full event journals. The raw export is cached under OUT for
+ * evidence (memory archives stripped); account/thread names are hashed —
+ * identifiers never enter lessons or PR bodies.
+ */
+async function mineTardigradeRemote({ url, token, exportFile }) {
+  const base = url.replace(/\/$/, "");
+  const auth = { authorization: `Bearer ${token}` };
+  const skippedAccounts = [];
+  let payload;
+  if (exportFile) {
+    payload = JSON.parse(fs.readFileSync(exportFile, "utf8"));
+  } else {
+    // enumerate accounts, then export each; fall back to the operator's own
+    // account if the registry listing is unavailable
+    let owners = null;
+    try {
+      const res = await fetch(`${base}/api/control/accounts`, {
+        headers: auth,
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (res.ok) {
+        const list = await res.json();
+        owners = (list.accounts ?? [])
+          .map((a) => (typeof a === "string" ? a : a?.owner))
+          .filter(Boolean);
+      }
+    } catch {}
+    if (!owners?.length) owners = [null];
+    payload = { threads: [] };
+    for (const owner of owners) {
+      const qs = owner ? `?account=${encodeURIComponent(owner)}` : "";
+      let res;
+      try {
+        res = await fetch(`${base}/api/control/export${qs}`, {
+          headers: auth,
+          signal: AbortSignal.timeout(120_000),
+        });
+      } catch (err) {
+        skippedAccounts.push({ account: sha16(owner ?? "default"), error: String(err.message) });
+        continue;
+      }
+      if (!res.ok) {
+        skippedAccounts.push({ account: sha16(owner ?? "default"), status: res.status });
+        continue;
+      }
+      const data = await res.json();
+      payload.threads.push(...(data.threads ?? []));
+    }
+  }
+  // never cache entity-learn memory archives — events only
+  const cache = { threads: payload.threads };
+  fs.mkdirSync(path.join(OUT, "tardigrade-remote"), { recursive: true });
+  fs.writeFileSync(
+    path.join(OUT, `tardigrade-remote/export-${stamp}.json`),
+    JSON.stringify(cache),
+  );
+  const threads = payload.threads ?? [];
+  let mined = 0;
+  for (const { thread, events } of threads) {
+    const run = `remote-${sha16(String(thread))}`;
+    for (const raw of events ?? []) {
+      const e = parseStoredEvent(raw);
+      if (!e) continue;
+      mined += 1;
+      pushEventSignals(e, run);
+    }
+  }
+  return {
+    threads: threads.length,
+    events: mined,
+    accounts_skipped: skippedAccounts,
+    url: new URL(url).host,
+    source: exportFile ? "export-file" : "live",
+  };
 }
 
 // ---------- distillation ----------
@@ -320,12 +634,48 @@ for (const f of sources.transcripts) {
 for (const f of sources.traces) if (fresh(f)) await mineTrace(f);
 for (const f of sources.behavior) if (fresh(f)) await mineBehavior(f);
 
+// Tardigrade server-side event logs (Aiko runtime: TurnFailed, delivery and
+// receipt outcomes). Pass --tardigrade none to disable, or a path to an
+// exported/migrated state dir (e.g. cloudflare-cutover exports).
+const tardigradeRoot = path.resolve(flag("tardigrade", TARDIGRADE_DEFAULT));
+let tardigrade = { root: tardigradeRoot, events: 0, skipped: [] };
+if (tardigradeRoot !== "none")
+  tardigrade = { ...tardigrade, ...(await mineTardigrade(tardigradeRoot)) };
+
+// Remote Tardigrade (production Aiko on Cloudflare): ON by default. Token
+// discovery: --remote-token > AIKO_OPERATOR_TOKEN env >
+// ~/.config/unbrowse/aiko-operator.env (0600). URL: --remote-url >
+// AIKO_EXPORT_URL > AIKO_CLOUDFLARE_URL > production workers.dev. Disable
+// with --no-remote; mine a saved export with --remote-export <file>.
+const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
+let remote = null;
+if (!hasFlag("no-remote")) {
+  const { url, token } = discoverRemote();
+  const remoteExport = flag("remote-export", "");
+  if (remoteExport || token) {
+    try {
+      remote = await mineTardigradeRemote({
+        url,
+        token,
+        exportFile: remoteExport || undefined,
+      });
+    } catch (err) {
+      remote = { url: new URL(url).host, error: String(err.message) };
+      process.stderr.write(
+        `harness-learn: remote tardigrade mining failed (${new URL(url).host}): ${err.message}\n`,
+      );
+    }
+  } else
+    process.stderr.write(
+      "harness-learn: no operator token found (AIKO_OPERATOR_TOKEN or ~/.config/unbrowse/aiko-operator.env) — skipping remote mining\n",
+    );
+}
+
 const state = loadState(path.join(OUT, "state.json"));
 const all = distill();
 const lessons = all.filter((l) => !state.fixed[l.fingerprint]);
 const fixedAlready = all.length - lessons.length;
 
-const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
 fs.mkdirSync(OUT, { recursive: true });
 
 const report = {
@@ -337,6 +687,8 @@ const report = {
   sources: Object.fromEntries(
     Object.entries(sources).map(([k, v]) => [k, v.length]),
   ),
+  tardigrade,
+  remote,
   totals: {
     signals: signals.length,
     distinct_lessons: all.length,

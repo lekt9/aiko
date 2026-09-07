@@ -16,10 +16,10 @@ import {
 import type { Envelope } from "./crypto.js";
 import type { Sql } from "./db.js";
 import { requireValue, VaultError } from "./errors.js";
+import { SourceRegistry } from "./sources.js";
 import {
   validateCookies,
   type AuthRecipe,
-  type PasswordSource,
   type RecipeContext,
   type Verified,
 } from "./recipes.js";
@@ -37,7 +37,7 @@ export class Runtime {
   constructor(
     public vault: Vault,
     public recipes: Map<string, AuthRecipe>,
-    private source: PasswordSource,
+    private sources: SourceRegistry,
     public runtimeId?: string,
   ) {}
   async stored(
@@ -195,8 +195,12 @@ export class Runtime {
         if (!c.source_id) return undefined;
         const s = requireValue(
           (
-            await this.vault.db.query<{ secret: Envelope; refs: string[] }>(
-              "SELECT secret,refs FROM sources WHERE tenant=$1 AND id=$2 AND enabled",
+            await this.vault.db.query<{
+              kind: string;
+              secret: Envelope;
+              refs: string[];
+            }>(
+              "SELECT kind,secret,refs FROM sources WHERE tenant=$1 AND id=$2 AND enabled",
               [p.tenant, c.source_id],
             )
           ).rows[0],
@@ -208,7 +212,7 @@ export class Runtime {
           context(p.tenant, "source", c.source_id),
           s.secret,
         );
-        return this.source.resolve(token, c.source_ref);
+        return this.sources.resolve(s.kind, token, c.source_ref);
       },
       sso: async () => {
         const parent = (

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole } from "lucide-react";
 import { MiniAppScreen } from "./mini-app-screen";
+import type { PasswordManager } from "../lib/connectors";
 
 type View = { status: string; domain: string; fields?: string[]; currentHost?: string; requiresOrigin?: string; screenshot?: string; width?: number; height?: number };
 export function NativeLoginPanel({
@@ -8,11 +9,14 @@ export function NativeLoginPanel({
   request,
   onClose,
   domain,
+  username,
 }: {
   connectionId: string;
   request: <T>(path: string, body?: object, signal?: AbortSignal) => Promise<T>;
   onClose: () => void;
   domain?: string;
+  /** Staged from a password manager import; prefills the sign-in. */
+  username?: string;
 }) {
   const [view, setView] = useState<View>();
   const [websiteView, setWebsiteView] = useState(false);
@@ -21,6 +25,10 @@ export function NativeLoginPanel({
   const [submitted, setSubmitted] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [preparing, setPreparing] = useState(false);
+  const [managers, setManagers] = useState<PasswordManager[]>();
+  const [managerUsername, setManagerUsername] = useState(username ?? "");
+  const [managerError, setManagerError] = useState("");
+  const managerOpen = useRef(false);
   const cancelling = useRef(false);
   const form = useRef<HTMLFormElement>(null);
   const active = useRef(true);
@@ -154,6 +162,123 @@ export function NativeLoginPanel({
       currentForm?.reset();
     };
   }, [connectionId]);
+  // Saved password managers are optional; an unavailable endpoint simply hides the option.
+  useEffect(() => {
+    let stale = false;
+    request<{ managers: PasswordManager[] }>("/password-managers")
+      .then((result) => {
+        if (!stale) setManagers(result.managers);
+      })
+      .catch(() => {
+        if (!stale) setManagers([]);
+      });
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const managerEntries = (managers ?? []).flatMap((manager) =>
+    manager.entries.map((entry) => ({ ...entry, managerId: manager.id, kind: manager.kind, managerName: manager.name })),
+  );
+  const sortedEntries = managerEntries.sort((a, b) => {
+    const match = (entry: typeof a) => (entry.website ? Number(entry.website === (domain ?? "")) : 0);
+    return match(b) - match(a);
+  });
+  const [picked, setPicked] = useState(0);
+  const pickedEntry = sortedEntries[Math.min(picked, Math.max(sortedEntries.length - 1, 0))];
+  async function fillWithManager() {
+    if (cancelling.current || !pickedEntry) return;
+    if (controller.current && !controller.current.signal.aborted) return;
+    setBusy(true);
+    setError("");
+    setManagerError("");
+    const abort = new AbortController();
+    controller.current = abort;
+    const read = (action: string) =>
+      request<View>("/native", { connectionId, action }, abort.signal);
+    const pause = () =>
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 1500);
+        abort.signal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+    try {
+      // The host resolves the saved reference and submits it into the private
+      // page; the password is never sent back to this app.
+      const next = await request<View>(
+        "/password-managers/fill",
+        {
+          connectionId,
+          managerId: pickedEntry.managerId,
+          reference: pickedEntry.reference,
+          ...(managerUsername.trim() ? { username: managerUsername.trim() } : {}),
+        },
+        abort.signal,
+      );
+      if (!active.current || abort.signal.aborted) return;
+      setSubmitted(true);
+      if (next.status === "connected") {
+        onClose();
+        return;
+      }
+      for (let attempt = 0; attempt < 6; attempt++) {
+        await pause();
+        if (!active.current || abort.signal.aborted) return;
+        try {
+          const verified = await read("finish");
+          if (!active.current || abort.signal.aborted) return;
+          if (verified.status === "connected") {
+            onClose();
+            return;
+          }
+        } catch {
+          if (abort.signal.aborted) return;
+        }
+        const formView = await read("form");
+        if (!active.current || abort.signal.aborted) return;
+        setView(formView);
+        if (formView.requiresOrigin) {
+          setWebsiteView(true);
+          return;
+        }
+        if (formView.status === "connected") {
+          onClose();
+          return;
+        }
+        if (formView.fields?.length) {
+          setWebsiteView(false);
+          setError(
+            formView.fields.includes("code")
+              ? "Enter your verification code to finish connecting."
+              : "The website needs another sign-in step. Complete the fields below.",
+          );
+          return;
+        }
+      }
+      setError(
+        "This website needs an additional check. Try again after completing any verification on your phone.",
+      );
+    } catch (failure) {
+      if (active.current && !abort.signal.aborted)
+        setError(
+          failure instanceof Error
+            ? failure.message
+            : "Could not use the saved password manager.",
+        );
+    } finally {
+      if (controller.current === abort) controller.current = undefined;
+      if (active.current && !abort.signal.aborted) {
+        setBusy(false);
+        setPreparing(false);
+      }
+    }
+  }
   async function control(action: string, fields: object = {}) {
     if (busy || controller.current || cancelling.current) return;
     const abort = new AbortController(); controller.current = abort;
@@ -271,6 +396,7 @@ export function NativeLoginPanel({
                     spellCheck={false}
                     maxLength={2048}
                     required
+                    defaultValue={username ?? ""}
                     disabled={busy}
                   />
                 </div>
@@ -340,6 +466,66 @@ export function NativeLoginPanel({
             </button>
           )}
         </form>}
+        {!!sortedEntries.length && !websiteView && (
+          <details
+            className="manager-fill"
+            onToggle={(event) => {
+              managerOpen.current = event.currentTarget.open;
+            }}
+          >
+            <summary>
+              <KeyRound size={15} aria-hidden="true" /> Use a saved password manager
+            </summary>
+            <div className="credential-fields">
+              <div className="credential-field">
+                <label htmlFor="manager-entry">Saved login</label>
+                <select
+                  id="manager-entry"
+                  value={Math.min(picked, Math.max(sortedEntries.length - 1, 0))}
+                  onChange={(event) => setPicked(Number(event.target.value))}
+                >
+                  {sortedEntries.map((entry, index) => (
+                    <option key={`${entry.managerId}:${entry.reference}`} value={index}>
+                      {entry.label} — {entry.managerName}
+                      {entry.website && entry.website !== domain ? ` (${entry.website})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="credential-field">
+                <label htmlFor="manager-username">Email or username</label>
+                <input
+                  id="manager-username"
+                  type="text"
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  maxLength={2048}
+                  value={managerUsername}
+                  onChange={(event) => setManagerUsername(event.target.value)}
+                  disabled={busy}
+                />
+              </div>
+            </div>
+            {managerError && (
+              <p className="credential-error" role="alert">
+                {managerError}
+              </p>
+            )}
+            <button
+              type="button"
+              className="button primary credential-submit"
+              disabled={busy || !pickedEntry}
+              onClick={() => void fillWithManager()}
+            >
+              {busy ? "Connecting…" : "Fill from password manager"}
+            </button>
+            <p className="aiko-fineprint">
+              Aiko’s host reads the saved password and enters it into the private
+              sign-in page. It is never shown, stored or shared.
+            </p>
+          </details>
+        )}
         {websiteView && <div className="native-login-browser">
           <p className="aiko-fineprint">{view?.currentHost ?? website}</p>
           {view?.requiresOrigin ? <div role="status">

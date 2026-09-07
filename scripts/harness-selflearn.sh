@@ -85,24 +85,36 @@ if [ "${SELFLEARN_SKIP_INSTALL:-0}" != "1" ]; then
 fi
 
 # ---------- 4. fixer agent ----------
+# Freeze the live checkout: any change here while the agent runs (the agent
+# editing its own orchestrator, or a peer session) means a moving tree — abort.
+MAIN_FREEZE="$(git status --porcelain | sha1sum | cut -d' ' -f1)"
+
 REPORT="docs/harness-learn/${STAMP}.md"
 GUARDRAILS="Autonomy guardrails (hard requirements):
 - No user is available; do not ask questions, decide and act.
 - You may modify only: apps/**, packages/**, tests/**, docs/**, scripts/**.
 - Never read or modify: .graff/**, artifacts/**, .env*, *.key, *.pem, *.sqlite*, codedb.snapshot, any *.session.json. If a file contains credentials, stop touching it and say so.
 - Do not run git commit, git push, or git branch; the orchestrator owns version control.
-- Keep the diff minimal: no drive-by refactors, no dependency changes, no formatting-only churn."
+- Stay inside your worktree: do not cd to or modify any absolute path outside it. In particular never modify scripts/harness-selflearn.sh or scripts/harness-learn.mjs — they are the running loop infrastructure, and editing a running shell script corrupts it.
+- Keep the diff minimal: no drive-by refactors, no dependency changes, no formatting-only churn.
 
-PROMPT="You are the harness-fixer agent for this repository (the Aiko/Unbrowse monorepo). A self-learning loop mined this repo's .graff agent logs and found recurring failure patterns. Your mission: make the harness stop repeating them.
+Tool-usage recovery notes — these exact failure patterns recurred in past runs; do not repeat them:
+- read_file: pass a non-empty literal \`contains\` string, and never combine \`contains\` with start_line, end_line or compact (use the line range alone for a sized window).
+- After a failed edit_file span in a batched call, earlier spans may already have applied: re-read the file and re-derive the remaining spans instead of retrying blindly.
+- If the same tool call fails twice, change the arguments or the approach; an identical repeat fails identically. Check the error text for the recovery hint it already gives.
+- Do not shell out to cat/grep for source (the codedb guard blocks them); use the codedb tool.
+- Before finishing, complete or explicitly cancel every open todo item and re-run the self-check commands."
 
-Read the lessons report at artifacts/harness-learn/lessons-current.json (human summary: artifacts/harness-learn/lessons-current.md). Its lessons have kind (tool_error | retry_loop | harness_retry | stuck_todo | turn_stall), tool, count, runs, and verbatim (redacted) evidence excerpts. Entries with \"new\": false are already fixed elsewhere — ignore them.
+PROMPT="You are the harness-fixer agent for this repository (the Aiko/Unbrowse monorepo). A self-learning loop mined the Aiko runtime's own Tardigrade event logs (turn failures, delivery and receipt outcomes, provider errors) plus this repo's .graff coding-session logs, and found recurring failure patterns. Your mission: fix OUR CODE so the runtime stops producing them.
 
-Work the NEW lessons in priority order (highest count first):
-1. Diagnose the root cause in this repo's agent harness under apps/agent/ (actor.ts instruction strings such as AIKO_*_INSTRUCTIONS, tool wrappers, capability-builder, channel-response, tool-router-tools, automations). Distinguish a real harness gap from one-off operator error; lessons that are not harness-fixable are recorded as skipped in the report with the reason.
-2. Implement the smallest change that prevents recurrence: sharpen an instruction clause, add tool input validation or a clearer tool error message, or improve recovery guidance. Prefer instruction and validation fixes over new machinery.
-3. When the fix is code (not only instruction text), add or extend a test under apps/agent/test/ or tests/.
-4. Write the report ${REPORT} with sections: Lessons addressed (fingerprint -> decision), Root cause, Changes, Deliberately not done. Quote the evidence you acted on.
-5. Self-check before finishing: run: pnpm typecheck && pnpm test:aiko — and fix anything you broke.
+Read the lessons report at artifacts/harness-learn/lessons-current.json (human summary: artifacts/harness-learn/lessons-current.md). Its lessons have kind, tool, count, runs, and verbatim (redacted) evidence excerpts; entries with \"new\": false are already fixed elsewhere — ignore them.
+
+Priorities:
+1. Tardigrade runtime lessons first (kind turn_failed, turn_cancelled, delivery_unknown, delivery_rejected, receipt_unknown, receipt_*, event_error; tool tardigrade). Each is a real production turn outcome. For each NEW one: find the code path that produced it — apps/agent/ (actor.ts instruction strings such as AIKO_*_INSTRUCTIONS, tool wrappers, channel-response, reply-policy, cloudflare host, capability-builder, automations) or packages/ (protocol/sdk) when the fault is there — and change our code so the failure cannot recur: validate inputs, handle the provider error and retry/idempotently recover, sharpen the instruction clause that led the model into the dead end, or emit a clearer error receipt. A transient provider outage still warrants a code response: retry with backoff or a explicit degraded-answer path, never a silent give-up.
+2. .graff coding-session lessons second (kind tool_error, retry_loop, harness_retry, stuck_todo, turn_stall): same treatment where the fault is in this repo's code or instructions; the loop's own infra (scripts/harness-*) is owned by the human operator — do not touch it.
+3. Lessons that are genuinely not fixable in this repo are recorded as skipped in the report with the owning component named and the reason. No hand-waving.
+
+When the fix is code (not only instruction text), add or extend a test under apps/agent/test/ or tests/. Write the report ${REPORT} with sections: Lessons addressed (fingerprint -> decision), Root cause, Changes, Deliberately not done. Quote the evidence you acted on. Self-check before finishing: run: pnpm typecheck && pnpm test:aiko — and fix anything you broke.
 
 ${GUARDRAILS}
 
@@ -123,6 +135,13 @@ echo "graff fixer exited rc=${GRAFF_RC} (log: ${GRAFF_LOG})"
 tail -n 20 "$GRAFF_LOG" || true
 [ "$GRAFF_RC" -eq 0 ] || [ "$GRAFF_RC" -eq 124 ] || fail "graff fixer failed (rc=${GRAFF_RC}); log kept at ${GRAFF_LOG}"
 
+MAIN_FREEZE_NOW="$(git status --porcelain | sha1sum | cut -d' ' -f1)"
+if [ "$MAIN_FREEZE_NOW" != "$MAIN_FREEZE" ]; then
+  trap - EXIT   # keep worktree + log for inspection
+  fail "main checkout changed while the fixer agent ran (self-modification or peer session) — refusing to build a PR on a moving tree.
+Worktree kept: ${WORKTREE}"
+fi
+
 # ---------- 5. review the diff ----------
 echo "-- reviewing diff --"
 CHANGED="$(cd "$WORKTREE" && git status --porcelain | awk '{print $2}')"
@@ -136,7 +155,7 @@ ${DENIED}
 Worktree kept for inspection: ${WORKTREE}"
 fi
 
-FORBIDDEN="$(printf '%s\n' $CHANGED | grep -E '(^|/)(\.env|\.graff/|artifacts/|codedb\.snapshot|.*\.(key|pem|sqlite)$)' || true)"
+FORBIDDEN="$(printf '%s\n' $CHANGED | grep -E '(^|/)(\.env|\.graff/|artifacts/|codedb\.snapshot|.*\.(key|pem|sqlite)$|scripts/harness-selflearn\.sh$|scripts/harness-learn\.mjs$)' || true)"
 if [ -n "$FORBIDDEN" ]; then
   trap - EXIT
   fail "agent touched forbidden paths:
