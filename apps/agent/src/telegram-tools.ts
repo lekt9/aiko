@@ -574,7 +574,7 @@ export function createTelegramTools(
   );
   add(
     "telegram_voice",
-    "Speak a concise final reply using the configured synthetic voice and deliver a Telegram voice note to this owner. Use for an incoming voice request or when the owner asks for speech. This is synthetic speech, not a human recording or voice clone. Set final=true to avoid duplicate text. If synthesis is unavailable/rejected, answer in text; do not retry unknown delivery.",
+    "Speak a concise final reply using the configured synthetic voice and deliver a Telegram voice note to this owner. Use for an incoming voice request or when the owner asks for speech. This is synthetic speech, not a human recording or voice clone. Set final=true to avoid duplicate text. If synthesis is unavailable/rejected, answer in text; do not retry unknown delivery. SSML: write spoken prose ending with . ? or !; the transcript supports Sonic tags — use <break time=\"400ms\"/> sparingly for an explicit silence (never several in a row, never next to <spell>), <spell>ABC123</spell> only when characters must be read one by one, and <speed ratio=\"0.9\"/> (0.6-1.5) for pacing, returning to <speed ratio=\"1.0\"/> after. No markdown, bullets, emoji, asterisks or headers — they are read aloud. Numbers, dates, currency and phone numbers stay in conventional written form; separate long character runs with commas like 1, 2, 3, 4.",
     {
       text: { type: "string" },
       replyTo: { type: "integer" },
