@@ -67,8 +67,15 @@ export class BrowserLearning {
       onPrepared?(event: BrowserNetworkToolPrepared, responses: Record<string, unknown>, semantics: ReadonlyMap<string, ResponseSemanticEvidence>): Promise<void>;
     },
   ) {}
+  /** Tracker-heavy pages fire hundreds of requests; capturing all of them floods
+   * the turn's durable log and starves the actual answer. Learn from the first
+   * requests of a session and skip the rest. */
+  private captureLimit = 120;
+  private capped = false;
+  private capturedIndexes = new Set<number>();
 
   async observe(entry: NetworkEntry, index: number, complete: boolean) {
+    if (this.capped) return;
     const single = prepareTrustedNetworkEntries([entry]);
     const trace = {
       ...single.trace,
@@ -93,8 +100,13 @@ export class BrowserLearning {
       const identity = `${fact.type}:${fact.requestId}`,
         content = canonicalStringify(candidate.fact);
       if (this.observed.get(identity) === content) continue;
+      if (this.networkSequence >= this.captureLimit) {
+        this.capped = true;
+        return;
+      }
       await this.options.emit(candidate);
       this.facts.push(candidate);
+      this.capturedIndexes.add(index);
       this.networkSequence++;
       this.observed.set(identity, content);
     }
@@ -106,7 +118,7 @@ export class BrowserLearning {
     targetOrigin: string,
   ) {
     const completed = entries.flatMap((entry, index) =>
-      entry._observationComplete === true
+      entry._observationComplete === true && this.capturedIndexes.has(index)
         ? [{ entry, sourceId: `req-${String(index + 1).padStart(4, "0")}` }]
         : [],
     );
