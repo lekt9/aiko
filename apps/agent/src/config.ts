@@ -23,6 +23,8 @@ export const PERSONA = "3c36e929-50ac-4971-919f-70e6fc6273b7";
 export type AikoConfig = {
   mode: "demo" | "live";
   instanceId?: string;
+  /** Per-account account-object naming epochs (wedge recovery). */
+  doEpochs?: Record<string, string>;
   model?: string;
   modelLimits?: ModelLimits;
   publicWeb?: boolean;
