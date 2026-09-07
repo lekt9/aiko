@@ -14,7 +14,7 @@ import type { ConnectorEngine } from "./connectors.ts";
 import { replayCapabilities } from "./capability-builder.ts";
 import { validateWorkflowDefinition, type WorkflowRecord } from "./tool-workflows.ts";
 
-export const ROUTER_VERSION = "aiko-tool-router/6";
+export const ROUTER_VERSION = "aiko-tool-router/7";
 export type RouterMethod = "discover" | "describe" | "route" | "status";
 export type RouteState = "ready" | "needs_connection" | "needs_discovery" | "catalog_unavailable";
 export type AtomicTask = { id: string; query: string; domain?: string; arguments?: Record<string, unknown> };
@@ -126,16 +126,38 @@ async function snapshot(binding: ToolRouterBinding) {
   const uniqueCapabilities = [...new Map(capabilities.map(c => [c.url, c])).values()];
   const generated: Candidate[] = uniqueCapabilities.map(c => ({ id: c.id, name: `GET ${c.url}`, description: `Read ${c.url}`, parent: "owned-capability", provider: "generated", domains: [new URL(c.url).hostname], inputSchema: { type: "object", properties: {}, additionalProperties: false }, requirements: {}, connected: true, evidenceId: c.evidence.id }));
   const learned = executableObservedReads(events);
+  // Anti-bot challenges demote host replay for the challenged origin until the vault
+  // session is renewed past the challenge; fingerprint-bound origins belong to the browser actor.
+  const challengeAt = new Map<string, number>();
+  for (const e of events as E[]) {
+    if (e.type !== "AikoObservedOriginChallenged" || e.owner !== binding.owner) continue;
+    const origin = String(e.origin ?? ""); const at = Number(e.at ?? 0);
+    if (origin && Number.isFinite(at)) challengeAt.set(origin, Math.max(challengeAt.get(origin) ?? 0, at));
+  }
+  const renewedAfterChallenge = new Set<string>();
+  for (const e of events as E[]) {
+    if (e.type !== "AikoUnlockSessionRenewed" || e.owner !== binding.owner) continue;
+    const origin = String(e.domain ?? ""); const at = Number(e.at ?? 0);
+    if (origin && Number.isFinite(at) && at > (challengeAt.get(origin) ?? 0)) renewedAfterChallenge.add(origin);
+  }
+  const hostBlocked = (origin: string) => challengeAt.has(origin) && !renewedAfterChallenge.has(origin);
   const learnedDigests = new Set(learned.map(e => e.toolDigest));
-  const observedCandidate = (e: (typeof learned)[number], ready: boolean): Candidate => ({
+  const observedCandidate = (e: (typeof learned)[number], ready: boolean): Candidate => {
+    const domains = [...new Set(e.definition.steps.map(s => new URL(s.origin).hostname))];
+    const blocked = domains.some(hostBlocked);
+    return {
     id: e.toolId, name: e.actionId, description: e.definition.steps.map(s => `${s.method} ${s.origin}${s.path}`).join("; "), parent: "owned-network", provider: "observed",
-    domains: [...new Set(e.definition.steps.map(s => new URL(s.origin).hostname))],
+    domains,
     inputSchema: { type: "object", properties: Object.fromEntries(e.definition.inputs.filter(i => i.source === "caller").map(i => [i.name, i.type === "json" ? {} : { type: i.type }])), required: e.definition.inputs.filter(i => i.required && i.source === "caller").map(i => i.name), additionalProperties: false },
-    requirements: ready
-      ? { executeWith: "observed_network_run", merkle: e.toolDigest, sourceTraceDigest: e.sourceTraceDigest, reauthorizeEveryRun: true, execution: { tool: "observed_network_run", arguments: { toolDigest: e.toolDigest }, inputParameter: "inputs", inputEncoding: "json" } }
-      : { sessionRequirements: e.definition.sessionRequirements, vaultInputs: e.definition.inputs.filter(i => i.source === "vault").map(i => i.name), approval: "review_required", executable: false },
-    connected: ready, reviewRequired: !ready, evidenceId: e.toolDigest,
-  });
+    requirements: {
+      ...(ready
+        ? { executeWith: "observed_network_run", merkle: e.toolDigest, sourceTraceDigest: e.sourceTraceDigest, reauthorizeEveryRun: true, execution: { tool: "observed_network_run", arguments: { toolDigest: e.toolDigest }, inputParameter: "inputs", inputEncoding: "json" } }
+        : { sessionRequirements: e.definition.sessionRequirements, vaultInputs: e.definition.inputs.filter(i => i.source === "vault").map(i => i.name), approval: "review_required", executable: false }),
+      ...(blocked ? { blockedBy: "origin_challenge" } : {}),
+    },
+    connected: ready && !blocked, reviewRequired: !ready, evidenceId: e.toolDigest,
+    };
+  };
   for (const e of learned) {
     const candidate = observedCandidate(e, true);
     if (redact(JSON.stringify(candidate)) !== JSON.stringify(candidate) || ids.has(candidate.id)) continue;
@@ -145,6 +167,7 @@ async function snapshot(binding: ToolRouterBinding) {
   const observed: Candidate[] = ownedNetworkDefinitions(events).filter(e => !learnedDigests.has(e.toolDigest)).map(e => observedCandidate(e, false));
   for (const action of ownedObservedActions(events)) {
     const domains = [...new Set(action.artifact.allowedOrigins.map(origin => new URL(origin).hostname))];
+    const blocked = domains.some(hostBlocked);
     const candidate: Candidate = {
       id: action.artifactDigest, name: action.actionId,
       description: action.artifact.actions.flatMap(a => a.steps.map(s => `${s.method} ${s.origin}${s.path}`)).join("; "),
@@ -156,8 +179,9 @@ async function snapshot(binding: ToolRouterBinding) {
         effect: action.effect, session: action.sessionRequired ? "unlock-vault" : "none",
         execution: { tool: "observed_network_run", arguments: { artifactDigest: action.artifactDigest }, inputParameter: "inputs", inputEncoding: "json" },
         ...(action.effect === "write" ? { approval: "owner_required" } : {}),
+        ...(blocked ? { blockedBy: "origin_challenge" } : {}),
       },
-      connected: !action.sessionRequired || domains.every(d => vaultDomains.includes(d)), reviewRequired: action.effect === "write", evidenceId: action.artifactDigest,
+      connected: !blocked && (!action.sessionRequired || domains.every(d => vaultDomains.includes(d))), reviewRequired: action.effect === "write", evidenceId: action.artifactDigest,
     };
     if (redact(JSON.stringify(candidate)) !== JSON.stringify(candidate) || ids.has(candidate.id)) continue;
     ids.add(candidate.id);

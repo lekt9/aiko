@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
  * act on. The miner must fall back to the error and keep the attempt number.
  */
 describe("harness-learn miner", () => {
-  it("surfaces the error and attempt of harness_retry events with empty reason", () => {
+  it("surfaces the error and attempt of harness_retry events with empty reason", () => { // spawns node; needs headroom beyond the default 5s under parallel workers
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "harness-learn-"));
     try {
       const traces = path.join(root, "graff", "traces");
@@ -41,5 +41,5 @@ describe("harness-learn miner", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });

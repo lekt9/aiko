@@ -132,6 +132,13 @@ test("indexed Merkle network DAGs become ready observed skills that execute with
   expect(result.tasks[0]).toMatchObject({ state: "ready" });
   expect(result.tasks[0].tools[0]).toMatchObject({ provider: "observed", connected: true, reviewRequired: false, evidenceId: prepared.toolDigest, requirements: { executeWith: "observed_network_run" } });
   expect(await f.call("describe", { toolIds: [prepared.toolId] })).toMatchObject({ state: "ready", tools: [{ id: prepared.toolId, requirements: { executeWith: "observed_network_run" } }] });
+  f.owned.push({ type: "AikoObservedOriginChallenged", owner: "123", origin: "api.vendor.com", status: 403, headerNames: ["cf-mitigated"], at: 1000 } as Event);
+  const challenged = await f.call("route", { tasks: [{ id: "items", query: "vendor api network", domain: "api.vendor.com" }] });
+  expect(challenged.tasks[0].tools.some((t: {provider:string; connected?: boolean}) => t.provider === "observed" && t.connected)).toBe(false);
+  expect(challenged.tasks[0].tools.find((t: {provider:string}) => t.provider === "observed")).toMatchObject({ connected: false, requirements: { blockedBy: "origin_challenge" } });
+  f.owned.push({ type: "AikoUnlockSessionRenewed", owner: "123", connectionId: "conn", revision: "2", domain: "api.vendor.com", at: 2000 } as Event);
+  const recovered = await f.call("route", { tasks: [{ id: "items", query: "vendor api network", domain: "api.vendor.com" }] });
+  expect(recovered.tasks[0].tools.some((t: {provider:string; connected?: boolean}) => t.provider === "observed" && t.connected)).toBe(true);
 });
 test("collection search favors query schemas over unknown IDs and unrequested folders", async () => {
   const f = await fixture();
