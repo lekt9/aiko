@@ -6,7 +6,8 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { DecryptCommand, EncryptCommand, KMSClient } from "@aws-sdk/client-kms";
-export const randomToken = () => randomBytes(32).toString("base64url");
+export const randomToken = () =>
+  Buffer.from(randomBytes(32)).toString("base64url");
 export const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 export const same = (a: string, b: string) => {
@@ -37,11 +38,11 @@ function encrypt(
     cipher = createCipheriv("aes-256-gcm", key, iv);
   cipher.setAAD(Buffer.from(context));
   return {
-    iv: iv.toString("base64"),
+    iv: Buffer.from(iv).toString("base64"),
     data: Buffer.concat([cipher.update(data), cipher.final()]).toString(
       "base64",
     ),
-    tag: cipher.getAuthTag().toString("base64"),
+    tag: Buffer.from(cipher.getAuthTag()).toString("base64"),
   };
 }
 function decrypt(key: Uint8Array, value: Ciphertext, context: string): Buffer {
@@ -150,7 +151,7 @@ export class VaultCipher {
     let data: Buffer | undefined;
     try {
       data = decrypt(key, value, context);
-      return JSON.parse(data.toString("utf8")) as T;
+      return JSON.parse(new TextDecoder().decode(data)) as T;
     } finally {
       key.fill(0);
       data?.fill(0);

@@ -16,6 +16,24 @@ const engine = (secureBrowser: SecureBrowserAdapter, store = new Store(), owner 
 const begin = async () => ({ authorizationUrl: "https://signin.aiko.com/owner-only-relay" });
 const verified = (binding: SecureBrowserBinding, revision = 1) => ({ ...binding, status: "connected" as const, verification: { verified: true as const, revision, expiresAt: Date.now() + 600000 } });
 
+test("expired native connections renew in place and expose a resumable MFA challenge",async()=>{
+ for(const challenge of [false,true]) {
+  const store=new Store(); let checks=0;
+  const e=engine({native:true,begin,status:async b=>{checks++;return challenge && checks>1?{...b,status:"pending"}:verified(b,checks);}},store);
+  const first=await e.connectBrowser("service.net");
+  await e.completeAuth(first.id);
+  for(const row of store.rows.values()) if(row.id===first.id) row.browserVerification.expiresAt=Date.now()-1;
+  const result=(await e.connections())[0]!;
+  expect(result.id).toBe(first.id);
+  expect(result.status).toBe(challenge?"pending":"connected");
+  expect(checks).toBe(2);
+  if(challenge)expect(result.authorizationUrl).toContain("signin.aiko.com");
+  await e.connections();expect(checks).toBe(2);
+  await e.disconnect(first.id);
+  await e.connections();expect(checks).toBe(2);
+ }
+});
+
 test("native connect reuses its flow and reconciles only already-revoked browser grants", async()=>{
  const store=new Store();let cleanup=0;let confirmed=false;
  const adapter:SecureBrowserAdapter={native:true,begin,disconnect:async b=>{cleanup++;return {...b,status:confirmed?"disconnected":"unknown"}}};
@@ -62,6 +80,25 @@ test("route discovery retains ordinary parameters and excludes credentials, acti
  expect(page.linksTruncated).toBe(false);
  for (const href of ["https://service.net/#/logout", "https://service.net/?token=private", "https://service.net/#/projects?secret=private", "https://127.0.0.1/projects", "javascript:alert(1)"])
   expect(connectionRoute(href,"service.net")).toBeUndefined();
+});
+
+test("native link batches continue beyond the first 256 anchors", async () => {
+ const selected: number[] = [];
+ const adapter = nativeBrowserConnector("123", async () => ({close:async()=>{},execute:async action => {
+  if (action.action === "url") return {url:"https://service.net/home"};
+  if (action.action === "get_count") return {count:action.selector === "a[href]" ? 258 : 0};
+  if (action.action === "get_attribute") {const index = Number(action.selector.split("nth=")[1]);selected.push(index);return {value:`/projects/${index}`};}
+  return {text:"Projects"};
+ }}), async () => {});
+ const binding = {owner:"123",domain:"service.net",connectionId:"route-batches"};
+ const first = await adapter.readContext!(binding);
+ expect(first.links).toHaveLength(256);
+ expect(first).toMatchObject({linksTruncated:true,nextLinkOffset:256});
+ const last = await adapter.readContext!(binding, undefined, first.url, first.nextLinkOffset);
+ expect(last.links).toEqual(["https://service.net/projects/256","https://service.net/projects/257"]);
+ expect(last.linksTruncated).toBe(false);
+ expect(last.nextLinkOffset).toBeUndefined();
+ expect(selected).toEqual(Array.from({length:258},(_,i)=>i));
 });
 
 test("connection events are durable metadata and replay a lost delivery acknowledgement", async () => {

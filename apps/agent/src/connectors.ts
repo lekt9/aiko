@@ -739,7 +739,11 @@ export class ConnectorEngine {
     signal?: AbortSignal,
     route?: ConnectionRoute,
   ): Promise<ConnectionIndexPage> {
-    const row = await this.load(id);
+    let row = await this.load(id);
+    if (this.options.secureBrowser?.native && row.status === "connected" && this.view(row).status === "failed") {
+      await this.completeAuth(id);
+      row = await this.load(id);
+    }
     if (
       this.view(row).status !== "connected" ||
       row.provider !== "browser" ||
@@ -749,12 +753,15 @@ export class ConnectorEngine {
       throw Error("Verified connection context unavailable");
     const binding = this.browserBinding(row);
     const target = route && connectionRoute(route.url, binding.domain);
+    const linkOffset = route?.linkOffset ?? 0;
+    if (!Number.isSafeInteger(linkOffset) || linkOffset < 0) throw Error("Invalid connection link offset");
     if (route && (!target || route.revision !== row.browserVerification.revision))
       throw Error("Connection route or session changed before indexing");
     const context = await this.options.secureBrowser.readContext(
       binding,
       signal,
       target || undefined,
+      linkOffset,
     );
     signal?.throwIfAborted();
     const current = await this.load(id);
@@ -775,6 +782,8 @@ export class ConnectorEngine {
       throw Error("Invalid connection context");
     if (context.links !== undefined && (!Array.isArray(context.links) || context.links.length > CONNECTION_LINK_LIMIT))
       throw Error("Invalid connection links");
+    if (context.nextLinkOffset !== undefined && (!Number.isSafeInteger(context.nextLinkOffset) || context.nextLinkOffset !== linkOffset + CONNECTION_LINK_LIMIT || context.linksTruncated !== true))
+      throw Error("Invalid connection link continuation");
     const pageUrl = connectionRoute(url.href, binding.domain) ?? `${url.origin}${url.pathname}`;
     const routes = [...new Set((context.links ?? []).flatMap(value => {
       const link = connectionRoute(value, binding.domain, pageUrl);
@@ -782,21 +791,28 @@ export class ConnectorEngine {
     }))];
     const revision = row.browserVerification.revision;
     const pageId = route ? connectionRouteId(id, target!) : undefined;
-    return { url: pageUrl, revision, routes, linksTruncated: context.linksTruncated === true,
+    return {
+      url: pageUrl,
+      revision,
+      routes,
+      linksTruncated: context.linksTruncated === true,
+      ...(context.nextLinkOffset !== undefined ? { nextLinkOffset: context.nextLinkOffset } : {}),
       input: {
-      id: pageId ? `connection:${revision}:${pageId}` : `connection:${id}:${revision}`,
-      subject: pageId ? `${binding.domain}/route/${pageId}` : binding.domain,
-      title: route ? `Connected route on ${binding.domain}` : `Initial context from ${binding.domain}`,
-      kind: "episode",
-      type: "connected-app-context",
-      payload: {
-        domain: binding.domain,
-        url: pageUrl,
-        context: context.text,
-        coverage: context.links === undefined ? "Initial connected page only; route discovery unavailable" : "Observed connected page; discovered navigation links queued separately; not proof of complete account coverage",
-        linksTruncated: context.linksTruncated === true,
+        id: pageId ? `connection:${revision}:${pageId}:${linkOffset}` : `connection:${id}:${revision}`,
+        subject: pageId ? `connection:${id}/route/${pageId}` : binding.domain,
+        title: route ? `Connected route on ${binding.domain}` : `Initial context from ${binding.domain}`,
+        kind: "episode",
+        type: "connected-app-context",
+        payload: {
+          domain: binding.domain,
+          url: pageUrl,
+          context: context.text,
+          coverage: context.links === undefined ? "Initial connected page only; route discovery unavailable" : "Observed connected page; discovered navigation links queued separately; not proof of complete account coverage",
+          linksTruncated: context.linksTruncated === true,
+          linkOffset,
+        },
       },
-    }};
+    };
   }
   private view(row: StoredConnection): Connection {
     const {
@@ -852,11 +868,21 @@ export class ConnectorEngine {
     // Legacy Arcade OAuth rows can no longer complete; the owner disconnects them.
     return this.view(row);
   }
-  async connections(): Promise<Connection[]> {
-    return (await this.options.store.list(`${this.prefix}connection:`))
+  connections(): Promise<Connection[]> {
+    return this.serial(() => this.connectionsUnlocked());
+  }
+  private async connectionsUnlocked(): Promise<Connection[]> {
+    const rows = (await this.options.store.list(`${this.prefix}connection:`))
       .map((v) => object(v) as StoredConnection)
-      .filter((r) => r.owner === this.options.owner)
-      .map((r) => this.view(r));
+      .filter((r) => r.owner === this.options.owner);
+    const connections: Connection[] = [];
+    for (const row of rows) {
+      if (this.options.secureBrowser?.native && row.status === "connected" && this.view(row).status === "failed") {
+        try { connections.push(await this.completeBrowser(row)); }
+        catch { connections.push(this.view(row)); }
+      } else connections.push(this.view(row));
+    }
+    return connections;
   }
   private browserBinding(row: StoredConnection): SecureBrowserBinding {
     if (row.provider !== "browser" || !row.connectorId.startsWith("browser:"))
@@ -870,7 +896,8 @@ export class ConnectorEngine {
   private async completeBrowser(row: StoredConnection): Promise<Connection> {
     if (row.status !== "pending" && row.status !== "connected")
       return this.view(row);
-    if (this.view(row).status === "failed") {
+    const renewing = row.status === "connected" && this.view(row).status === "failed" && this.options.secureBrowser?.native === true;
+    if (this.view(row).status === "failed" && !renewing) {
       row.status = "failed";
       delete row.authorizationUrl;
       delete row.browserVerification;
@@ -906,7 +933,10 @@ export class ConnectorEngine {
     } else {
       row.status = result.status;
       delete row.browserVerification;
-      if (row.status !== "pending") delete row.authorizationUrl;
+      if (row.status === "pending" && renewing) {
+        row.expiresAt = Date.now() + 30 * 60_000;
+        row.authorizationUrl = authUrl((await adapter.begin(binding)).authorizationUrl);
+      } else if (row.status !== "pending") delete row.authorizationUrl;
     }
     await this.save(row);
     return this.view(row);
@@ -1028,7 +1058,7 @@ export class ConnectorEngine {
   }
   private async connectBrowserUnlocked(value: string): Promise<Connection> {
     const domain = connectorDomain(value);
-    const connections = await this.connections();
+    const connections = await this.connectionsUnlocked();
     const existing = connections.find(
       (row) =>
         row.connectorId === `browser:${domain}` &&

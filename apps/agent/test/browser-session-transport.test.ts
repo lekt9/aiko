@@ -318,11 +318,11 @@ const liveEndpoint = process.env.AIKO_SESSION_TEST_CDP;
   "live Chrome SDK adapter physically installs and revokes an HttpOnly session without model tools",
   async () => {
     const cdp = await openPrivateBrowserCdp(liveEndpoint!);
-    const targets = await cdp.send("Target.getTargets", {});
-    const target = targets.targetInfos.find((t: any) => t.type === "page");
+    const { browserContextId } = await cdp.send("Target.createBrowserContext", {});
+    const { targetId } = await cdp.send("Target.createTarget", {url:"about:blank",browserContextId});
     const adapter = await createOwnedCookieAdapter(cdp, {
-      browserContextId: target.browserContextId,
-      targetId: target.targetId,
+      browserContextId,
+      targetId,
     });
     const metadata: PrivateSessionRecord[] = [];
     const sessions = new PrivateBrowserSessions(
@@ -343,6 +343,7 @@ const liveEndpoint = process.env.AIKO_SESSION_TEST_CDP;
       expect(JSON.stringify(metadata)).not.toContain("PRIVATE_COOKIE_SENTINEL");
     } finally {
       await sessions.close();
+      await cdp.send("Target.disposeBrowserContext", {browserContextId});
       cdp.close();
     }
   },

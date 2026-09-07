@@ -346,7 +346,7 @@ export function createSecretaryActor(options: {
     methods: { message: agentMessageMethod },
     components: [
       infer([system(SECRETARY_INSTRUCTIONS), outputValidateOnce], {
-        giveUpAfter: 1,
+        giveUpAfter: 10,
       }),
       flow,
     ],

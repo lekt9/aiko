@@ -1,4 +1,6 @@
 import { nativeLogin, prepareNativeLogin, type NativeLoginInput, type NativeLoginState, type NativeLoginView } from "./native-login.ts";
+import { NativeLoginVault, nativeLoginCipher } from "./native-login-vault.ts";
+import { renewNativeLogin } from "./native-login-renewal.ts";
 import { Database } from "bun:sqlite";
 import { nodeStorage } from "../../../packages/entity-learn/lib/storage-node.ts";
 import type { Event } from "tardie/core/event";
@@ -108,6 +110,15 @@ export function browserDriverFactory(
     evidenceDb.exec("CREATE TABLE IF NOT EXISTS native_login(id TEXT PRIMARY KEY,state TEXT NOT NULL)");
     const nativeStates = () => (evidenceDb.query("SELECT state FROM native_login").all() as {state:string}[]).map(row => JSON.parse(row.state) as NativeLoginState);
     const nativeLocked = () => nativeStates().some(state => state.status === "pending");
+    let nativeVault: NativeLoginVault;
+    try { nativeVault = new NativeLoginVault(evidenceDb, principal, nativeLoginCipher(directory, evidenceDb)); }
+    catch (error) {
+      evidenceDb.close();
+      await proxy.close();
+      if (!persistent) await rm(directory, {recursive:true,force:true});
+      throw error;
+    }
+    const restoredNativeSessions = new Set<string>();
     let nativeBusy = false;
     const privateLogin = () => nativeBusy || nativeLocked();
     const pointerStorage = nodeStorage(
@@ -301,6 +312,7 @@ export function browserDriverFactory(
         },
       });
     } catch (error) {
+      nativeVault.close();
       pointerStorage.close();
       evidenceDb.close();
       await proxy.close();
@@ -334,6 +346,7 @@ export function browserDriverFactory(
         client.disconnectTelemetry();
         await client.closeAll();
       } finally {
+        nativeVault.close();
         pointerStorage.close();
         evidenceDb.close();
         await proxy.close();
@@ -396,16 +409,28 @@ export function browserDriverFactory(
               try {return await cdp.send(method,params,sessionId);}
               catch(error) {console.warn("private_login_cdp_failed",method);throw error;}
             }};
-            const run = (request: NativeLoginInput) => nativeLogin(request, { cdp:privateCdp,
+            const run = async (request: NativeLoginInput) => {
+              if (request.action === "begin") nativeVault.discard(request.connectionId);
+              const dependencies: Parameters<typeof nativeLogin>[1] = { cdp:privateCdp,
               read: () => nativeStates().find(s => s.connectionId === request.connectionId),
-              save: state => { evidenceDb.query("INSERT INTO native_login(id,state) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state").run(state.connectionId,JSON.stringify(state)); },
-            });
+              save: state => {
+                if (state.status === "disconnected") nativeVault.remove(state.connectionId);
+                evidenceDb.query("INSERT INTO native_login(id,state) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state").run(state.connectionId,JSON.stringify(state));
+              },
+              credentials: (state, credentials) => nativeVault.stage(state, credentials),
+              verified: (state, cookies) => nativeVault.verified(state, cookies),
+              };
+              return request.action === "renew"
+                ? renewNativeLogin(request, dependencies, nativeVault, signal)
+                : nativeLogin(request, dependencies);
+            };
             stage = "expired-cleanup";
             await prepareNativeLogin(input, nativeStates(), run);
             stage = "sign-in-action";
             return await run(input);
           } finally { cdp.close(); }
         } catch(error) {
+          if (input.action === "credentials") nativeVault.discard(input.connectionId);
           // Fixed stages/method names only: never credentials, URLs or raw CDP errors.
           console.warn("private_login_failed",stage);
           throw error;
@@ -483,6 +508,13 @@ export function browserDriverFactory(
               ...(signal ? [signal] : []),
             ]);
             if (action.action === "navigate") {
+              const destination = publicTarget(action.url);
+              const state = nativeStates().find(s => s.status === "connected" && (destination.hostname === s.domain || destination.hostname.endsWith(`.${s.domain}`)));
+              if (state && !restoredNativeSessions.has(`${state.connectionId}:${state.revision}`)) {
+                const cdp = await openPrivateBrowserCdp(replayEndpoint!, active);
+                try { await nativeVault.restore(state,cdp); } finally { cdp.close(); }
+                restoredNativeSessions.add(`${state.connectionId}:${state.revision}`);
+              }
               learning.beginNavigation();
               targetOrigin = publicTarget(action.url).origin;
             }

@@ -592,7 +592,7 @@ export function createAikoActor(options: {
           }),
           outputValidateOnce,
         ],
-        { giveUpAfter: 2 },
+        { giveUpAfter: 10 },
       ),
       followLogMemory(options.memory),
       ...(options.background ? [foregroundHooks(options.memory)] : []),

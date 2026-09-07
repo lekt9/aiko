@@ -177,31 +177,31 @@ test("connected-route frontier survives restart and deduplicates cycles before i
  const f = await fixture({}, {connectorBrowser: owner => ({native:true,
   begin: async () => ({authorizationUrl:"https://signin.aiko.com/connect"}),
   status: async binding => ({...binding,status:"connected",verification:{verified:true,revision:1,expiresAt:Date.now()+600000}}),
-  readContext: async (binding, _signal, url = "https://service.net/home") => {
+  readContext: async (binding, _signal, url = "https://service.net/home", linkOffset = 0) => {
    expect(binding.owner).toBe(owner);
    reads.push(url);
    if (reads.length === 1) await f.service.host.commitRoot(f.service.host.self(indexer), {type:"AikoHooksConfigured",id:"pause-route-fixture",paused:true,at:Date.now()});
-   return {url,text:`Observed page ${new URL(url).pathname}`,links:pages[url]!};
+   return {url,text:`Observed page ${new URL(url).pathname}`,links:pages[url]!,...(url.endsWith("/home") && linkOffset === 0 ? {linksTruncated:true,nextLinkOffset:256} : {})};
   },
  })});
  const connection = await (await f.request("/api/connectors/browser", {domain:"service.net"})).json() as {id:string};
  await f.request("/api/connectors/complete", {connectionId:connection.id});
  await f.service.host.drive();
  expect(reads).toEqual(["https://service.net/home"]);
- expect(ofType(await f.events(indexer), "AikoConnectionIndexRequested")).toHaveLength(2);
+ expect(ofType(await f.events(indexer), "AikoConnectionIndexRequested")).toHaveLength(3);
  await f.restart();
  expect(reads).toHaveLength(1);
  await f.service.host.commitRoot(f.service.host.self(indexer), {type:"AikoHooksConfigured",id:"resume-route-fixture",paused:false,at:Date.now()});
  await f.service.host.drive();
- expect(reads).toEqual(Object.keys(pages));
+ expect(reads).toEqual(["https://service.net/home","https://service.net/projects","https://service.net/home","https://service.net/issues"]);
  const events = await f.events(indexer);
- expect(ofType(events,"AikoLearningIndexed")).toHaveLength(3);
- expect(ofType(events,"AikoConnectionIndexRequested")).toHaveLength(3);
+ expect(ofType(events,"AikoLearningIndexed")).toHaveLength(4);
+ expect(ofType(events,"AikoConnectionIndexRequested")).toHaveLength(4);
  expect(ofType(events,"AikoBackgroundFailed")).toHaveLength(0);
  const memory = openMemory({stateDir:accountDirectory(f.config.stateDir,"123"),owner:"123"});
  try { for (const e of ofType(events,"AikoLearningIndexed")) expect(memory.get(String(e.observation))?.observation.type).toBe("connected-app-context"); } finally {memory.close();}
  await f.restart();
- expect(reads).toHaveLength(3);
+ expect(reads).toHaveLength(4);
 });
 
 test("control thread status follows the current turn and job, not historical failures or unknown deliveries", async () => {

@@ -27,8 +27,9 @@ export function nativeBrowserConnector(
   };
   return {
     native: true,
-    readContext: async (binding, signal, target) => {
+    readContext: async (binding, signal, target, linkOffset = 0) => {
       if (binding.owner !== owner) throw Error("Owner mismatch");
+      if (!Number.isSafeInteger(linkOffset) || linkOffset < 0) throw Error("Invalid link offset");
       const destination = connectionRoute(
         target ?? `https://${binding.domain}/`,
         binding.domain,
@@ -79,7 +80,8 @@ export function nativeBrowserConnector(
       if (!Number.isSafeInteger(count?.count) || count.count! < 0)
         throw Error("Connection links unavailable");
       const links = new Set<string>();
-      for (let i = 0; i < Math.min(count.count!, CONNECTION_LINK_LIMIT); i++) {
+      const through = Math.min(count.count!, linkOffset + CONNECTION_LINK_LIMIT);
+      for (let i = linkOffset; i < through; i++) {
         signal?.throwIfAborted();
         const attribute = (await driver.execute(
           {
@@ -103,7 +105,8 @@ export function nativeBrowserConnector(
         url,
         text: text.slice(0, 12000),
         links: [...links],
-        linksTruncated: count.count! > CONNECTION_LINK_LIMIT,
+        linksTruncated: count.count! > through,
+        ...(count.count! > through ? {nextLinkOffset:through} : {}),
       };
     },
     begin: async (binding, signal) => {
@@ -123,7 +126,9 @@ export function nativeBrowserConnector(
     },
     status: async (binding, signal) => {
       if (binding.owner !== owner) throw Error("Owner mismatch");
-      const result = await invoke({ ...binding, action: "status" }, signal);
+      let result = await invoke({ ...binding, action: "status" }, signal);
+      if (result.status === "connected" && result.expiresAt <= Date.now())
+        result = await invoke({...binding, action:"renew"}, signal);
       return result.status === "connected"
         ? {
             ...binding,

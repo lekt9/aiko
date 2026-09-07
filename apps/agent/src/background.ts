@@ -436,7 +436,7 @@ export function createIndexerActor(binding: MemoryBinding, connectionContext?: (
                 Effect.tryPromise({
                   try: async (signal) => {
                     const page = e.type === "AikoConnectionIndexRequested"
-                      ? await (connectionContext ? connectionContext(e.connectionId, signal, e.revision === undefined ? undefined : {url:e.url,revision:e.revision}) : Promise.reject(new Error("Connection context unavailable")))
+                      ? await (connectionContext ? connectionContext(e.connectionId, signal, e.revision === undefined ? undefined : {url:e.url,revision:e.revision,linkOffset:e.linkOffset}) : Promise.reject(new Error("Connection context unavailable")))
                       : undefined;
                     const input = page ? page.input : e.input as LearningInput;
                     signal.throwIfAborted();
@@ -454,9 +454,13 @@ export function createIndexerActor(binding: MemoryBinding, connectionContext?: (
                       scheduled.add(id);
                       return [ev("AikoConnectionIndexRequested", {id, crawlId, connectionId:e.connectionId, url, revision:page!.revision, cause:e.cause ?? e.id})];
                     });
+                    if (page?.nextLinkOffset !== undefined) {
+                      const id = `connection-route:${connectionRouteId(crawlId,page.url,page.nextLinkOffset)}`;
+                      if (!scheduled.has(id)) next.push(ev("AikoConnectionIndexRequested", {id,crawlId,connectionId:e.connectionId,url:page.url,revision:page.revision,linkOffset:page.nextLinkOffset,cause:e.cause ?? e.id}));
+                    }
                     // Page evidence and the next frontier commit together in the
                     // native effect receipt. Recovery never depends on an in-memory crawl.
-                    return [ev("AikoLearningIndexed", {id:e.id,...result,...(page ? {url:page.url,revision:page.revision,crawlId,linksTruncated:page.linksTruncated} : {})}), ...next];
+                    return [ev("AikoLearningIndexed", {id:e.id,...result,...(page ? {url:page.url,revision:page.revision,crawlId,linksTruncated:page.linksTruncated,...(page.nextLinkOffset !== undefined ? {nextLinkOffset:page.nextLinkOffset} : {})} : {})}), ...next];
                   },
                   catch: () => job.type === "AikoConnectionIndexRequested" ? "connection_context_index_failed" : "learning_index_failed",
                 }).pipe(
@@ -771,7 +775,7 @@ export function createReflectionActor(binding: MemoryBinding) {
           }),
           outputValidateOnce,
         ],
-        { giveUpAfter: 1 },
+        { giveUpAfter: 10 },
       ),
       reflection,
     ],

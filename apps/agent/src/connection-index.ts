@@ -3,13 +3,14 @@ import { validateNoSecrets } from "entity-learn/cloudflare";
 import { publicTarget } from "./browser-proxy.ts";
 import type { LearningInput } from "./learning.ts";
 
-export type ConnectionRoute = { url: string; revision: number };
+export type ConnectionRoute = { url: string; revision: number; linkOffset?: number };
 export type ConnectionIndexPage = {
   input: LearningInput;
   url: string;
   revision: number;
   routes: string[];
   linksTruncated: boolean;
+  nextLinkOffset?: number;
 };
 export const CONNECTION_LINK_LIMIT = 256;
 
@@ -64,8 +65,8 @@ export function connectionRoute(
   }
 }
 
-export function connectionRouteId(crawlId: string, url: string) {
+export function connectionRouteId(crawlId: string, url: string, linkOffset = 0) {
   return createHash("sha256")
-    .update(JSON.stringify([crawlId, url]))
+    .update(JSON.stringify([crawlId, url, linkOffset]))
     .digest("hex");
 }

@@ -22,7 +22,8 @@ export default actor({ name: "aiko", methods: { message: agentMessageMethod }, c
   tool(memoryTools({ get stateDir() { return auditStateDir(); }, owner: "local", thread: "ag.memory-audit", redact: text => text,
     readPage: async () => { throw new Error("This fixture has no log-import grant"); } }, { fixtures: false })),
   outputValidateOnce,
-], { giveUpAfter: 1 })] });
+], { giveUpAfter: 10 })]
+});
 
 export const layersFor = () => Layer.succeed(Infer, {
   resolve: () => ({ model: { provider: "fixture", model_id: "native-memory-witness" } }),

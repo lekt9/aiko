@@ -9,6 +9,39 @@ export interface PrivateCdp {
     sessionId?: string,
   ): Promise<any>;
 }
+export const decodeCdpCookie = (c: Record<string, any>): VaultCookie => {
+  if (c.partitionKeyOpaque)
+    throw new TypeError("Opaque partitioned cookie cannot be restored");
+  return {
+    name: c.name,
+    value: c.value,
+    domain: c.domain,
+    path: c.path,
+    expires: c.session ? -1 : c.expires,
+    secure: c.secure,
+    httpOnly: c.httpOnly,
+    sameSite: c.sameSite ?? "Lax",
+    hostOnly: !c.domain.startsWith("."),
+    ...(c.partitionKey ? { partitionKey: c.partitionKey } : {}),
+  };
+};
+export const cdpCookieParameters = (c: VaultCookie) => {
+  const url = new URL(`https://${c.domain.replace(/^\./, "")}`);
+  url.pathname = c.path;
+  return {
+    name: c.name,
+    value: c.value,
+    url: url.href,
+    ...(!c.hostOnly ? { domain: c.domain } : {}),
+    path: c.path,
+    secure: c.secure,
+    httpOnly: c.httpOnly,
+    sameSite: c.sameSite,
+    ...(c.expires > 0 ? { expires: c.expires } : {}),
+    ...(c.partitionKey ? { partitionKey: c.partitionKey } : {}),
+  };
+};
+
 export async function createCdpCookieAdapter(
   cdp: PrivateCdp,
   binding: { browserContextId: string; targetId: string },
@@ -38,37 +71,6 @@ export async function createCdpCookieAdapter(
     if (!Array.isArray(result.cookies)) throw fault();
     return result.cookies as Record<string, any>[];
   };
-  const decode = (c: Record<string, any>): VaultCookie => {
-    if (c.partitionKeyOpaque) throw fault();
-    return {
-      name: c.name,
-      value: c.value,
-      domain: c.domain,
-      path: c.path,
-      expires: c.session ? -1 : c.expires,
-      secure: c.secure,
-      httpOnly: c.httpOnly,
-      sameSite: c.sameSite ?? "Lax",
-      hostOnly: !c.domain.startsWith("."),
-      ...(c.partitionKey ? { partitionKey: c.partitionKey } : {}),
-    };
-  };
-  const encode = (c: VaultCookie) => {
-    const url = new URL(`https://${c.domain.replace(/^\./, "")}`);
-    url.pathname = c.path;
-    return {
-      name: c.name,
-      value: c.value,
-      url: url.href,
-      ...(!c.hostOnly ? { domain: c.domain } : {}),
-      path: c.path,
-      secure: c.secure,
-      httpOnly: c.httpOnly,
-      sameSite: c.sameSite,
-      ...(c.expires > 0 ? { expires: c.expires } : {}),
-      ...(c.partitionKey ? { partitionKey: c.partitionKey } : {}),
-    };
-  };
   return {
     async exportCookies(domains) {
       try {
@@ -77,7 +79,7 @@ export async function createCdpCookieAdapter(
             .filter((c) =>
               domains.includes(String(c.domain).replace(/^\./, "")),
             )
-            .map(decode),
+            .map(decodeCdpCookie),
         );
       } catch {
         throw fault();
@@ -113,7 +115,7 @@ export async function createCdpCookieAdapter(
         }
         await cdp.send("Storage.setCookies", {
           browserContextId,
-          cookies: input.map(encode),
+          cookies: input.map(cdpCookieParameters),
         });
       } catch {
         throw fault();
