@@ -4,6 +4,9 @@ on:
   pull_request:
 permissions:
   contents: read
+defaults:
+  run:
+    working-directory: unlock
 jobs:
   cloud:
     runs-on: ubuntu-latest
@@ -12,6 +15,14 @@ jobs:
       WRANGLER_SEND_METRICS: 'false'
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: unlock
+      - uses: actions/checkout@v4
+        with:
+          repository: unbrowse-ai/playground
+          path: unbrowse-playground
+          token: ${{ secrets.PLAYGROUND_READ_TOKEN || github.token }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -21,10 +32,58 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: '10.12.1'
-      - run: pnpm install --frozen-lockfile
+          package_json_file: unlock/package.json
+      - run: bun install --frozen-lockfile --ignore-scripts
+        working-directory: unbrowse-playground/runtime
+      - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm aiko:cloud:build
       - run: pnpm aiko:cloud:verify
       - run: bun test scripts/cloudflare-paths.test.ts
       - run: pnpm --filter @unlock/agent exec bun test test/shared-browser-library.test.ts
-      - run: bun packages/browser-harness/install-agent-browser.ts
+      - run: bun -e 'import { installPinnedAgentBrowser } from "@unbrowse/browser-harness/install-agent-browser"; await installPinnedAgentBrowser();'
       - run: pnpm test:browser-client
+  ui-journeys:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: unlock
+      - uses: actions/checkout@v4
+        with:
+          repository: unbrowse-ai/playground
+          path: unbrowse-playground
+          token: ${{ secrets.PLAYGROUND_READ_TOKEN || github.token }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.12.1'
+          package_json_file: unlock/package.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install browser-harness==0.1.8
+      - run: bun install --frozen-lockfile --ignore-scripts
+        working-directory: unbrowse-playground/runtime
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm --filter @unlock/protocol build && pnpm --filter @unlock/sdk build
+      - run: pnpm test:e2e:aiko
+        env:
+          CHROME_BIN: /usr/bin/google-chrome
+      - run: python3 scripts/verification_evidence_test.py && python3 -O scripts/verification_evidence_test.py
+        if: always()
+      - run: bun --no-env-file test scripts/http-smoke.test.ts
+        if: always()
+      - run: node --test scripts/aiko-ui-qa.test.mjs
+        if: always()
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aiko-ui-journeys
+          path: unlock/artifacts/aiko-ui-qa/
