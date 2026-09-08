@@ -15,7 +15,7 @@ export const same = (a: string, b: string) => {
     y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x, y);
 };
-type Ciphertext = { iv: string; tag: string; data: string };
+export type Ciphertext = { iv: string; tag: string; data: string };
 export interface WrappedKey {
   provider: string;
   keyId: string;
@@ -29,7 +29,7 @@ export interface Envelope extends Ciphertext {
   v: 1;
   key: WrappedKey;
 }
-function encrypt(
+export function encrypt(
   key: Uint8Array,
   data: Uint8Array,
   context: string,
@@ -45,7 +45,7 @@ function encrypt(
     tag: Buffer.from(cipher.getAuthTag()).toString("base64"),
   };
 }
-function decrypt(key: Uint8Array, value: Ciphertext, context: string): Buffer {
+export function decrypt(key: Uint8Array, value: Ciphertext, context: string): Buffer {
   const decipher = createDecipheriv(
     "aes-256-gcm",
     key,

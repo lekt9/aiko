@@ -29,7 +29,8 @@ pnpm aiko:dev
 Tardie 0.22 owns execution and recovery; `entity-learn@0.2.0` owns private per-account memory. Telegram is an adapter to the channel-independent `@unlock/sdk/aiko` plane. Hosted model routes are configured in `apps/agent/wrangler.jsonc`; local-mode configuration is separate.
 
 - [Agent setup and security boundaries](apps/agent/README.md)
-- [Self-learning harness loop: mine agent logs, graff fixer agent, PR](docs/harness-self-learning.md)
++- [Vault key backends: local keyring, AWS KMS, 1Password Connect](docs/vault-key-backends.md)
+ - [Self-learning harness loop: mine agent logs, graff fixer agent, PR](docs/harness-self-learning.md)
 - [Telegram gateway, account isolation, portable SDK and operations](docs/aiko-gateway.md)
 - [Actual entity-learn integration, persistence and recovery](docs/aiko-entity-learn.md)
 - [Public-web browser setup, approvals and real-browser verification](docs/aiko-browser.md)
@@ -105,7 +106,7 @@ Open **Settings → Import CSV**. Choose an entire UTF-8 CSV/TSV, review matched
 
 ## Storage and security boundary
 
-`apps/web/src/routes/api.$.ts` returns 404 in production. Only an explicitly enabled development demo loads `src/server/demo.ts`. Its **shared in-memory state is process-scoped**: changes survive reloads, not server restarts. Settings → About this demo → Reset restores the seed. Tests reset this state; don't run them while preserving an interactive demo.
+`apps/web/src/routes/api.$.ts` forwards selected live connector, approval, scheduled-task, message, secretary, browser-watch and database endpoints to the authenticated agent proxy before checking demo mode. The remaining fixture API routes return 404 in production. Only an explicitly enabled development demo loads `src/server/demo.ts`. Its **shared in-memory state is process-scoped**: changes survive reloads, not server restarts. Settings → About this demo → Reset restores the seed. Tests reset this state; don't run them while preserving an interactive demo. See [the proxy allowlist](apps/web/src/server/connector-proxy.ts) for the exact live routes.
 
 Loopback Host checks, same-origin checks and no-store JSON are **not authentication**. Any local process can access the fixture API. Password/cookie/token input is not accepted; free-text metadata fields are never intended for credentials. The UI's reveal/copy controls use a fixed synthetic constant, not a production secret retrieval endpoint.
 
@@ -126,19 +127,31 @@ pnpm build
 pnpm test:http            # Requires an explicit development demo; resets its fixture state
 ```
 
-Browser tests use **browser-harness** and a fresh isolated Chromium profile, never personal Chrome. Install browser-harness and launch your own isolated browser:
+The default `pnpm test:e2e` and `pnpm test:e2e:aiko` checks use **browser-harness** to exercise connector sign-in/recovery, database editing/recovery, secretary work and draft preservation. The runner builds the current connector UI, starts local synthetic native hosts and creates a temporary Chromium profile. It shuts down its processes afterward. Hosted CI runs the same command. These checks do not validate deployed providers or personal accounts.
+
+Install `browser-harness==0.1.8` with Python 3.12 and an installed Chrome/Chromium binary:
+
+```sh
+CHROME_BIN=/path/to/chrome pnpm test:e2e:aiko
+```
+
+The runner discovers standard Linux Chrome locations when `CHROME_BIN` is omitted. Each run preserves its results and process logs in a unique directory under `artifacts/aiko-ui-qa/`. The separate gateway check (`pnpm test:e2e:gateway`) covers the landing page and Telegram link. For gateway or historical vault/CSV checks, launch an isolated browser and the appropriate web preview first:
 
 ```sh
 chromium --headless=new --remote-debugging-address=127.0.0.1 \
   --remote-debugging-port=9337 --user-data-dir="$(mktemp -d)" about:blank
 # Use your installed Chromium binary. Some CI environments require --no-sandbox.
-BU_CDP_URL=http://127.0.0.1:9337 pnpm test:e2e
+BU_CDP_URL=http://127.0.0.1:9337 pnpm test:e2e:gateway
+# Historical vault/CSV checks require explicitly enabled demo servers:
+BU_CDP_URL=http://127.0.0.1:9337 pnpm test:e2e:legacy
 BU_CDP_URL=http://127.0.0.1:9337 pnpm test:csv
 ```
 
-The runner resets only its named QA daemon (`unlock-vault-qa` by default), disables cookie seeding/recording and checks for a fresh passing report. Set `BU_NAME` to use another isolated namespace. Latest production verification used `BU_NAME=unlock-csv-qa`, CDP `http://127.0.0.1:9339`, and `UNLOCK_BASE_URL=http://127.0.0.1:4174`; browser PID: `/tmp/unlock-final-chromium.pid`.
+The legacy runner resets only its named QA daemon (`unlock-vault-qa` by default), disables cookie seeding/recording and checks for a fresh passing report. Set `BU_NAME` to use another isolated namespace and `UNLOCK_BASE_URL` for the intended loopback preview.
 
-**40 production browser checks (28 vault + 12 CSV); 20 axe scans, zero violations.** Five views checked at 320/375/414/768/1440px, additional CSV/dialog/picker checks and 1280×800/1920px geometry. CSV checks import all 1,000 rows through the browser and cover custom mapping, malformed files, duplicates, invalid records, cancel and network recovery. Axe is a baseline, not full accessibility certification. Safari, Firefox, screen readers and actual touch hardware were not tested.
+**Historical vault-demo evidence:** [the archived report](docs/verification.html) records 40 browser checks (28 vault + 12 CSV) and 20 axe scans with zero violations. These are historical synthetic-preview results, not a current Aiko verification claim. Axe is a baseline, not full accessibility certification; Safari, Firefox, screen readers and actual touch hardware were not tested.
+
+To regenerate that vault-demo report, start dedicated loopback demo development and production servers, then run `python3 scripts/verification_evidence.py` with `BU_CDP_URL`, `UNLOCK_DEMO_DEV_URL` and `UNLOCK_DEMO_PREVIEW_URL` as needed. This executes all required checks and records exit codes, source revision/content hashes, execution times and artifact hashes. `python3 scripts/write-verification.py` only renders complete passing evidence from the same unchanged source within 24 hours. It rejects old unbound artifacts and distinguishes test completion from report generation; a failed render preserves the historical report.
 
 ## Files
 
@@ -152,13 +165,14 @@ The runner resets only its named QA daemon (`unlock-vault-qa` by default), disab
 - `tests/fixtures/` — fictional CSVs, including the 1,000-row browser test.
 - `apps/web/src/lib/{csv-import,import-policy}.ts` — local parsing, mapping and shared demo validation.
 - `apps/web/src/server/{csv-import,read-json}.ts` — atomic bulk import and bounded streamed JSON reading.
-- `scripts/{vault_qa,csv_qa,browser_helpers}.py` — current browser suites.
-- `docs/verification.html` — current self-contained report with embedded screenshots.
-- `scripts/write-verification.py` — regenerate that report from measured artifacts.
+- `scripts/aiko-ui-qa.mjs`, `apps/web/test/*.browser.py` — current synthetic Aiko journeys.
+- `scripts/{vault_qa,csv_qa,browser_helpers}.py` — historical demo browser suites and shared helpers.
+- `docs/verification.html` — historical vault-demo report with embedded screenshots.
+- `scripts/{verification_evidence,write-verification}.py` — capture fresh demo evidence and render its report.
 - `docs/vault-ux.html` — approved redesign proposal.
 - `docs/build-plan.html`, `docs/research/` — underlying production plan and pinned repository/license evidence.
 - `docs/unlock-discussion.html` — preserved architecture discussion 0.7.
 - `docs/dashboard-verification.html`, `artifacts/qa/` — historical dashboard evidence, not the current UX.
-- `artifacts/{vault-qa,csv-qa}/` — current verification evidence.
+- `artifacts/{vault-qa,csv-qa}/` — historical demo evidence; fresh runs require the provenance checks above.
 
 No delegation, commits, pushes, deployment, external account login or real credential imports. Pre-existing `codedb.snapshot` remains untouched.

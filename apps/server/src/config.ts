@@ -2,6 +2,7 @@ import { KMSClient } from "@aws-sdk/client-kms";
 import { readFile, stat } from "node:fs/promises";
 import { z } from "@unlock/protocol";
 import { LocalKeyring, KmsKeyWrapper, VaultCipher } from "./crypto.js";
+import { ONE_PASSWORD_REF, OnePasswordKeyWrapper } from "./onepassword.js";
 import type { HttpRecipeConfig } from "./recipes.js";
 const loopback = (value: string) =>
   ["127.0.0.1", "[::1]", "localhost"].includes(new URL(value).hostname);
@@ -24,6 +25,24 @@ export const configSchema = z
           kind: z.literal("kms"),
           keyId: z.string().min(1),
           region: z.string().min(1),
+        })
+        .strict(),
+      z
+        .object({
+          kind: z.literal("1password-connect"),
+          origin: z.url(),
+          token: z
+            .string()
+            .min(20)
+            .max(200)
+            .refine((s) => !/[\s\p{C}]/u.test(s)),
+          secretRef: z
+            .string()
+            .min(1)
+            .max(512)
+            .refine((s) => ONE_PASSWORD_REF.test(s)),
+          timeoutMs: z.number().int().min(1_000).max(60_000).optional(),
+          cacheTtlMs: z.number().int().min(1_000).max(86_400_000).optional(),
         })
         .strict(),
     ]),
@@ -108,6 +127,26 @@ export const configSchema = z
     }
     if (new Set(c.recipes.map((r) => r.id)).size !== c.recipes.length)
       ctx.addIssue({ code: "custom", message: "Duplicate recipe IDs" });
+    if (c.encryption.kind === "1password-connect") {
+      const u = new URL(c.encryption.origin);
+      if (
+        u.username ||
+        u.password ||
+        u.hash ||
+        u.search ||
+        (u.protocol !== "https:" &&
+          !(
+            c.localDevelopment &&
+            u.protocol === "http:" &&
+            loopback(c.encryption.origin)
+          ))
+      )
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "1Password origin must be an origin-only HTTPS URL outside loopback development",
+        });
+    }
     const vaultAddress = c.sources.hashicorpVault?.address;
     if (vaultAddress) {
       const u = new URL(vaultAddress);
@@ -144,7 +183,12 @@ export function cipherFor(config: ServerConfig) {
           new KMSClient({ region: config.encryption.region }),
           config.encryption.keyId,
         )
-      : new LocalKeyring(config.encryption.active, config.encryption.keys),
+      : config.encryption.kind === "1password-connect"
+        ? new OnePasswordKeyWrapper({
+            ...config.encryption,
+            localDevelopment: config.localDevelopment === true,
+          })
+        : new LocalKeyring(config.encryption.active, config.encryption.keys),
   );
 }
 export const recipeConfigs = (config: ServerConfig) =>
