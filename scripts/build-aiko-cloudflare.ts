@@ -6,7 +6,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 export const agentDirectory = join(root, "apps/agent");
 export const wranglerConfig = resolve(process.env.AIKO_WRANGLER_CONFIG ?? join(agentDirectory, "wrangler.jsonc"));
 
-export async function buildCloudflare() {
+export async function buildCloudflare(options: { outdir?: string } = {}) {
   for (const name of ["@unlock/protocol", "@unlock/sdk"]) {
     const child = Bun.spawn(["pnpm", "--filter", name, "build"], { cwd: root, stdout: "inherit", stderr: "inherit" });
     if (await child.exited !== 0) throw new Error(`Dependency build failed: ${name}`);
@@ -27,7 +27,7 @@ export async function buildCloudflare() {
   for (const args of [
     ["pnpm", "--filter", "@unlock/web", "exec", "vite", "build", "--config", "vite.connectors.config.ts"],
     ["pnpm", "exec", "tsc", "--noEmit", "-p", "tsconfig.cloudflare.json"],
-    ["pnpm", "exec", "wrangler", "deploy", "--config", wranglerConfig, "--dry-run"],
+    ["pnpm", "exec", "wrangler", "deploy", "--config", wranglerConfig, "--dry-run", ...(options.outdir ? ["--outdir", options.outdir] : [])],
   ]) {
     const child = Bun.spawn(args, { cwd: agentDirectory, stdout: "inherit", stderr: "inherit" });
     if (await child.exited !== 0) throw new Error(`Cloud build failed: ${args.slice(0, 4).join(" ")}`);

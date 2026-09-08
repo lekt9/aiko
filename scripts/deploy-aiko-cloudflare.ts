@@ -65,6 +65,8 @@ export async function prepareCloudflareDeployment() {
 export async function deployCloudflare(options: {
   prepared?: Awaited<ReturnType<typeof prepareCloudflareDeployment>>;
   release?: CloudflareRelease;
+  /** Snapshot config pointing only at the already-checked modules and assets. */
+  prebuiltConfig?: string;
   beforePublish?: () => Promise<void>;
 } = {}) {
   process.umask(0o077);
@@ -83,6 +85,8 @@ export async function deployCloudflare(options: {
     await writeFile(pending, content, { flag: "wx", mode: 0o600 });
     await rename(pending, path);
   }
+  // Recheck before writing recovery state as well as before the remote effect.
+  await options.beforePublish?.();
   // Persist the recovery key before code can write an encrypted backup.
   await saveState();
   const redact = redactor([...Object.values(secrets), state.AIKO_E2E_TOKEN]);
@@ -92,13 +96,13 @@ export async function deployCloudflare(options: {
     const secretFile = join(secretDir, "secrets.json");
     await writeFile(secretFile, JSON.stringify(secrets), { mode: 0o600, flag: "wx" });
     const releaseVars = options.release ? [
+      "--message", `Ship ${options.release.id} (${options.release.commit})`,
       "--var", `AIKO_RELEASE_ID:${options.release.id}`,
       "--var", `AIKO_RELEASE_COMMIT:${options.release.commit}`,
       "--var", `AIKO_RELEASE_BROWSER_SOURCE:${options.release.browserSource}`,
     ] : [];
-    await options.beforePublish?.();
     // Code and secrets land in one version; no intermediate secret update.
-    const child = Bun.spawn(["pnpm", "exec", "wrangler", "deploy", "--secrets-file", secretFile, ...releaseVars, "--config", wranglerConfig], {
+    const child = Bun.spawn(["pnpm", "exec", "wrangler", "deploy", "--secrets-file", secretFile, ...releaseVars, ...(options.prebuiltConfig ? ["--no-bundle"] : []), "--config", options.prebuiltConfig ?? wranglerConfig], {
       cwd: agentDirectory, stdin: "ignore", stdout: "pipe", stderr: "pipe",
     });
     const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);

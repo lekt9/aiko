@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
 import { createHash } from "node:crypto";
@@ -11,15 +11,18 @@ import ts from "typescript";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const directory = await mkdtemp(join(tmpdir(), "aiko-workerd-portable-"));
 const agent = join(root, "apps/agent");
-const config = ts.parseConfigFileTextToJson("wrangler.jsonc", await Bun.file(join(agent, "wrangler.jsonc")).text()).config;
+const sourceConfig = process.env.AIKO_PORTABLE_BUILD_CONFIG ?? join(agent, "wrangler.jsonc");
+const config = ts.parseConfigFileTextToJson(sourceConfig, await Bun.file(sourceConfig).text()).config;
 const tokenA = "portable-test-account-a-credential";
 const tokenB = "portable-test-account-b-credential";
 const reader = "portable-test-account-read-credential";
 config.name = "aiko-portability-check";
-config.main = join(agent, "src/cloudflare.ts");
-config.assets.directory = join(agent, "public");
+config.main = resolve(dirname(sourceConfig), config.main);
+config.assets.directory = resolve(dirname(sourceConfig), config.assets.directory);
+if (config.base_dir) config.base_dir = resolve(dirname(sourceConfig), config.base_dir);
 config.vars = {
   AIKO_MODE: "demo", AIKO_INSTANCE_ID: "portability", AIKO_REPLY_STYLE: "direct",
+  AIKO_RELEASE_ID: "portable-release", AIKO_RELEASE_COMMIT: "a".repeat(40), AIKO_RELEASE_BROWSER_SOURCE: "b".repeat(64),
   AIKO_OPERATOR_TOKEN: "portable-test-operator-credential-000000",
   AIKO_PLANE_CREDENTIALS: JSON.stringify([
     { account: "acct_portable_a", digest: createHash("sha256").update(tokenA).digest("hex"), scopes: ["read", "write"] },
@@ -37,6 +40,7 @@ await new Promise<void>((resolve, reject) => socket.close(error => error ? rejec
 const origin = `http://127.0.0.1:${port}`;
 let child: ReturnType<typeof Bun.spawn> | undefined;
 let output = "";
+let captures: Promise<void>[] = [];
 async function start() {
   child = Bun.spawn(["node", join(agent, "node_modules/wrangler/bin/wrangler.js"), "dev", "--local", "--config", join(directory, "wrangler.json"), "--persist-to", join(directory, "state"), "--port", String(port), "--ip", "127.0.0.1"], {
     cwd: directory, stdin: "ignore", stdout: "pipe", stderr: "pipe",
@@ -45,14 +49,18 @@ async function start() {
   const capture = async (stream: ReadableStream<Uint8Array>) => {
     for await (const chunk of stream) output = (output + new TextDecoder().decode(chunk)).slice(-12000);
   };
-  void capture(child.stdout as ReadableStream<Uint8Array>);
-  void capture(child.stderr as ReadableStream<Uint8Array>);
+  captures = [capture(child.stdout as ReadableStream<Uint8Array>), capture(child.stderr as ReadableStream<Uint8Array>)];
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`Local Worker stopped (${child.exitCode}): ${output.slice(-6000)}`);
     try {
       const response = await fetch(`${origin}/ready`, { signal: AbortSignal.timeout(1000) });
-      if (response.ok) { assert.equal((await response.json() as any).storage, "durable-object"); return; }
+      if (response.ok) {
+        const health = await response.json() as any;
+        assert.equal(health.storage, "durable-object");
+        assert.deepEqual(health.release, { id: "portable-release", commit: "a".repeat(40), browserSource: "b".repeat(64) });
+        return;
+      }
     } catch { /* Await readiness while the exact process remains alive. */ }
     await Bun.sleep(250);
   }
@@ -62,7 +70,7 @@ async function stop() {
   if (!child) return;
   child.kill("SIGINT");
   const timer = setTimeout(() => child?.kill("SIGKILL"), 10000);
-  try { await child.exited; } finally { clearTimeout(timer); child = undefined; }
+  try { await child.exited; await Promise.all(captures); } finally { clearTimeout(timer); child = undefined; }
 }
 const request = async (path: string, token?: string, body?: unknown) => {
   const response = await fetch(origin + path, {
@@ -126,6 +134,7 @@ try {
   // This process receives only the synthetic config above. Preserve the local
   // runtime error when an endpoint returns non-JSON instead of hiding it behind
   // a JSON parser failure.
+  await stop();
   console.error(output.slice(-6000));
   throw error;
 } finally {

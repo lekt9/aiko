@@ -1,0 +1,15 @@
+{
+  "extends": "../apps/agent/tsconfig.json",
+  "compilerOptions": {
+    "typeRoots": ["../apps/agent/node_modules/@types", "../node_modules/@types"],
+    "lib": ["ES2023", "DOM", "DOM.AsyncIterable"]
+  },
+  "include": [
+    "ship.ts",
+    "ship.test.ts",
+    "build-aiko-cloudflare.ts",
+    "deploy-aiko-cloudflare.ts",
+    "verify-portable-cloud.ts",
+    "../apps/agent/src/assets.d.ts"
+  ]
+}

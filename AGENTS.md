@@ -141,6 +141,7 @@ Defined in [package.json](package.json); prerequisites are in [README.md](README
 | Agent tests | `pnpm test:aiko` — includes entity-learn validation and Bun tests |
 | Backend integration | `pnpm test:backend` — requires `UNLOCK_TEST_DATABASE_URL` pointing to a dedicated loopback PostgreSQL test database; creates/drops test schemas |
 | Hosted checks | `pnpm aiko:cloud:build`; `pnpm aiko:cloud:verify` — Worker-specific types/build and local workerd verification; agent typechecking excludes the Worker entry point. Not deployment or live-provider validation |
+| Hosted release | 2026-09-09 — [`pnpm ship`](docs/aiko-hosted.md#ship-an-existing-installation-with-one-command) builds, checkpoints/pushes this checkout, gates tests, then publishes frozen Mini App + native Worker/runner artifacts once. Git checkpoint ≠ accepted release. `--verify` reconciles readback without republishing; retain uncertain receipts in the common Git directory. Linked browser source is fingerprinted, not committed by this command. Recheck [release tests](scripts/ship.test.ts) when changing gates or recovery. |
 | Browser client | `pnpm test:browser-client` — install its verified binary as documented in the hosted guide first |
 | Browser journey | `pnpm test:e2e:aiko` — consult browser setup and target requirements in [docs/aiko-browser.md](docs/aiko-browser.md) |
 

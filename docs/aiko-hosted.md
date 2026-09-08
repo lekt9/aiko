@@ -70,6 +70,69 @@ Publishing uploads code and secrets in one Worker version, then checks `/ready`.
 
 Wrangler supports account selection through [system environment variables](https://developers.cloudflare.com/workers/wrangler/system-environment-variables/) and publishing secrets with [deploy `--secrets-file`](https://developers.cloudflare.com/workers/wrangler/commands/workers/).
 
+## Ship an existing installation with one command
+
+After the setup above, run from the Unlock checkout:
+
+```sh
+pnpm ship --message "Release hosted Aiko"
+```
+
+[`scripts/ship.ts`](../scripts/ship.ts) owns this sequence:
+
+1. Show the current branch, upstream and configured Worker URL. Refuse conflicts,
+   obvious credential filenames and configured secret values in the proposed
+   commit. This is a last guard, not a comprehensive secret audit.
+2. Build the Mini App, native Tardigrade actors, both Durable Object classes and
+   browser/compute/coding runners. Freeze the compiled Worker modules, assets and
+   Wrangler configuration for this release; publishing does **not** rebuild from
+   a checkout another editor might change.
+3. Run `git add --all`, commit pending changes (or reuse a clean HEAD), and push
+   that exact commit without force. This saves a **source checkpoint**, not a
+   claim that verification passed. Inspect the displayed changes before running;
+   the command includes all nonignored changes in this repository.
+4. Require workspace types/tests, release-script regression tests, isolated UI
+   journeys and the local workerd restart/isolation check. Workerd verifies the
+   frozen Worker build. Check logs remain under `artifacts/ship/<release-id>/`.
+5. Refuse source, artifact, branch, upstream or private-configuration drift. Then
+   publish the frozen build once using the existing deploy script.
+6. Read back the release ID, commit and linked browser-source digest from
+   `/ready`; compare the served Mini App assets byte-for-byte; check the console,
+   control page, denied anonymous actor access and authorized canary history read.
+
+The Mini App, console/API, Telegram handler and native actors are **one hosted
+Worker release**, not separate actor deployments. This does not deploy the
+optional `apps/server` vault, another app's Worker, or the playground app; migrate
+an external database; change the Telegram webhook; send a test chat message; or
+force-restart existing VMs. Updated runners are included, but this command does
+not confirm adoption by already-running VMs; their existing preparation/version
+checks govern it. Remote model/browser quality and a private Telegram login are
+not established by these release checks.
+
+The directly linked browser checkout is fingerprinted even when dirty, and its
+HEAD/dirty state are recorded. It is **not** committed or pushed by this command.
+Keep its source changes in its own repository; the frozen release artifacts are
+local evidence, not a replacement for source custody. Dependencies, the verified
+browser-client binary, Chromium/browser-harness and any local media-test runtime
+must already be installed. A failed prerequisite or test blocks deployment; there
+is no skip-tests flag.
+
+```sh
+pnpm ship --dry-run  # Show target, changes and plan; no build/commit/push/deploy
+pnpm ship --verify   # Read-only recheck of the last release; never republishes
+```
+
+A failed check leaves any completed commit/push intact. Fix the blocker and run a
+new release. Once publishing may have begun, the outcome is held as uncertain: the command
+records that state in `.git/aiko-ship.json` (the common Git directory for
+worktrees) and refuses another publish until it is reconciled. Try `--verify`
+first. If it still fails, inspect Wrangler's deployment/version history (the
+version message includes the release ID) and the receipt before deciding what to
+do; do not delete the receipt simply to retry.
+The same directory holds a release lock with the running PID. Remove a stale lock
+only after confirming that its release process has stopped. No automated rollback
+or repeated publish is attempted.
+
 ## Operate and recover from another computer
 
 The deploy command saves only canary credentials, the recovery key and the deployed URL in `AIKO_CLOUDFLARE_STATE_FILE` (default: `$XDG_CONFIG_HOME/unbrowse/aiko-cloudflare.env`, or `~/.config/unbrowse/aiko-cloudflare.env`). The file is written atomically with mode 0600. Verifiers also accept the corresponding `AIKO_*` environment variables, so CI does not need that file. Store these credentials in your secret manager; a private file remaining only on the old computer is not a recovery plan.
