@@ -5,6 +5,7 @@ import { ConnectorOnboarding } from "../src/components/connector-onboarding";
 import { DatabaseArtifact } from "../src/components/database-artifact";
 import type { DatabaseArtifactResult, DatabaseClient } from "../src/lib/databases";
 import type { PromiseReview } from "../src/lib/promises";
+import type { NativeLoginPanelView } from "../src/lib/native-login-input";
 import "../src/styles/mini-app.css";
 
 // Synthetic fixture controls. All API requests stay here; an unknown request fails.
@@ -27,6 +28,11 @@ window.fetch = async (input, init) => {
   if (path === "/api/connectors/session") return json({ token: "synthetic-only" });
   if (path === "/api/connectors/connections") return json({ connections: fixture.connections, nativeInline: true });
   if (path === "/api/connectors/browser") return json({ id: "fixture-login", nativeInline: true, status: "pending" });
+  // The private form is discovered before any credential fields are rendered.
+  if (path === "/api/connectors/native/progress?connectionId=fixture-login" && !body) return json({ progress: [] });
+  if (path === "/api/connectors/native" && body?.connectionId === "fixture-login" &&
+      Object.keys(body).length === 2 && ["form", "finish"].includes(body.action))
+    return json({ status: "pending", domain: "github.com", fields: ["username", "password"] } satisfies NativeLoginPanelView);
   if (path === "/api/connectors/password-managers") return json({ managers: [] });
   if (path === "/api/connectors/disconnect") return json({ relayDisconnectStatus: "confirmed" });
   if (path === "/api/approvals") {
