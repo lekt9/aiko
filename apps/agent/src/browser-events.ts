@@ -34,6 +34,8 @@ export interface BrowserEventBatch {
   producer: string;
   epoch: string;
   generation: number;
+  /** Fresh transport authority after restore; never part of source occurrence identity. */
+  deliveryEpoch?: string;
   items: BrowserOccurrence[];
 }
 /** Trusted producer capability. Never expose its key or permit page data to create it. */
@@ -43,6 +45,7 @@ export interface BrowserProducerGrant {
   epoch: string;
   profile: string;
   generation: number;
+  deliveryEpoch?: string;
   connectionId: string;
   connectionRevision: string;
   origins: readonly string[];
@@ -61,6 +64,7 @@ export interface BrowserObservedEvent extends Event {
   epoch: string;
   profile: string;
   generation: number;
+  deliveryEpoch?: string;
   connectionId: string;
   connectionRevision: string;
   sequence: number;
@@ -96,8 +100,8 @@ export function validateBrowserEventFields(raw: unknown, kind: BrowserEventKind)
   return { origin, outcome: raw.outcome as BrowserEventFields["outcome"], ...(kind === "network" ? { method: raw.method as string, route: raw.route as string, status: raw.status as number } : {}) };
 }
 export function validateBrowserEventBatch(raw: unknown): BrowserEventBatch {
-  if (!exact(raw, ["schema", "producer", "epoch", "generation", "items"]) || raw.schema !== BROWSER_EVENT_SCHEMA ||
-    !opaque(raw.producer) || !opaque(raw.epoch) || !positive(raw.generation) || !Array.isArray(raw.items) || !raw.items.length || raw.items.length > 128)
+  if (!exact(raw, ["schema", "producer", "epoch", "generation", "deliveryEpoch", "items"]) || raw.schema !== BROWSER_EVENT_SCHEMA ||
+    !opaque(raw.producer) || !opaque(raw.epoch) || !positive(raw.generation) || raw.deliveryEpoch !== undefined && !opaque(raw.deliveryEpoch) || !Array.isArray(raw.items) || !raw.items.length || raw.items.length > 128)
     throw Error("browser_batch_invalid");
   if (Buffer.byteLength(JSON.stringify(raw)) > 128_000) throw Error("browser_batch_bound");
   const items = raw.items.map((v: unknown) => {
@@ -107,12 +111,21 @@ export function validateBrowserEventBatch(raw: unknown): BrowserEventBatch {
     return { ...v, fields: validateBrowserEventFields(v.fields, v.kind as BrowserEventKind) } as unknown as BrowserOccurrence;
   });
   if (items.some((v, i) => i > 0 && v.sequence !== items[i - 1]!.sequence + 1)) throw Error("browser_batch_gap");
-  return { schema: BROWSER_EVENT_SCHEMA, producer: raw.producer, epoch: raw.epoch, generation: raw.generation, items };
+  return { schema: BROWSER_EVENT_SCHEMA, producer: raw.producer, epoch: raw.epoch, generation: raw.generation,
+    ...(raw.deliveryEpoch === undefined ? {} : { deliveryEpoch: raw.deliveryEpoch as string }), items };
 }
 export const browserBatchSignature = (batch: BrowserEventBatch, secret: string) => createHmac("sha256", secret).update(harnessDigest(batch)).digest("hex");
 export function browserEventKey(e: Event): string | undefined {
   return e.schema === BROWSER_EVENT_SCHEMA && Object.values(browserEventTypes).includes(e.type as any) && opaque(e.owner) && opaque(e.producer) && opaque(e.epoch) && positive(e.generation) && positive(e.sequence)
     ? `aiko-browser-event:${e.owner}:${e.producer}:${e.epoch}:${e.generation}:${e.sequence}` : undefined;
+}
+export const browserEventAdmissionRequired = (events: readonly Event[]) => events.some(e => Object.values(browserEventTypes).includes(e.type as any));
+
+/** Read from the actual native transaction, including a permit whose private acknowledgement was lost. */
+export function browserDeliveryEpoch(rows: readonly Event[], source: { owner: unknown; producer: unknown; epoch: unknown; generation: unknown }): string | undefined {
+  const permit = rows.findLast(e => e.type === "AikoBrowserWatchRestorePermitted" && e.owner === source.owner &&
+    e.producer === source.producer && e.epoch === source.epoch && e.sourceGeneration === source.generation);
+  return permit?.deliveryEpoch as string | undefined;
 }
 export function browserEventAppendAllowed(batch: readonly Event[], read: () => readonly Event[]) {
   const rows = [...read()];
@@ -120,9 +133,11 @@ export function browserEventAppendAllowed(batch: readonly Event[], read: () => r
     if (!Object.values(browserEventTypes).includes(e.type as any)) continue;
     const key = browserEventKey(e);
     if (!key) return false;
-      const prior = rows.find(p => browserEventKey(p) === key);
+    const prior = rows.find(p => browserEventKey(p) === key);
     if (prior && harnessDigest(prior) !== harnessDigest(e)) return false;
     if (!prior) {
+      if (e.deliveryEpoch !== undefined && !opaque(e.deliveryEpoch) || e.deliveryEpoch !== browserDeliveryEpoch(rows,
+        {owner:e.owner,producer:e.producer,epoch:e.epoch,generation:e.generation})) return false;
       if (rows.some(p => browserEventKey(p) && p.owner === e.owner && p.producer === e.producer && p.epoch === e.epoch && p.generation === e.generation && p.occurrence === e.occurrence)) return false;
       const sequence = rows.filter(p => browserEventKey(p) && p.owner === e.owner && p.producer === e.producer && p.epoch === e.epoch && p.generation === e.generation).reduce((n, p) => Math.max(n, Number(p.sequence)), 0);
       if (e.sequence !== sequence + 1) return false;
@@ -176,7 +191,7 @@ export function createBrowserEventAdmission(options: {
     const check = () => {
       const current = options.grant(batch.producer);
       if (!options.current() || !grant || !current || current.owner !== options.owner || !current.active || current.expiresAt <= now() ||
-        current.generation !== batch.generation || current.epoch !== batch.epoch || harnessDigest(current) !== harnessDigest(grant) || current.secret.length < 32)
+        current.generation !== batch.generation || current.epoch !== batch.epoch || current.deliveryEpoch !== batch.deliveryEpoch || harnessDigest(current) !== harnessDigest(grant) || current.secret.length < 32)
         throw Error("browser_producer_unavailable");
       const expected = browserBatchSignature(batch, current.secret);
       if (!/^[a-f0-9]{64}$/.test(signature) || !timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) throw Error("browser_producer_denied");
@@ -192,6 +207,7 @@ export function createBrowserEventAdmission(options: {
       prepared.push({ type: browserEventTypes[item.kind], schema: BROWSER_EVENT_SCHEMA, owner: options.owner,
         id: `${batch.producer}:${batch.epoch}:${batch.generation}:${item.sequence}`, producer: batch.producer, epoch: batch.epoch, profile: active.profile,
         generation: batch.generation, connectionId: active.connectionId, connectionRevision: active.connectionRevision,
+        ...(batch.deliveryEpoch === undefined ? {} : { deliveryEpoch: batch.deliveryEpoch }),
         sequence: item.sequence, occurrence: item.occurrence, kind: item.kind, observedAt: item.observedAt, at: now(), sourceId: item.sourceId,
         fields: item.fields, commitment, ...(payloadRef ? { payloadRef } : {}), ...(item.cause ? { cause: item.cause } : {}) });
     }

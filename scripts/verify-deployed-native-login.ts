@@ -42,7 +42,7 @@ for(let attempt=0;attempt<40;attempt++) {
   console.log(JSON.stringify({phase:"indexed",routes:[...indexed]}));process.exit(0);
  }
  const failed=rows.find(e=>e.type==="AikoBackgroundFailed"&&jobs.has(e.id));
- if(failed)throw Error(`Canary route index failed: ${failed.error??failed.reason??"unknown"}`);
+ if(failed)throw Error(`Canary route index failed: ${failed.errorCode??failed.error??failed.reason??"unknown"}`);
  await Bun.sleep(5000);
 }
 throw Error(`Incomplete canary route index: ${indexed.size}/3`);

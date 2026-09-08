@@ -59,6 +59,9 @@ importers:
       '@cfworker/json-schema':
         specifier: 4.1.1
         version: 4.1.1
+      '@composio/core':
+        specifier: 0.18.1
+        version: 0.18.1(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(ws@8.21.3)(zod@4.5.4)
       '@huggingface/transformers':
         specifier: 3.8.1
         version: 3.8.1
@@ -492,6 +495,21 @@ packages:
 
   '@cloudflare/workers-types@5.20260906.1':
     resolution: {integrity: sha512-mRKC5n+9OP7tZiOu7vMv2MZ+Arh3tX4b9gVAt43WFns83LNzWchhfRs9o2IkFCnYKovHo4m4Af1P4zPQWdLx0g==}
+
+  '@composio/client@0.1.0-alpha.76':
+    resolution: {integrity: sha512-MXC5JGRVdiQ4EgLricy9o/mqBa1+1T7wHFZ6Q4ZJkrjzZqOMvxTgy21Zlb5J/1oGkB2bg9UDzpH8PkXCp/D4zA==}
+
+  '@composio/core@0.18.1':
+    resolution: {integrity: sha512-VEg6F92cMG/4uhRfX6O4SRd+0Pnd4L67tF+Az/EXQ/+aPfDasW5GMTzkiSUSArGDyiMfEsLUYaTYizfnEw2usw==}
+    engines: {node: '>=22.22.3'}
+    peerDependencies:
+      zod: '>=3.25.76 <5'
+
+  '@composio/json-schema-to-zod@0.3.2':
+    resolution: {integrity: sha512-TUUzu4uQH6esokVd6LD0SK4oIz8WaYRtU0cnuj0rmxbiHS0VbhN1qdvj2gIvrIWDdNyvQUIalO63YT/lNx46Gw==}
+    engines: {node: '>=22.22.3'}
+    peerDependencies:
+      zod: '>=3.25.76 <5'
 
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
@@ -2000,6 +2018,9 @@ packages:
   '@types/http-errors@2.0.5':
     resolution: {integrity: sha512-r8Tayk8HJnX0FztbZN7oVqGccWgw98T/0neJphO91KkmOzug1KkofZURD4UaD5uH8AqcFLfdPErnBod0u71/qg==}
 
+  '@types/json-schema@7.0.15':
+    resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
+
   '@types/keygrip@1.0.6':
     resolution: {integrity: sha512-lZuNAY9xeJt7Bx4t4dx0rYCDqGPW8RXhQZK1td7d4H6E9zYbLoOtjBvfwdTKpsyxQI/2jv+armjX/RW+ZNpXOQ==}
 
@@ -2260,6 +2281,10 @@ packages:
   depd@2.0.0:
     resolution: {integrity: sha512-g7nH6P6dyDioJogAAGprGpCtVImJhpPk/roCzdb3fIh61/s/nPsfR6onyMwkCAR/OlC3yBC0lESvUoQEAssIrw==}
     engines: {node: '>= 0.8'}
+
+  dequal@2.0.3:
+    resolution: {integrity: sha512-0je+qPKHEMohvfRTCEo3CrPG6cAzAYgmzKyxRiYSSDkS6eGJdyVJm7WaYA5ECaAD9wLB2T4EEeymA5aFVcYXCA==}
+    engines: {node: '>=6'}
 
   destroy@1.2.0:
     resolution: {integrity: sha512-2sJGJTaXIIaR1w4iJSNoN0hnMY7Gpc/n8D4qSCJw8QqFWXf7cuAgnEHxBpweaVcPevC2l3KpjYCx3NypQQgaJg==}
@@ -2615,6 +2640,9 @@ packages:
     resolution: {integrity: sha512-aq+t5NAc+cS6rZQQVWC2x98CPqGtKKTMDd4Gaodv0wShnItdKg/51djkGJ1hqH+Oy0ivDftCbSLCQob8zso01w==}
     engines: {node: '>= 10'}
 
+  is-fs-case-sensitive@2.0.0:
+    resolution: {integrity: sha512-JoCsyGITdYPM+pUbeMQ4IiEuQ4wjPdeWORlG7n644isewbcxiQIr+9gmF5k7UabTP/jLBRkbgydEamR7JZBKHA==}
+
   is-promise@4.0.0:
     resolution: {integrity: sha512-hvpoI6korhJMnej285dSg6nu1+e6uxs7zG3BYAm5byqDsgJNWwxzM6z6iZiAgQR4TJ30JmBTOwqZUw3WlyH3AQ==}
 
@@ -2903,6 +2931,30 @@ packages:
       zod:
         optional: true
 
+  openai@7.10.0:
+    resolution: {integrity: sha512-sn9t2Kls7O52PwuF9BUTYNu4Gk/r0lXJyrgaNht4TNRlZFb3dJIGO0RciSgjARGCBRtWjySubAQFJttlzUvGQQ==}
+    engines: {node: '>=22.0.0'}
+    peerDependencies:
+      '@aws-sdk/credential-provider-node': '>=3.972.0 <4'
+      '@smithy/hash-node': '>=4.3.0 <5'
+      '@smithy/signature-v4': '>=5.4.0 <6'
+      undici: '>=5 <9'
+      ws: ^8.21.0
+      zod: ^3.25 || ^4.0
+    peerDependenciesMeta:
+      '@aws-sdk/credential-provider-node':
+        optional: true
+      '@smithy/hash-node':
+        optional: true
+      '@smithy/signature-v4':
+        optional: true
+      undici:
+        optional: true
+      ws:
+        optional: true
+      zod:
+        optional: true
+
   openid-client@6.8.8:
     resolution: {integrity: sha512-ZsucJA5Ad04Uv7YN4ql+s4GXNmb9uAYQwyJTsJx7CH/MX3JZioLE2pVKi1SC+YrbSLA4Px3Gi30dMjgOZtb6pA==}
 
@@ -3020,6 +3072,9 @@ packages:
 
   pure-rand@8.4.2:
     resolution: {integrity: sha512-vvuOGgcuPJAirlHvuQw1TrOiw7ptaIXXmIbNuiNOY6lNGJJH49PQ1Kj4nd783nPdQhQdicgOjVI2yI/9BD6/Ng==}
+
+  pusher-js@8.6.0:
+    resolution: {integrity: sha512-wShJPfCS/kYkCBVzVW67wa9cnQIgHTszEK2XHNrFkOgGruuGw081aERAxfRjfdFU+WcIt8x6dvbwkTW4iZuQ8Q==}
 
   qs@6.16.0:
     resolution: {integrity: sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==}
@@ -3279,6 +3334,9 @@ packages:
     resolution: {integrity: sha512-BL5MGkRln6aDYhb0xbQlEAGw743BaZYWdbWtdJOBriYJboKgUUYCadFp2/FpBBZquBC/ezNBn7wMMPx7FDZUDw==}
     engines: {node: '>=18.0.0'}
     hasBin: true
+
+  tweetnacl@1.0.3:
+    resolution: {integrity: sha512-6rt+RN7aOi1nGMyC4Xa5DdYiukl2UWCbcJft7YhxReBGQD7OAM8Pbxw6YMo4r2diNEA8FEmu32YOn9rhaiE5yw==}
 
   type-fest@0.13.1:
     resolution: {integrity: sha512-34R7HTnG0XIJcBSn5XhDd7nNFPRcXYRZrBB2O2jdKqYODldSzBAqzsWoZYYvduky73toYS/ESqxPvkDf/F0XMg==}
@@ -3837,6 +3895,33 @@ snapshots:
     optional: true
 
   '@cloudflare/workers-types@5.20260906.1': {}
+
+  '@composio/client@0.1.0-alpha.76': {}
+
+  '@composio/core@0.18.1(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(ws@8.21.3)(zod@4.5.4)':
+    dependencies:
+      '@composio/client': 0.1.0-alpha.76
+      '@composio/json-schema-to-zod': 0.3.2(zod@4.5.4)
+      '@types/json-schema': 7.0.15
+      is-fs-case-sensitive: 2.0.0
+      openai: 7.10.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@7.29.1)(ws@8.21.3)(zod@4.5.4)
+      picocolors: 1.1.1
+      pusher-js: 8.6.0
+      semver: 7.8.5
+      undici: 7.29.1
+      zod: 4.5.4
+      zod-to-json-schema: 3.25.2(zod@4.5.4)
+    transitivePeerDependencies:
+      - '@aws-sdk/credential-provider-node'
+      - '@smithy/hash-node'
+      - '@smithy/signature-v4'
+      - ws
+
+  '@composio/json-schema-to-zod@0.3.2(zod@4.5.4)':
+    dependencies:
+      '@cfworker/json-schema': 4.1.1
+      dequal: 2.0.3
+      zod: 4.5.4
 
   '@cspotcode/source-map-support@0.8.1':
     dependencies:
@@ -5039,6 +5124,8 @@ snapshots:
 
   '@types/http-errors@2.0.5': {}
 
+  '@types/json-schema@7.0.15': {}
+
   '@types/keygrip@1.0.6': {}
 
   '@types/koa-compose@3.2.9':
@@ -5320,6 +5407,8 @@ snapshots:
   depd@1.1.2: {}
 
   depd@2.0.0: {}
+
+  dequal@2.0.3: {}
 
   destroy@1.2.0: {}
 
@@ -5685,6 +5774,8 @@ snapshots:
 
   ipaddr.js@2.5.0: {}
 
+  is-fs-case-sensitive@2.0.0: {}
+
   is-promise@4.0.0: {}
 
   isbot@5.2.2: {}
@@ -5937,6 +6028,14 @@ snapshots:
       ws: 8.21.3
       zod: 4.5.4
 
+  openai@7.10.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/signature-v4@5.7.3)(undici@7.29.1)(ws@8.21.3)(zod@4.5.4):
+    optionalDependencies:
+      '@aws-sdk/credential-provider-node': 3.972.82
+      '@smithy/signature-v4': 5.7.3
+      undici: 7.29.1
+      ws: 8.21.3
+      zod: 4.5.4
+
   openid-client@6.8.8:
     dependencies:
       jose: 6.2.12
@@ -6041,6 +6140,10 @@ snapshots:
       ipaddr.js: 1.9.1
 
   pure-rand@8.4.2: {}
+
+  pusher-js@8.6.0:
+    dependencies:
+      tweetnacl: 1.0.3
 
   qs@6.16.0:
     dependencies:
@@ -6381,6 +6484,8 @@ snapshots:
       esbuild: 0.28.2
     optionalDependencies:
       fsevents: 2.3.3
+
+  tweetnacl@1.0.3: {}
 
   type-fest@0.13.1: {}
 

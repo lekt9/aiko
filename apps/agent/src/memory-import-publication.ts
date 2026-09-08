@@ -19,6 +19,9 @@ export function nativeMemoryImportPublication(options: {
   histories: unknown;
   /** Synchronous native account host exportHistory, never remote execution. */
   history(): unknown;
+  /** Required when the host mounts all-write executor custody. Verifies this
+   * native receipt and revokes that original execution in the same transaction. */
+  withExecutionFence?: <T>(verify: () => T | undefined) => Promise<T | undefined>;
 }): MemoryPublicationReader {
   const { memory, storage, owner, operationId, fingerprint, importId, history } = options;
   const archive = structuredClone(options.archive), histories = structuredClone(options.histories);
@@ -30,16 +33,17 @@ export function nativeMemoryImportPublication(options: {
     async receipt(request) {
       if (request.owner !== owner || request.operationId !== operationId || request.fingerprint !== fingerprint)
         throw Error("Foreign or changed native import publication request");
-      return memory.journal.read(() => {
+      const verify = () => memory.journal.read(() => {
         const row = storage.prepare("SELECT id,digest FROM aiko_history_import WHERE singleton=1").get();
         if (!row) return undefined;
         if (row.id !== importId || row.digest !== nativeDigest) throw Error("Native account import receipt conflict");
         const checked = memory.checkArchiveErasure(archive);
         if (!same(checked.fence, request.fence) || !same(memory.exportArchive(), archive) || !same(history(), histories))
           throw Error("Native account import state does not match its original receipt");
-        return { status: "published", operationId, fingerprint, fence: structuredClone(checked.fence),
+        return { status: "published" as const, operationId, fingerprint, fence: structuredClone(checked.fence),
           reference: `native-account-import:${importId}`, digest: sha(["aiko.native-import-publication/v1", owner, importId, nativeDigest, checked.fence]) };
       });
+      return options.withExecutionFence ? options.withExecutionFence(verify) : verify();
     },
   };
 }

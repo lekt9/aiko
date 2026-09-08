@@ -10,6 +10,23 @@ The fix uses the persona rewrite operation, keeps protected facts and code ancho
 
 Cloudflare ingress now schedules a durable alarm and that alarm awaits the native actor driver. This follows the [Durable Object lifecycle](https://developers.cloudflare.com/durable-objects/api/state/) and [alarm execution](https://developers.cloudflare.com/durable-objects/api/alarms/) model rather than treating an RPC's background promise as a durable work queue.
 
+## Entrypoint and early replies
+
+Source trace (2026-09-08):
+
+1. Hosted requests enter `POST /telegram/webhook` in [cloudflare.ts](../apps/agent/src/cloudflare.ts). [telegram.ts](../apps/agent/src/telegram.ts) verifies the webhook secret and private-chat/account boundary, then normalizes the update.
+2. The Worker calls the owner's `AikoAccountDO.acceptTelegram` → `accept`. The best-effort reaction happens **before** `MessageReceived` is committed and `kick` arms the durable alarm. A reaction proves neither durable acceptance nor a running model. [telegram-webhook.ts](../apps/agent/src/telegram-webhook.ts) acknowledges the webhook only after acceptance or a matching duplicate.
+3. `AikoAccountDO.alarm` awaits [the account host's native driver](../apps/agent/src/cloudflare-host.ts). The foreground actor is [createAikoActor](../apps/agent/src/actor.ts), with progress and outbox components mounted before inference/tool execution.
+4. Working `TextReturned` goes through [channelProgress](../apps/agent/src/channel-progress.ts). Final `respond` → `AikoResponseRequested` → `voiceAndOutbox` → `AikoReplyPrepared` → Telegram send → `AikoDeliverySettled` is separate. A settled progress message never completes a request.
+
+The local path is [main.ts](../apps/agent/src/main.ts) → [server.ts](../apps/agent/src/server.ts), either its webhook handler or [the durable poller](../apps/agent/src/telegram-polling.ts). Both feed the same foreground actor.
+
+The model is instructed to include a short, task-specific update with its first tool action. Previously, silent tool calls could leave only reactions/typing until completion. The native progress component now attempts one neutral message—“I’m looking into your request now.”—before silent tool work executes. Model commentary or an explicit message takes precedence; quick final answers remain a single message. This adds no inference call or separate sender, and does not interpolate private tool arguments.
+
+The `AikoProgressActivated` version-2 marker keeps the new fallback from replaying pre-upgrade tool calls. Its once-per-epoch state uses the durable history, not compacted model context. Started sends are uncertain after a crash and are never retried; terminal/cancelled and stale-epoch work cannot produce late feedback. Existing redaction, persona policy and destination checks still apply.
+
+Verification: [progress tests](../apps/agent/test/channel-progress.test.ts) exercise a held-open native tool, parallel calls, explicit commentary, failed/unknown delivery, migration and restart. [response tests](../apps/agent/test/channel-response.test.ts) preserve the final-response obligation; [AccountStorage tests](../apps/agent/test/cloudflare-host.test.ts) exercise alarm-driven progress followed by final delivery across host recreation. These are local checks with injected providers, not deployed or live Telegram evidence. The fallback still waits for the first model action: it cannot repair an unarmed alarm, blocked inference, or an unavailable transport. For a live stall, inspect `MessageReceived`, `ModelCalled`, `ToolCalled`/`ToolReturned`, `AikoProgressSettled`, and final preparation/delivery receipts before considering [the operator wake procedure](aiko-hosted.md).
+
 ## Chat primitives used by Aiko
 
 | Primitive | Aiko behavior |

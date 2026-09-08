@@ -549,10 +549,10 @@ export async function createCloudflareAccountHost<R>(
     threads: async () => threadsSync(),
     self: (thread: string) => formatThreadAddress(addressOf(thread)),
     commit,
-    /** Guarded host metadata, with optional same-SQL materialization. Never arms
-     * or marks execution. A zero append is not an acknowledgement: callers must
+    /** Guarded host metadata, with optional same-SQL materialization. Explicit
+     * wake persists recovery coverage before commit. A zero append is not an acknowledgement: callers must
      * verify their exact retained fact, including immutable replay payloads. */
-    appendControl: async (thread: string, events: readonly Event[], control?: { sidecar?: () => undefined }) => {
+    appendControl: async (thread: string, events: readonly Event[], control?: { sidecar?: () => undefined; wake?: boolean }) => {
       if (!options.canAppend) throw new Error("Control append requires a synchronous guard");
       // Reject native async callbacks before invocation: rejecting their returned
       // Promise cannot stop writes after an await. This is a trusted host hook;
@@ -568,7 +568,7 @@ export async function createCloudflareAccountHost<R>(
         if (typeof at !== "number" || !Number.isFinite(at))
           throw new Error("First control event requires a finite timestamp");
         return [threadCreated(addressOf(thread), undefined, at), ...events];
-      }, false, true, control?.sidecar);
+      }, control?.wake === true, true, control?.sidecar);
     },
     commitRoot: async (address: string, event: Event) => {
       const target = parseThreadAddress(address);

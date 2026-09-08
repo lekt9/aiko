@@ -199,3 +199,79 @@ for (const missing of [
     expect(f.jobs).toHaveLength(0);
   }, 30_000);
 }
+
+function webhookDeployment(){
+  const value=deployment();
+  value.owners[owner]!.webhooks=[{id:"requests-v1",url:"https://hooks.receiver.com/aiko",signingKeyRef:"requests-v1",expiresAt:Date.now()+600000,maxBytes:8192,retentionMs:600000}];
+  value.owners[owner]!.actions=[{id:"deliver",label:"Send request",action:{kind:"webhook",destination:"requests-v1"}}];
+  return value;
+}
+const webhookKeys=(account=owner,key="PRIVATE_WEBHOOK_SIGNING_KEY_00000000000000")=>JSON.stringify({version:1,owners:{[account]:{"requests-v1":key,"requests-v2":key+"V2"}}});
+async function webhookConfigured(){
+  const f=await fixture(),config=webhookDeployment();
+  f.env.AIKO_BROWSER_WATCH_CONFIG=JSON.stringify(config);f.env.AIKO_BROWSER_WATCH_WEBHOOK_KEYS=webhookKeys();
+  await f.storage().put(storeKey(),record());return {...f,config};
+}
+
+test("actual Worker initializes immutable webhook channel before discovery without allocating a browser",async()=>{
+  const f=await webhookConfigured();
+  const response=await f.request(path);expect(response.status).toBe(200);
+  const body=await response.json() as any;expect(body.result.actions).toEqual(f.config.owners[owner]!.actions);
+  const rows=f.events(),intents=rows.filter(e=>e.type==="AikoChannelBindingIntent");
+  expect(intents).toHaveLength(1);expect(intents[0].binding.name).toBe("browser-watch-webhook:requests-v1");
+  expect(intents[0].binding.generation).toBe(1);expect(rows.filter(e=>e.type==="AikoChannelBindingReady")).toHaveLength(1);
+  expect(JSON.stringify(rows)+JSON.stringify(body)).not.toContain("PRIVATE_WEBHOOK_SIGNING_KEY");
+  expect(f.requests).toHaveLength(0);expect(f.jobs).toHaveLength(0);expect(await f.storage().get("codegraff:sandbox")).toBeUndefined();
+  await f.restart();expect((await f.request(path)).status).toBe(200);
+  expect(f.events().filter(e=>e.type==="AikoChannelBindingIntent")).toEqual(intents);
+},30000);
+
+test("actual Worker omits destinations with missing or foreign secret references",async()=>{
+  for(const secret of [undefined,webhookKeys("456")]){
+    const f=await webhookConfigured();f.env.AIKO_BROWSER_WATCH_WEBHOOK_KEYS=secret;
+    const response=await f.request(path);expect(response.status).toBe(200);expect((await response.json() as any).result.actions).toEqual([]);
+    expect(f.events().some(e=>e.type==="AikoChannelBindingIntent")).toBe(false);expect(f.requests).toHaveLength(0);
+  }
+},30000);
+
+test("same-ID secret or URL rotation cannot rebind the retained Worker channel across restart",async()=>{
+  for(const field of ["secret","url"]){
+    const f=await webhookConfigured();expect((await f.request(path)).status).toBe(200);
+    const original=f.events().filter(e=>e.type==="AikoChannelBindingIntent");
+    if(field==="secret")f.env.AIKO_BROWSER_WATCH_WEBHOOK_KEYS=webhookKeys(owner,"CHANGED_PRIVATE_WEBHOOK_KEY_00000000000000");
+    else{f.config.owners[owner]!.webhooks![0]!.url="https://hooks.receiver.com/changed";f.env.AIKO_BROWSER_WATCH_CONFIG=JSON.stringify(f.config);}
+    const cut=await f.request(path);expect([200,409]).toContain(cut.status);if(cut.status===200)expect((await cut.json() as any).result.actions).toEqual([]);
+    await f.restart();const response=await f.request(path);expect(response.status).toBe(200);expect((await response.json() as any).result.actions).toEqual([]);
+    expect(f.events().filter(e=>e.type==="AikoChannelBindingIntent")).toEqual(original);expect(f.requests).toHaveLength(0);expect(f.jobs).toHaveLength(0);
+  }
+},30000);
+
+test("new destination identity installs a new native channel while removal never remaps the old identity",async()=>{
+  const f=await webhookConfigured();expect((await f.request(path)).status).toBe(200);
+  const original=f.events().filter(e=>e.type==="AikoChannelBindingIntent");
+  f.config.owners[owner]!.webhooks![0]={...f.config.owners[owner]!.webhooks![0]!,id:"requests-v2",signingKeyRef:"requests-v2",url:"https://hooks.receiver.com/v2"};
+  f.config.owners[owner]!.actions[0]!.action={kind:"webhook",destination:"requests-v2"};f.env.AIKO_BROWSER_WATCH_CONFIG=JSON.stringify(f.config);
+  await f.restart();const response=await f.request(path);expect(response.status).toBe(200);expect((await response.json() as any).result.actions[0].action.destination).toBe("requests-v2");
+  const intents=f.events().filter(e=>e.type==="AikoChannelBindingIntent");expect(intents).toHaveLength(2);expect(intents[0]).toEqual(original[0]);
+  expect(intents.map(e=>e.binding.generation)).toEqual([1,1]);
+  delete f.env.AIKO_BROWSER_WATCH_CONFIG;expect((await f.request(path)).status).toBe(409);
+  await f.restart();expect((await f.request(path)).status).toBe(503);expect(f.events().filter(e=>e.type==="AikoChannelBindingIntent")).toEqual(intents);
+},30000);
+
+test("Worker resumes an exact retained webhook binding intent after a crash before BindingReady",async()=>{
+  const f=await webhookConfigured();let pending:Uint8Array|undefined;
+  const transaction=f.storage().transactionSync;
+  f.storage().transactionSync=(fn:()=>unknown)=>{
+    const result=transaction(fn);
+    if(!pending&&f.db().query("SELECT name FROM sqlite_master WHERE name='aiko_thread_events'").get()){
+      const rows=f.events();if(rows.some(e=>e.type==="AikoChannelBindingIntent")&&!rows.some(e=>e.type==="AikoChannelBindingReady"))pending=f.db().serialize();
+    }
+    return result;
+  };
+  expect((await f.request(path)).status).toBe(200);expect(pending).toBeDefined();
+  const first=f.events().find(e=>e.type==="AikoChannelBindingIntent");
+  await f.restore(pending!);expect(f.events().some(e=>e.type==="AikoChannelBindingReady")).toBe(false);
+  const response=await f.request(path);expect(response.status).toBe(200);expect((await response.json() as any).result.actions).toHaveLength(1);
+  expect(f.events().filter(e=>e.type==="AikoChannelBindingIntent")).toEqual([first]);
+  expect(f.events().filter(e=>e.type==="AikoChannelBindingReady")).toHaveLength(1);expect(f.requests).toHaveLength(0);
+},30000);

@@ -2,6 +2,10 @@
 
 Research date: 2026-09-06. Objective: serve the same account from Telegram, frontend, and API while selecting from Arcade's live catalog and evidence-backed generated capabilities. A live read-only project probe returned 8,252 tools. This is a tool count, not a count of distinct services or authorized accounts.
 
+## Current integration path
+
+2026-09-08 — When the owner-scoped Composio rollout is enabled, external API discovery uses live Composio sessions through the [shared native dynamic-tool executor](composio-and-agentmail.md), not the Arcade catalog. The router still serves native, retained, browser and legacy capabilities. The research and receipts below describe the earlier Arcade baseline, not a claim that all current integrations use it.
+
 ## Recommended design
 
 Use one durable router actor per account. Aiko asks for a route with the current task and relevant, non-secret execution history. The router returns a small set of exact tool identifiers and schemas, plus explicit connection/discovery state. A separate execution path enforces authentication, user authority and receipts. Store catalog metadata separately from private connection records. Persist route decisions and their catalog version so restart/replay can be inspected and stale decisions rejected.

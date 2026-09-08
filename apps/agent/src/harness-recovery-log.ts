@@ -23,19 +23,33 @@ function browserWatchReceiptAllowed(event: Event, history: readonly Event[], ori
     recoveryOwned(history, owner, "AikoHarnessChecked").some(e => e.id === original.id && (e.witness as HarnessWitness)?.status === "satisfied")) return false;
   return recoveryOwned(history, owner, "AikoBrowserWatchSettled").some(e => e.operationId === original.id && e.source === started.source && e.status === "unknown");
 }
+// Native rows in an owner-bound journal may omit owner; an explicit different
+// owner can neither supply this parent's identity nor cancel it.
+const taskRowOwned = (event: Event, owner: string) => event.owner === undefined || event.owner === owner;
 export function recoveryActive(events: readonly Event[], owner: string, task: RecoveryTask) {
   return task?.thread === `user-${owner}` && Number.isSafeInteger(task.epoch) && task.epoch >= 0 &&
-    events.some(e => e.type === "MessageReceived" && e.id === task.turn && (e.epoch ?? 0) === task.epoch) &&
-    !events.some(e => ["TurnCancelled", "TurnCompleted", "TurnFailed"].includes(e.type) && e.turn === task.turn && (e.epoch ?? 0) === task.epoch ||
-      e.type === "CancellationRequested" && (e.invocation as any)?.method === "message" && (e.invocation as any)?.id === task.turn && ((e.invocation as any)?.epoch ?? 0) === task.epoch);
+    events.some(e => taskRowOwned(e, owner) && e.type === "MessageReceived" && e.id === task.turn && (e.epoch ?? 0) === task.epoch) &&
+    !events.some(e => taskRowOwned(e, owner) && (["TurnCancelled", "TurnCompleted", "TurnFailed"].includes(e.type) && e.turn === task.turn && (e.epoch ?? 0) === task.epoch ||
+      e.type === "CancellationRequested" && (e.invocation as any)?.method === "message" && (e.invocation as any)?.id === task.turn && ((e.invocation as any)?.epoch ?? 0) === task.epoch));
+}
+/** The producer and atomic fence use the same exact-parent budget. Legacy rows
+ * without a declared deadline keep the 60-second ceiling; malformed or foreign
+ * parent metadata cannot create a fresh allowance. Earlier declarations win. */
+export function recoveryDeadline(events: readonly Event[], owner: string, task: RecoveryTask, startedAt: number): number | undefined {
+  if (task?.thread !== `user-${owner}` || !Number.isSafeInteger(task.epoch) || task.epoch < 0 || !Number.isSafeInteger(startedAt) || startedAt < 0) return;
+  const message = events.find(e => taskRowOwned(e, owner) && e.type === "MessageReceived" && e.id === task.turn && (e.epoch ?? 0) === task.epoch);
+  if (!message) return;
+  const deadlines = [message.deadlineAt, (message.call as { deadlineAt?: unknown } | undefined)?.deadlineAt].filter(d => d !== undefined);
+  if (deadlines.some(d => !Number.isSafeInteger(d) || Number(d) < 0)) return;
+  return Math.min(Number.MAX_SAFE_INTEGER, startedAt + 60_000, ...deadlines as number[]);
 }
 export function recoveryTask(events: readonly Event[], owner: string, thread: string, call: { callId: string; turn?: string }): RecoveryTask | undefined {
   if (thread !== `user-${owner}` || !call.turn) return undefined;
   const names = ["harness_run", "harness_call", "harness_recover", "harness_reconcile"];
-  const invocation = events.findLast(e => e.callId === call.callId && e.turn === call.turn &&
+  const invocation = events.findLast(e => taskRowOwned(e, owner) && e.callId === call.callId && e.turn === call.turn &&
     (e.type === "ToolCalled" && names.includes(String(e.name)) || e.type === "AikoCodeToolStarted" && e.owner === owner && names.includes(String(e.tool))));
   if (!invocation) return undefined;
-  const parent = events.findLast(e => e.type === "PackageCalled" && e.callId === call.callId && e.turn === call.turn);
+  const parent = events.findLast(e => taskRowOwned(e, owner) && e.type === "PackageCalled" && e.callId === call.callId && e.turn === call.turn);
   const task = { thread, turn: call.turn, epoch: Number(invocation.epoch ?? parent?.epoch ?? 0) };
   return recoveryActive(events, owner, task) ? task : undefined;
 }
@@ -112,10 +126,9 @@ export function harnessRecoveryAppendAllowed(batch: readonly Event[], read: () =
         const watch = recoveryOwned(history, owner, "AikoBrowserWatchStarted").find(e => e.id === event.receiptOf);
         const parent = recoveryOwned(history, owner, "AikoHarnessTaskBound").find(e => e.id === event.receiptOf);
         const task = parent?.task as RecoveryTask;
-        const message = parent && history.find(e => e.type === "MessageReceived" && e.id === task.turn && (e.epoch ?? 0) === task.epoch);
-        const deadlineAt = Math.min(Number((message?.call as any)?.deadlineAt ?? message?.deadlineAt ?? Number.MAX_SAFE_INTEGER), Number(parent?.at) + 60_000);
+        const deadlineAt = parent && recoveryDeadline(history, owner, task, Number(parent.at));
         if (watch ? !original || !browserWatchReceiptAllowed(event, history, original, watch) : !original || !parent || event.caseId !== null || original.caseId !== null || !recoveryActive(history, owner, task) ||
-          !Number.isSafeInteger(deadlineAt) || deadlineAt <= Date.now() ||
+          deadlineAt === undefined || deadlineAt <= Date.now() ||
           !recoverySame(recoveryTask(history, owner, task.thread, { callId: String(event.reconciliationCallId), turn: task.turn }), task) ||
           ["harnessDigest", "inputRef", "contextDigest"].some(key => event[key] !== original[key]) ||
           recoveryOwned(history, owner, "AikoHarnessRunStarted").filter(e => e.receiptOf === original.id).length >= 2 ||
@@ -151,16 +164,18 @@ export function harnessRecoveryAppendAllowed(batch: readonly Event[], read: () =
       }
       if (event.type === "AikoHarnessImpasseRecorded") {
         const failures = repeatedHarnessFailure(history, owner, task, String(event.signature));
-        if (!failures || !recoverySame(event.failures, failures.map(e => e.id)) || event.goalRef !== task.turn ||
+        const deadlineAt = failures && recoveryDeadline(history, owner, task, Number(failures[0]!.at));
+        if (!failures || deadlineAt === undefined || !recoverySame(event.failures, failures.map(e => e.id)) || event.goalRef !== task.turn ||
           event.maxStrategies !== 2 || event.maxSubgoalDepth !== 1 || event.maxExecutions !== 4 || !Number.isSafeInteger(event.deadlineAt) ||
-          Number(event.deadlineAt) > Number(failures[0]!.at) + 60_000 ||
+          Number(event.deadlineAt) > deadlineAt ||
           ["harnessDigest", "contractDigest", "contextDigest", "inputRef"].some(key => event[key] !== failures[1]![key])) return false;
       }
       if (event.type === "AikoHarnessRecoveryStarted") {
         const impasse = recoveryOwned(history, owner, "AikoHarnessImpasseRecorded").find(e => e.id === event.impasseId && recoverySame(e.task, task));
         const started = recoveryOwned(history, owner, event.type).filter(e => e.impasseId === event.impasseId);
         const settled = recoveryOwned(history, owner, "AikoHarnessRecoverySettled");
-        if (!impasse || !["verified-procedure", "refresh-schema", "alternate-capability", "owner-information"].includes(String(event.strategy)) ||
+        const deadlineAt = impasse && recoveryDeadline(history, owner, task, Number(impasse.at));
+        if (!impasse || deadlineAt === undefined || Number(event.deadlineAt) > deadlineAt || !["verified-procedure", "refresh-schema", "alternate-capability", "owner-information"].includes(String(event.strategy)) ||
           event.depth !== 1 || event.deadlineAt !== impasse.deadlineAt || Number(event.deadlineAt) <= Date.now() || started.length >= 2 ||
           started.some(e => e.strategy === event.strategy || e.strategyDigest === event.strategyDigest || !settled.some(r => r.id === e.id) || settled.some(r => r.id === e.id && r.status === "recovered"))) return false;
       }

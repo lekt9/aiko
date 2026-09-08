@@ -116,7 +116,7 @@ export async function createMemoryAuthorityRegistry(storage: AccountStorage, wri
      * arbitrary HTTP, model-tool or archive ingress. */
     async append(owner: string, event: MemoryAuthorityEvent) {
       const scope = scopeOf(owner);
-      const terminal = event.type === "AikoMemoryAuthorityEraseCommitted" || event.type === "AikoMemoryAuthorityEraseAborted" || event.type === "AikoMemoryAuthorityRestoreSettled";
+      const terminal = event.type === "AikoMemoryAuthorityEraseCommitted" || event.type === "AikoMemoryAuthorityEraseAborted" || event.type === "AikoMemoryAuthorityRestoreSettled" || event.type === "AikoMemoryAuthorityWriteClosed";
       // A newer deployment may reconcile OLD committed work, but cannot admit
       // a new claim under an older generation. The native append guard still
       // requires the exact pending claim or exact historical terminal replay.

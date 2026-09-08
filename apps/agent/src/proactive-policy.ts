@@ -113,6 +113,9 @@ const digest = (v: unknown): v is string => typeof v === "string" && /^sha256:[a
 const integer = (v: unknown, min: number, max: number): v is number => Number.isSafeInteger(v) && Number(v) >= min && Number(v) <= max;
 const keys = (v: object, expected: string[]) => Object.keys(v).sort().join(",") === expected.sort().join(",");
 const DAY = 86_400_000;
+// Legacy native settlement rows can omit owner inside an owner-bound journal.
+// An explicit other owner must not settle this owner's decision or reservation.
+const ownerMatches = (event: Event, owner: string | undefined) => owner === undefined || event.owner === undefined || event.owner === owner;
 const same = (a: unknown, b: unknown) => { try { return harnessDigest(a as any) === harnessDigest(b as any); } catch { return false; } };
 
 export interface ProactiveAcquisitionOutcome {
@@ -275,7 +278,7 @@ export function proactivePolicy(events: readonly Event[], owner: string, decisio
   const todaySpend = dispatched.filter(e => Math.floor(Number(e.at) / DAY) === today).length;
   const activeReservations = events.filter(e => e.type === "AikoProactiveAccepted" && e.owner === owner && e.chat === owner && e.id !== decision.id &&
     Number(e.decisionAt ?? e.at) + DAY > now && !dispatched.some(d => d.decisionId === e.id) &&
-    !events.some(d => d.type === "AikoDeliverySettled" && d.turn === `proactive:${e.id}`));
+    !events.some(d => ownerMatches(d, owner) && d.type === "AikoDeliverySettled" && d.turn === `proactive:${e.id}`));
   let dueAt = quietUntil(now, p.quietHours), reason = dueAt > now ? "quiet-hours" : "eligible";
   if (validContribution(contribution, decision.at)) {
     if (contribution.notBefore > dueAt) { dueAt = contribution.notBefore; reason = "contribution-deferred"; }
@@ -309,7 +312,7 @@ export function proactiveBatchAt(events: readonly Event[], owner: string, decisi
     Number(e.batchAt) + Number(e.batchWindowMs) >= decision.at ? Math.min(first, Number(e.batchAt)) : first, decision.at);
 }
 
-const wakeAfter = (e: Event, wait: Event, owner: string) =>
+const wakeAfter = (e: Event, wait: Event, owner: string | undefined) => ownerMatches(e, owner) && (
   (e.type === "AikoProactiveContributionPolicy" && e.owner === owner) ||
   (e.type === "AikoProactivePreferencesSet" && e.owner === owner) ||
   (e.type === "AikoHooksConfigured" && (e.owner === undefined || e.owner === owner)) ||
@@ -317,11 +320,11 @@ const wakeAfter = (e: Event, wait: Event, owner: string) =>
   e.type === "AikoDeliverySettled" ||
   (wait.contributionVersion === 2 && (e.owner === undefined || e.owner === owner) &&
     ["MessageReceived", "TurnResumed", "TurnCompleted", "TurnFailed", "TurnCancelled", "AikoWorkTransition", "AikoWorkContactHandling", "AikoProactiveDecision"].includes(e.type)) ||
-  (e.type === "AlarmFired" && Number(e.at) >= Number((wait.call as any)?.deadlineAt));
+  (e.type === "AlarmFired" && Number(e.at) >= Number((wait.call as any)?.deadlineAt)));
 
 /** Select work from retained facts only; wall-clock time never drives projection. */
 export function proactiveEligibility(events: readonly Event[], owner: string, decisionId: string) {
-  if (events.some(e => ["AikoProactiveAccepted", "AikoProactiveSuppressed"].includes(e.type) && e.id === decisionId)) return undefined;
+  if (events.some(e => ownerMatches(e, owner) && ["AikoProactiveAccepted", "AikoProactiveSuppressed"].includes(e.type) && e.id === decisionId)) return undefined;
   const index = events.findLastIndex(e => e.type === "AikoProactiveDeferred" && e.owner === owner && e.decisionId === decisionId);
   const wait = events[index];
   const wake = wait ? events.findLastIndex((e, i) => i > index && wakeAfter(e, wait, owner)) : -1;
@@ -395,9 +398,10 @@ export const proactiveWaitMethod = actorMethod({
       const index = events.findIndex(e => e.type === "AikoProactiveDeferred" && (e.call as any)?.invocation.id === invocation.id);
       const row = events[index];
       if (!row) return undefined;
-      return events.some(e => (e.type === "AikoProactiveSuppressed" || row.stage !== "dispatch" && e.type === "AikoProactiveAccepted") && e.id === row.decisionId ||
-          e.type === "AikoDeliverySettled" && e.turn === `proactive:${row.decisionId}`) ||
-        events.slice(index + 1).some(e => wakeAfter(e, row, String(row.owner)))
+      const owner = typeof row.owner === "string" ? row.owner : undefined;
+      return events.some(e => ownerMatches(e, owner) && ((e.type === "AikoProactiveSuppressed" || row.stage !== "dispatch" && e.type === "AikoProactiveAccepted") && e.id === row.decisionId ||
+          e.type === "AikoDeliverySettled" && e.turn === `proactive:${row.decisionId}`)) ||
+        events.slice(index + 1).some(e => wakeAfter(e, row, owner))
         ? { status: "completed" as const, output: "recheck" } : { status: "pending" as const };
     } }),
   },

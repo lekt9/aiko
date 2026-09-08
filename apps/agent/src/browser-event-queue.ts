@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
 import { BROWSER_EVENT_SCHEMA, browserBatchSignature, validateBrowserEventBatch, type BrowserOccurrence, type BrowserProducerGrant, type BrowserEventBatch } from "./browser-events.ts";
+import { browserWatchRestorePrefixDigest } from "./browser-watch-restore.ts";
 
 /** Owner-VM transport journal. Native actor logs remain authoritative; acknowledgements never replay browser effects. */
 export class BrowserEventQueue {
@@ -47,15 +48,16 @@ export class BrowserObservationQueue {
       CREATE TABLE IF NOT EXISTS browser_observation_items(
       source TEXT NOT NULL,seq INTEGER NOT NULL,fingerprint TEXT NOT NULL,sealed TEXT,PRIMARY KEY(source,seq),UNIQUE(source,fingerprint));`);
   }
-  private identity(grant: BrowserProducerGrant) {
+  private identity(grant: BrowserProducerGrant, create = true) {
     if (grant.secret.length < 32) throw Error("browser_producer_key_invalid");
     const source = JSON.stringify([grant.producer, grant.epoch, grant.generation]);
     // Bind immutable producer context; expiry/active are live lease state.
-    const { active: _active, expiresAt: _expiresAt, ...context } = grant;
+    const { active: _active, expiresAt: _expiresAt, deliveryEpoch: _deliveryEpoch, ...context } = grant;
     const digest = createHmac("sha256", grant.secret).update(JSON.stringify(context)).digest("hex");
-    this.db.query("INSERT OR IGNORE INTO browser_observation_heads VALUES(?,?,?,0,0,0)").run(source, grant.owner, digest);
+    if (create) this.db.query("INSERT OR IGNORE INTO browser_observation_heads VALUES(?,?,?,0,0,0)").run(source, grant.owner, digest);
     const state = this.db.query("SELECT * FROM browser_observation_heads WHERE source=?").get(source) as {owner:string;grant_digest:string;head:number;ack:number;offered:number};
-    if (state.owner !== grant.owner || state.grant_digest !== digest) throw Error("browser_producer_context_changed");
+    if (!state || state.owner !== grant.owner || state.grant_digest !== digest) throw Error("browser_producer_context_changed");
+    if (![state.head,state.ack,state.offered].every(n=>Number.isSafeInteger(n)&&n>=0) || state.ack>state.offered || state.offered>state.head) throw Error("browser_observation_cursor_invalid");
     return { source, state, key: createHash("sha256").update(grant.secret).digest() };
   }
   append(grant: BrowserProducerGrant, input: Omit<BrowserOccurrence, "sequence" | "occurrence">, fingerprint: string, now = Date.now()) {
@@ -85,6 +87,33 @@ export class BrowserObservationQueue {
   highWatermark(grant: BrowserProducerGrant): number {
     return this.identity(grant).state.head;
   }
+  /** Read-only continuity evidence. Missing or changed identity is not an empty queue. */
+  verifiedState(grant: BrowserProducerGrant): {head:number;acknowledged:number;offered:number}|undefined {
+    try {
+      const {state}=this.identity(grant,false);
+      return {head:state.head,acknowledged:state.ack,offered:state.offered};
+    } catch { return undefined; }
+  }
+  restoreProof(grant:BrowserProducerGrant,hostThrough:number) {
+    const queue=this.verifiedState(grant);
+    if(!queue||!Number.isSafeInteger(hostThrough)||hostThrough<queue.acknowledged||hostThrough>queue.head)throw Error("browser_watch_restore_proof_unavailable");
+    const source=JSON.stringify([grant.producer,grant.epoch,grant.generation]);
+    const rows=this.db.query("SELECT seq,fingerprint FROM browser_observation_items WHERE source=? AND seq<=? ORDER BY seq").iterate(source,hostThrough) as Iterable<{seq:number;fingerprint:string}>;
+    let count=0;
+    function* pairs(){for(const row of rows){count++;yield [row.seq,row.fingerprint] as const;}}
+    const prefixDigest=browserWatchRestorePrefixDigest(grant,pairs());
+    if(count!==hostThrough)throw Error("browser_watch_restore_prefix_unavailable");
+    return {queue,hostThrough,prefixDigest};
+  }
+  /** Only a separately checked restore permit may reconcile this proven prefix.
+   * Caller commits this with transport incarnation and hold removal in one transaction. */
+  acknowledgeRestoredPrefix(grant:BrowserProducerGrant,hostThrough:number,prefixDigest:string) {
+    const proof=this.restoreProof(grant,hostThrough);
+    if(proof.prefixDigest!==prefixDigest)throw Error("browser_watch_restore_prefix_changed");
+    const source=JSON.stringify([grant.producer,grant.epoch,grant.generation]);
+    this.db.query("UPDATE browser_observation_items SET sealed=NULL WHERE source=? AND seq<=?").run(source,hostThrough);
+    this.db.query("UPDATE browser_observation_heads SET ack=?,offered=MAX(offered,?) WHERE source=?").run(hostThrough,hostThrough,source);
+  }
   batch(grant: BrowserProducerGrant): {batch:BrowserEventBatch;signature:string;hasMore:boolean}|undefined {
     const { source, state, key } = this.identity(grant);
     const rows = this.db.query("SELECT seq,sealed FROM browser_observation_items WHERE source=? AND seq>? ORDER BY seq LIMIT 128").all(source,state.ack) as {seq:number;sealed:string|null}[];
@@ -96,11 +125,11 @@ export class BrowserObservationQueue {
       decipher.setAuthTag(Buffer.from(value.tag,"base64"));
       decipher.setAAD(Buffer.from(JSON.stringify([source,row.seq,grant.owner])));
       const item=JSON.parse(Buffer.concat([decipher.update(Buffer.from(value.data,"base64")),decipher.final()]).toString());
-      const proposed={schema:BROWSER_EVENT_SCHEMA,producer:grant.producer,epoch:grant.epoch,generation:grant.generation,items:[...items,item]};
+      const proposed={schema:BROWSER_EVENT_SCHEMA,producer:grant.producer,epoch:grant.epoch,generation:grant.generation,...(grant.deliveryEpoch===undefined?{}:{deliveryEpoch:grant.deliveryEpoch}),items:[...items,item]};
       if (items.length && Buffer.byteLength(JSON.stringify(proposed)) > 128_000) break;
       items.push(item);
     }
-    const batch=validateBrowserEventBatch({schema:BROWSER_EVENT_SCHEMA,producer:grant.producer,epoch:grant.epoch,generation:grant.generation,items});
+    const batch=validateBrowserEventBatch({schema:BROWSER_EVENT_SCHEMA,producer:grant.producer,epoch:grant.epoch,generation:grant.generation,...(grant.deliveryEpoch===undefined?{}:{deliveryEpoch:grant.deliveryEpoch}),items});
     const through=items.at(-1)!.sequence;
     this.db.query("UPDATE browser_observation_heads SET offered=MAX(offered,?) WHERE source=?").run(through,source);
     return {batch,signature:browserBatchSignature(batch,grant.secret),hasMore:through<state.head};

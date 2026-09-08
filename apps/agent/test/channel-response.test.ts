@@ -239,6 +239,21 @@ test("model-chosen intermediate Telegram text continues through work to one fina
   expect(f.sentText()).toHaveLength(2);
 });
 
+for (const status of ["delivered", "unknown"]) test(`silent work gets early feedback and still owes a final reply when sends are ${status}`, async () => {
+  const f = await service(request => request.trajectory.some(e => e.type === "ToolReturned")
+    ? {kind: "complete", output: "Here is the result."}
+    : {kind: "call", name: "access_status", callId: "work", arguments: {}},
+    status, "ready", "direct");
+  const events = await f.seed();
+  expect(f.sentText()).toEqual(["I’m looking into your request now.", "Here is the result."]);
+  expect(events.find(e => e.type === "AikoProgressSettled")).toMatchObject({source: "host", result: {status}});
+  expect(events.find(e => e.type === "AikoDeliverySettled")).toMatchObject({result: {status}});
+  expect(events.filter(e => e.type === "ToolCalled").map(e => e.name)).toEqual(["access_status", "respond"]);
+  await f.restart();
+  expect(f.sentText()).toHaveLength(2);
+  expect(f.counts().modelCalls).toBe(2);
+});
+
 test("a quick Telegram answer does not acquire a mandatory acknowledgement", async () => {
   const f = await service(() => ({ kind: "complete", output: "Four." }), "delivered", "ready", "direct");
   const events = await f.seed();
@@ -388,17 +403,51 @@ test("forced response preserves model usage and serving metadata", async () => {
 });
 
 test("native batch response text is redacted before durable ToolCalled events", async () => {
-  const action: Extract<Action,{kind:"calls"}> = {kind:"calls",text:"Working",usage:{promptTokens:12,completionTokens:1},calls:[
-    {callId:"read",name:"fixture_read",arguments:{}},
+  const action: Extract<Action,{kind:"calls"}> = {kind:"calls",usage:{promptTokens:12,completionTokens:1},calls:[
     {callId:"reply",name:"respond",arguments:{text:"Result private-key",outcome:"answer"}},
   ]};
   const {result,calls} = await run(request,action);
   expect(calls).toBe(1);
-  expect(result).toEqual({...action,calls:[action.calls[0],{
-    ...action.calls[1],arguments:{text:"Result [redacted]",outcome:"answer"},
+  expect(result).toEqual({...action,calls:[{
+    ...action.calls[0],arguments:{text:"Result [redacted]",outcome:"answer"},
   }]});
   expect(JSON.stringify(result)).not.toContain("private-key");
 });
+test("every native final response kind rejects a sibling before dispatch without losing usage", async () => {
+  for (const name of ["respond", "send_message", "telegram_send", "telegram_voice", "telegram_screenshot"]) {
+    for (const other of ["fixture_read", "execute", "respond"]) {
+      const action: Extract<Action, { kind: "calls" }> = {
+        kind: "calls", text: "Unverified private-key", usage: { promptTokens: 23, completionTokens: 7 },
+        endpoint: { provider: "fixture", model: "batch" }, mode: { kind: "native", name: "native" },
+        calls: [
+          { name, callId: "final", arguments: { text: "Unverified private-key", final: true } },
+          { name: other, callId: "other", arguments: {} },
+        ],
+      };
+      const { result, calls } = await run(request, action);
+      expect(calls).toBe(1);
+      expect(result).toMatchObject({
+        kind: "fail", usage: action.usage, endpoint: action.endpoint, mode: action.mode,
+        failure: { cause: "output_validation_failed", policy: { source: "aiko_final_response_boundary" } },
+      });
+      expect(JSON.stringify(result)).not.toContain("private-key");
+    }
+  }
+});
+
+test("non-final batches retain every call, while a standalone blocked answer is allowed", async () => {
+  const action: Extract<Action, { kind: "calls" }> = { kind: "calls", calls: [
+    { name: "send_message", callId: "progress", arguments: { text: "Checking.", final: false } },
+    { name: "fixture_read", callId: "read", arguments: {} },
+  ] };
+  expect((await run(request, action)).result).toEqual(action);
+  const blocked: Action = { kind: "call", name: "respond", callId: "blocked", arguments: {
+    text: "The original submission is unconfirmed; I need its receipt before continuing.", outcome: "blocked",
+  } };
+  expect((await run(request, blocked)).result).toEqual(blocked);
+  expect((await run({ ...request, identity: { ...request.identity, actor: "indexer" } }, action)).result).toEqual(action);
+});
+
 for (const status of ["delivered", "unknown"])
   test(`final media ${status} terminates without another model call or duplicate text`, async () => {
     const r = {

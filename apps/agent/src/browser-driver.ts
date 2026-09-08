@@ -26,6 +26,7 @@ import {
 import { CdpNetworkListener, type NetworkExchangeSource } from "@unbrowse/browser-harness/network-listener";
 import { BrowserLearning } from "./browser-learning.ts";
 import { BrowserWatchRunner, type BrowserWatchLease, type BrowserWatchRunnerStatus } from "./browser-watch-runner.ts";
+import type { BrowserWatchRestoreProof, BrowserWatchReauthorizeRequest } from "./browser-watch-restore.ts";
 import type { BrowserProducerGrant } from "./browser-events.ts";
 import { createPublicProxy, publicTarget } from "./browser-proxy.ts";
 import { connectionRoute, CONNECTION_LINK_LIMIT } from "./connection-index.ts";
@@ -38,6 +39,8 @@ export interface BrowserDriver {
   watchConfigure?(lease: BrowserWatchLease, signal?: AbortSignal): Promise<BrowserWatchRunnerStatus>;
   watchPause?(producer: string, signal?: AbortSignal, lifecycleRevision?:number): Promise<BrowserWatchRunnerStatus>;
   watchStatus?(): Promise<BrowserWatchRunnerStatus[]>;
+  watchRestoreProof?(producer:string,challenge:string,hostThrough:number,signal?:AbortSignal):Promise<BrowserWatchRestoreProof>;
+  watchReauthorize?(producer:string,request:BrowserWatchReauthorizeRequest,signal?:AbortSignal):Promise<BrowserWatchRunnerStatus>;
   watchAcknowledgeGap?(producer: string, generation: number, missed: number, signal?: AbortSignal): Promise<BrowserWatchRunnerStatus>;
   hasActiveWatchLease?(): Promise<boolean>;
   executeScoped?(action:AgentBrowserAgentAction,policy:BrowserControlPolicy,signal?:AbortSignal):Promise<unknown>;
@@ -618,6 +621,14 @@ export function browserDriverFactory(
         return watches.acknowledgeCoverageGap(producer, generation, missed);
       },
       watchStatus: async () => watches?.status() ?? [],
+      watchRestoreProof:async(producer,challenge,hostThrough,signal)=>{
+        signal?.throwIfAborted();if(!watches||closed)throw Error("Browser watch unavailable");
+        return watches.restoreProof(producer,challenge,hostThrough);
+      },
+      watchReauthorize:async(producer,request,signal)=>{
+        signal?.throwIfAborted();if(!watches||closed)throw Error("Browser watch unavailable");
+        return watches.reauthorize(producer,request,signal);
+      },
       hasActiveWatchLease: async () => watches?.hasActiveLease() ?? false,
       executeScoped:(action,policy,signal)=>driver.execute(action,signal,policy),
       authorizeInspection: async (inspection,signal) => {

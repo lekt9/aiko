@@ -17,6 +17,8 @@ import { createVoice } from "../src/voice.ts";
 import { threadBinding } from "../src/account-binding.ts";
 import { voiceAndOutbox } from "../src/actor.ts";
 import { channelProgress } from "../src/channel-progress.ts";
+import { tool } from "tardie/component/tool";
+import { responseTool, withRequiredResponse } from "../src/channel-response.ts";
 import { createToolRouterActor, routerEventKey } from "../src/tool-router.ts";
 import { createToolRouterComponent } from "../src/tool-router-tools.ts";
 import {
@@ -286,6 +288,52 @@ test("Cloudflare alarm lets the control lane respond while a foreground effect i
 });
 afterEach(() => {
   for (const db of databases.splice(0)) db.close();
+});
+
+test("the account alarm delivers early feedback before silent work, then the final reply, without replay", async () => {
+  const durable = storage(), sent: string[] = [];
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<string>();
+  const voice = createVoice({enabled: false, persona: "fixture"});
+  const send = async (_owner: string, text: string) => { sent.push(text); return {status: "delivered" as const}; };
+  const definition = actor({name: "aiko", methods: {message: agentMessageMethod}, components: [
+    channelProgress({owner: "123", voice, send, redact: text => text}),
+    voiceAndOutbox("123", voice, send, {live: true, redact: text => text}),
+    infer([tool([
+      responseTool("123", "user-123", text => text),
+      {spec: {name: "slow_work", description: "Fixture work", inputSchema: {type: "object"}},
+        run: () => Effect.promise(async () => { entered.resolve(); return release.promise; })},
+    ]), outputValidateOnce]),
+  ]});
+  let modelCalls = 0;
+  const open = () => createCloudflareAccountHost({storage: durable, actorName: "aiko", actorInstance: "early-feedback",
+    ownsThread: t => t === "user-123", actorFor: () => definition,
+    layersFor: () => withRequiredResponse(Layer.succeed(Infer, {
+      resolve: () => ({model: {provider: "fixture", model_id: "progress"}}),
+      react: request => {
+        modelCalls++;
+        return Effect.succeed(request.trajectory.some(e => e.type === "ToolReturned")
+          ? {kind: "complete" as const, output: "Here is the result."}
+          : {kind: "call" as const, name: "slow_work", callId: "work", arguments: {}});
+      },
+    })),
+  });
+  let host = await open();
+  try {
+    await host.commitRoot(host.self("user-123"), {type: "MessageReceived", id: "turn", source: "telegram", chat: "123", sender: "123", text: "Check this", at: 1});
+    expect(await durable.getAlarm()).not.toBeNull();
+    const running = host.alarm();
+    try {
+      await entered.promise;
+      expect(sent).toEqual(["I’m looking into your request now."]);
+      expect((await host.read("user-123")).some(e => e.type === "AikoDeliverySettled")).toBe(false);
+    } finally { release.resolve("Done"); await running; }
+    expect(sent).toEqual(["I’m looking into your request now.", "Here is the result."]);
+    expect(modelCalls).toBe(2);
+    await host.close(); host = await open();
+    await host.alarm();
+    expect(sent).toHaveLength(2);
+    expect(modelCalls).toBe(2);
+  } finally { await host.close(); }
 });
 
 function storage(): AccountStorage {

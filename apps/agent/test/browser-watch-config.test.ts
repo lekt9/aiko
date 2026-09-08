@@ -194,3 +194,25 @@ test("fresh policy rejects retained watches whose source, action or connection r
   f.mutateRecord(row => { row.browserVerification.revision = 8; });
   expect(f.transaction(() => f.mount().configCurrent!(f.watchConfig))).toBe(false);
 });
+
+test("webhook deployment accepts only owned destination references and bounded metadata without inline keys",()=>{
+  const value=deployment();value.owners[owner]!.webhooks=[{id:"requests-v1",url:"https://hooks.receiver.com/aiko",signingKeyRef:"requests-v1",expiresAt:Date.now()+60000,maxBytes:8192,retentionMs:60000}];
+  value.owners[owner]!.actions=[{id:"deliver",label:"Send request",action:{kind:"webhook",destination:"requests-v1"}}];
+  expect(parse(value)).toEqual(value);
+  for(const change of [(v:any)=>{v.owners[owner].webhooks[0].signingKey="PRIVATE_INLINE_KEY";},(v:any)=>{v.owners[owner].webhooks[0].url="https://127.0.0.1/private";},
+    (v:any)=>{v.owners[owner].actions[0].action.destination="foreign";},(v:any)=>{v.owners[owner].webhooks.push(v.owners[owner].webhooks[0]);},
+    (v:any)=>{v.owners[owner].webhooks[0].reconcile={url:"https://hooks.receiver.com/receipt",receiptKey:"INLINE_KEY"};},
+    (v:any)=>{v.owners[owner].webhooks[0].notAcceptedStatuses=[202];},(v:any)=>{v.owners[owner].webhooks[0].maxBytes=1000000;},
+    (v:any)=>{v.owners[owner].actions[0].supportsInstruction=true;}]){
+    const bad=structuredClone(value);change(bad);expect(()=>parse(bad)).toThrow("Invalid AIKO_BROWSER_WATCH_CONFIG");
+  }
+});
+
+test("webhook secret map rejects ambiguous or malformed references with a generic error",async()=>{
+  const {parseBrowserWatchWebhookKeys}=await import("../src/browser-watch-config.ts");
+  expect(parseBrowserWatchWebhookKeys()).toEqual({});
+  expect(parseBrowserWatchWebhookKeys(JSON.stringify({version:1,owners:{[owner]:{key:"a".repeat(32)}}}))).toEqual({[owner]:{key:"a".repeat(32)}});
+  for(const raw of ['{',JSON.stringify({version:1,owners:{[owner]:{key:"short"}}}),JSON.stringify({version:1,owners:{[owner]:{key:"a".repeat(31)+"\n"}}}),
+    '{"version":1,"owners":{"123":{"__proto__":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}',JSON.stringify({version:2,owners:{}})])
+    expect(()=>parseBrowserWatchWebhookKeys(raw)).toThrow("Invalid AIKO_BROWSER_WATCH_WEBHOOK_KEYS");
+});

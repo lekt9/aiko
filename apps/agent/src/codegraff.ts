@@ -19,6 +19,7 @@ import { boundedText, type HttpFetch } from "./security.ts";
 import { openMemory, memoryCallKey, type MemoryBinding } from "./memory.ts";
 import type { BrowserDriver, BrowserDriverFactory } from "./browser-driver.ts";
 import type { BrowserWatchLease, BrowserWatchRunnerStatus } from "./browser-watch-runner.ts";
+import type { BrowserWatchRestoreProof, BrowserWatchReauthorizeRequest } from "./browser-watch-restore.ts";
 import { harnessDigest } from "./harness-library.ts";
 import type { HarnessTransport } from "@unbrowse/browser-harness/harness-runtime";
 import type { TelegramMediaProcessor } from "./telegram-media.ts";
@@ -82,8 +83,10 @@ export interface SandboxRecord {
   lastActive?: number;
   stoppedAt?: number;
 }
-type WatchIdleLease = { owner: string; producer: string; generation: number; expiresAt: number; lifecycleRevision?: number; leaseRevision?:number };
-type WatchConfigurationReceipt = WatchIdleLease & {declaredExpiresAt:number;leaseDigest:string;sourceDigest:string};
+type WatchIdleLease = { owner: string; producer: string; generation: number; expiresAt: number; lifecycleRevision?: number; leaseRevision?:number; deliveryEpoch?:string };
+type WatchConfigurationReceipt = WatchIdleLease & {declaredExpiresAt:number;leaseDigest:string;sourceDigest:string;
+  scope?:{profile:string;epoch:string;connectionId:string;connectionRevision:string};
+  restorePending?:{requestDigest:string;deliveryEpoch:string};restoreConfirmed?:{requestDigest:string;deliveryEpoch:string}};
 const WATCH_IDLE_KEY = "codegraff:browser-watch-leases";
 // Configuration receipts survive idle release/expiry; they carry no producer key.
 const WATCH_CONFIG_KEY = "codegraff:browser-watch-configurations";
@@ -990,7 +993,8 @@ export class CodegraffSandbox {
       lease.owner !== this.options.owner || typeof lease.producer !== "string" ||
       !Number.isSafeInteger(lease.generation) || !Number.isSafeInteger(lease.expiresAt) ||
       !Number.isSafeInteger(lease.lifecycleRevision ?? 0) || (lease.lifecycleRevision ?? 0) < 0 ||
-      !Number.isSafeInteger(lease.leaseRevision ?? 0) || (lease.leaseRevision ?? 0) < 0))
+      !Number.isSafeInteger(lease.leaseRevision ?? 0) || (lease.leaseRevision ?? 0) < 0 ||
+      lease.deliveryEpoch!==undefined&&!this.watchEpoch(lease.deliveryEpoch)))
       throw Error("Browser watch lease store invalid");
     return leases;
   }
@@ -1021,8 +1025,25 @@ export class CodegraffSandbox {
       !["observation-backlog","observation-unavailable"].includes(gap.reason))) throw Error("Browser watch coverage gap invalid");
     if(value.excludedBefore!==undefined&&(!Number.isSafeInteger(value.excludedBefore)||value.excludedBefore<0))
       throw Error("Browser watch privacy cut invalid");
+    if(value.deliveryEpoch!==undefined&&!this.watchEpoch(value.deliveryEpoch))throw Error("Browser watch delivery epoch invalid");
+    const restore = value.restore;
+    if (restore !== undefined) {
+      if (!restore || typeof restore !== "object" || Array.isArray(restore) ||
+        Object.keys(restore).some(key => !["challenge","at","queue"].includes(key)) ||
+        typeof restore.challenge !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(restore.challenge) ||
+        !Number.isSafeInteger(restore.at) || restore.at <= 0 ||
+        !(value.state === "paused" || value.state === "needs-attention" && value.reason === "restore-authorization-required"))
+        throw Error("Browser watch restore status invalid");
+      const queue = restore.queue;
+      if (queue !== undefined && (!queue || typeof queue !== "object" || Array.isArray(queue) ||
+        Object.keys(queue).some(key => !["head","acknowledged","offered"].includes(key)) ||
+        !Number.isSafeInteger(queue.head) || !Number.isSafeInteger(queue.acknowledged) || !Number.isSafeInteger(queue.offered) ||
+        queue.acknowledged < 0 || queue.offered < queue.acknowledged || queue.head < queue.offered))
+        throw Error("Browser watch restore queue invalid");
+    }
     // Return only bounded structural metadata from the encrypted reply.
     return { producer: value.producer, generation: value.generation, state: value.state, reason: value.reason, expiresAt: value.expiresAt,
+      ...(value.deliveryEpoch===undefined?{}:{deliveryEpoch:value.deliveryEpoch}),
       ...(value.lifecycleRevision === undefined ? {} : {lifecycleRevision:value.lifecycleRevision}),
       ...(value.leaseRevision===undefined?{}:{leaseRevision:value.leaseRevision}),
       ...(value.observationFloor===undefined?{}:{observationFloor:value.observationFloor}),
@@ -1032,12 +1053,15 @@ export class CodegraffSandbox {
       ...(Number.isSafeInteger(value.lastDeliveredAt) ? {lastDeliveredAt:value.lastDeliveredAt} : {}),
       ...(Number.isSafeInteger(value.acknowledged) ? {acknowledged:value.acknowledged} : {}),
       ...(value.excludedBefore===undefined?{}:{excludedBefore:value.excludedBefore}),
+      ...(restore ? {restore:{challenge:restore.challenge,at:restore.at,
+        ...(restore.queue ? {queue:{head:restore.queue.head,acknowledged:restore.queue.acknowledged,offered:restore.queue.offered}} : {})}} : {}),
       ...(gap?{coverageGap:{generation:gap.generation,missed:gap.missed,countUncertain:gap.countUncertain,acknowledged:gap.acknowledged,
         firstAt:gap.firstAt,lastAt:gap.lastAt,reason:gap.reason}}:{}) };
   }
   private matchesWatchIncarnation(status:BrowserWatchRunnerStatus, lease:WatchIdleLease):boolean {
     return status.producer === lease.producer && status.generation === lease.generation &&
-      (status.lifecycleRevision ?? 0) === (lease.lifecycleRevision ?? 0) && (status.leaseRevision??0)===(lease.leaseRevision??0);
+      (status.lifecycleRevision ?? 0) === (lease.lifecycleRevision ?? 0) && (status.leaseRevision??0)===(lease.leaseRevision??0) &&
+      status.deliveryEpoch===lease.deliveryEpoch;
   }
   private confirmsWatchPause(status:BrowserWatchRunnerStatus, lease:WatchIdleLease):boolean {
     return this.matchesWatchIncarnation(status,lease) && status.lifecycleRevision !== undefined &&
@@ -1187,6 +1211,96 @@ export class CodegraffSandbox {
       throw Error("Browser watch context invalid");
     return {owner:context.owner,profile:context.profile};
   }
+  private watchEpoch(value:unknown):value is string {
+    return typeof value==="string"&&/^[A-Za-z0-9_.:-]{1,160}$/.test(value);
+  }
+  private async watchConfigurationReceipts():Promise<WatchConfigurationReceipt[]> {
+    const receipts=await this.options.store.get<WatchConfigurationReceipt[]>(WATCH_CONFIG_KEY)??[];
+    if(!Array.isArray(receipts)||receipts.length>128||new Set(receipts.map(r=>r?.producer)).size!==receipts.length||receipts.some(r=>!r||
+      r.owner!==this.options.owner||!this.watchEpoch(r.producer)||!Number.isSafeInteger(r.leaseRevision??0)||(r.leaseRevision??0)<0||
+      !Number.isSafeInteger(r.lifecycleRevision??0)||(r.lifecycleRevision??0)<0||!Number.isSafeInteger(r.generation)||r.generation<1||
+      !Number.isSafeInteger(r.declaredExpiresAt)||r.declaredExpiresAt<1||!/^sha256:[a-f0-9]{64}$/.test(r.leaseDigest)||
+      !/^sha256:[a-f0-9]{64}$/.test(r.sourceDigest)||r.deliveryEpoch!==undefined&&!this.watchEpoch(r.deliveryEpoch)||
+      r.scope!==undefined&&(!r.scope||Object.keys(r.scope).length!==4||
+        ![r.scope.profile,r.scope.epoch,r.scope.connectionId,r.scope.connectionRevision].every(v=>this.watchEpoch(v)))||
+      [r.restorePending,r.restoreConfirmed].some(p=>p!==undefined&&(!p||Object.keys(p).length!==2||
+        !/^sha256:[a-f0-9]{64}$/.test(p.requestDigest)||!this.watchEpoch(p.deliveryEpoch)))))
+      throw Error("Browser watch configuration store invalid");
+    return receipts;
+  }
+  private watchRestoreProofValue(raw:unknown):BrowserWatchRestoreProof {
+    const p=raw as BrowserWatchRestoreProof;
+    const fields=["owner","producer","profile","epoch","generation","connectionId","connectionRevision","lifecycleRevision","leaseRevision",
+      "deliveryEpoch","expiresAt","challenge","at","queue","hostThrough","prefixDigest"];
+    if(!p||typeof p!=="object"||Array.isArray(p)||Object.keys(p).some(key=>!fields.includes(key))||p.owner!==this.options.owner||
+      ![p.producer,p.profile,p.epoch,p.connectionId,p.connectionRevision].every(v=>this.watchEpoch(v))||
+      !Number.isSafeInteger(p.generation)||p.generation<1||!Number.isSafeInteger(p.lifecycleRevision)||p.lifecycleRevision<0||
+      !Number.isSafeInteger(p.leaseRevision)||p.leaseRevision<0||p.deliveryEpoch!==undefined&&!this.watchEpoch(p.deliveryEpoch)||
+      !Number.isSafeInteger(p.expiresAt)||p.expiresAt<1||typeof p.challenge!=="string"||
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(p.challenge)||
+      !Number.isSafeInteger(p.at)||p.at<1||!Number.isSafeInteger(p.hostThrough)||p.hostThrough<0||
+      !/^sha256:[a-f0-9]{64}$/.test(p.prefixDigest)||!p.queue||typeof p.queue!=="object"||Array.isArray(p.queue)||
+      Object.keys(p.queue).some(key=>!["head","acknowledged","offered"].includes(key))||
+      ![p.queue.head,p.queue.acknowledged,p.queue.offered].every(Number.isSafeInteger)||
+      p.queue.acknowledged<0||p.queue.acknowledged>p.queue.offered||p.queue.offered>p.queue.head||p.hostThrough>p.queue.head)
+      throw Error("Browser watch restore proof invalid");
+    return structuredClone(p);
+  }
+  private matchesWatchRestoreScope(proof:BrowserWatchRestoreProof,receipt:WatchConfigurationReceipt):boolean {
+    return proof.owner===receipt.owner&&proof.producer===receipt.producer&&proof.generation===receipt.generation&&
+      proof.lifecycleRevision===(receipt.lifecycleRevision??0)&&proof.leaseRevision===(receipt.leaseRevision??0)&&
+      proof.expiresAt===receipt.declaredExpiresAt&&!!receipt.scope&&
+      proof.profile===receipt.scope.profile&&proof.epoch===receipt.scope.epoch&&proof.connectionId===receipt.scope.connectionId&&
+      proof.connectionRevision===receipt.scope.connectionRevision;
+  }
+  /** Passive private queue proof. No lease/epoch write, wake, or automatic retry. */
+  async watchRestoreProof(producer:string,challenge:string,hostThrough:number,signal?:AbortSignal):Promise<BrowserWatchRestoreProof> {
+    if(!this.watchEpoch(producer)||typeof challenge!=="string"||
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(challenge)||
+      !Number.isSafeInteger(hostThrough)||hostThrough<0)throw Error("Browser watch restore request invalid");
+    const receipt=(await this.watchConfigurationReceipts()).find(r=>r.producer===producer);
+    if(!receipt)throw Error("Browser watch restore predecessor unavailable");
+    const bounded=signal?AbortSignal.any([signal,AbortSignal.timeout(10_000)]):AbortSignal.timeout(10_000);
+    const id=await this.residentWatchVm(bounded);
+    const proof=this.watchRestoreProofValue(await this.invokePrivate(id,{operation:"watch-restore-proof",producer,challenge,hostThrough},bounded,false,undefined,true));
+    if(!this.matchesWatchRestoreScope(proof,receipt)||proof.deliveryEpoch!==receipt.deliveryEpoch||
+      proof.challenge!==challenge||proof.hostThrough!==hostThrough)throw Error("Browser watch restore proof unconfirmed");
+    return proof;
+  }
+  /** The sole private restore control. A lost reply retains this exact request;
+   * ordinary configure cannot replace its authority while the result is unknown. */
+  async watchReauthorize(producer:string,input:BrowserWatchReauthorizeRequest,signal?:AbortSignal):Promise<BrowserWatchRunnerStatus> {
+    const request=structuredClone(input);
+    if(!request||typeof request!=="object"||Array.isArray(request)||
+      !(request.previousDeliveryEpoch===null||this.watchEpoch(request.previousDeliveryEpoch))||
+      !this.watchEpoch(request.deliveryEpoch)||request.deliveryEpoch===request.previousDeliveryEpoch)
+      throw Error("Browser watch restore request invalid");
+    const {previousDeliveryEpoch,deliveryEpoch,...rest}=request;
+    const proof=this.watchRestoreProofValue({...rest,...(previousDeliveryEpoch===null?{}:{deliveryEpoch:previousDeliveryEpoch})});
+    if(producer!==proof.producer)throw Error("Browser watch restore request invalid");
+    const requestDigest=harnessDigest(request);
+    return this.serializeWatch(async()=>{
+      const receipts=await this.watchConfigurationReceipts(),receipt=receipts.find(r=>r.producer===producer);
+      if(!receipt||!this.matchesWatchRestoreScope(proof,receipt))throw Error("Browser watch restore predecessor unavailable");
+      const pending=receipt.restorePending;
+      if(pending?(pending.requestDigest!==requestDigest||pending.deliveryEpoch!==deliveryEpoch):
+        receipt.deliveryEpoch!==proof.deliveryEpoch&&!(receipt.deliveryEpoch===deliveryEpoch&&receipt.restoreConfirmed?.requestDigest===requestDigest))
+        throw Error("Browser watch restore request conflict");
+      const bounded=signal?AbortSignal.any([signal,AbortSignal.timeout(10_000)]):AbortSignal.timeout(10_000);
+      const id=await this.residentWatchVm(bounded);
+      bounded.throwIfAborted();
+      const replace=(next:WatchConfigurationReceipt)=>this.options.store.put(WATCH_CONFIG_KEY,receipts.map(r=>r.producer===producer?next:r));
+      await replace({...receipt,restorePending:{requestDigest,deliveryEpoch}});
+      const status=this.watchStatusValue(await this.invokePrivate(id,{operation:"watch-reauthorize",producer,request},bounded,false,undefined,true));
+      if(!this.matchesWatchIncarnation(status,{...receipt,deliveryEpoch})||status.expiresAt!==request.expiresAt||status.restore||
+        status.acknowledged!==request.hostThrough)throw Error("Browser watch restore reauthorization unconfirmed");
+      const {restorePending:_,...confirmed}=receipt;
+      await replace({...confirmed,deliveryEpoch,restoreConfirmed:{requestDigest,deliveryEpoch}});
+      const leases=await this.retainedWatchLeases();
+      await this.options.store.put(WATCH_IDLE_KEY,leases.map(r=>r.producer===producer?{...r,deliveryEpoch}:r));
+      return status;
+    },signal);
+  }
   async watchConfigure(input:BrowserWatchLease,signal?:AbortSignal):Promise<BrowserWatchRunnerStatus> {
     const lease = structuredClone(input), grant = lease?.grant;
     const lifecycleRevision = lease?.lifecycleRevision ?? 0;
@@ -1202,18 +1316,17 @@ export class CodegraffSandbox {
     lease.leaseRevision=leaseRevision;
     if (!grant || grant.owner !== this.options.owner || !grant.active || !/^[A-Za-z0-9_.:-]{1,160}$/.test(grant.producer) ||
       !Number.isSafeInteger(grant.generation) || grant.generation < 1 || !Number.isSafeInteger(grant.expiresAt) ||
+      grant.deliveryEpoch!==undefined&&!this.watchEpoch(grant.deliveryEpoch) ||
       grant.expiresAt <= Date.now() || grant.expiresAt > Date.now() + WATCH_MAX_LEASE_MS)
       throw Error("Browser watch lease invalid");
     return this.serializeWatch(async () => {
       const leases = await this.retainedWatchLeases();
-      const receipts=await this.options.store.get<WatchConfigurationReceipt[]>(WATCH_CONFIG_KEY)??[];
-      if(!Array.isArray(receipts)||receipts.length>128||receipts.some(r=>!r||r.owner!==this.options.owner||typeof r.producer!=="string"||
-        !Number.isSafeInteger(r.leaseRevision??0)||(r.leaseRevision??0)<0||!Number.isSafeInteger(r.lifecycleRevision??0)||(r.lifecycleRevision??0)<0||
-        !Number.isSafeInteger(r.generation)||r.generation<1||!Number.isSafeInteger(r.declaredExpiresAt)||r.declaredExpiresAt<1||
-        !/^sha256:[a-f0-9]{64}$/.test(r.leaseDigest)||!/^sha256:[a-f0-9]{64}$/.test(r.sourceDigest)))throw Error("Browser watch configuration store invalid");
+      const receipts=await this.watchConfigurationReceipts();
       const saved=receipts.find(item=>item.producer===grant.producer);
       const prior = saved??leases.find(item => item.producer === grant.producer);
       const normalized=structuredClone(lease);delete normalized.lifecycleRevision;delete normalized.resumeFrom;
+      // Delivery authority is separately compared below, never source identity.
+      delete normalized.grant.deliveryEpoch;
       const leaseDigest=harnessDigest(normalized);
       const source=structuredClone(normalized);source.grant.expiresAt=0;source.grant.active=true;delete source.leaseRevision;delete source.renewalFrom;
       const sourceDigest=harnessDigest(source);
@@ -1223,30 +1336,37 @@ export class CodegraffSandbox {
         throw Error("Browser watch lifecycle stale");
       const previousRevision=prior?.leaseRevision??0,previousExpiry=saved?.declaredExpiresAt??prior?.expiresAt;
       if(prior){
+        if(saved?.restorePending)throw Error("Browser watch restore unresolved");
+        if(grant.deliveryEpoch!==prior.deliveryEpoch)throw Error("Browser watch delivery epoch stale");
         if(leaseRevision<previousRevision||leaseRevision>previousRevision+1)throw Error("Browser watch lease stale");
         if(saved&&saved.sourceDigest!==sourceDigest)throw Error("Browser watch source immutable; use a new producer");
         if(leaseRevision===previousRevision){
           if(grant.expiresAt!==previousExpiry||saved&&saved.leaseDigest!==leaseDigest)throw Error("Browser watch lease conflict");
         }else if(lease.renewalFrom?.leaseRevision!==previousRevision||lease.renewalFrom.expiresAt!==previousExpiry||grant.expiresAt<previousExpiry!||lifecycleRevision!==(prior.lifecycleRevision??0))
           throw Error("Browser watch renewal unconfirmed");
-      }else if(leaseRevision!==0||lease.renewalFrom)throw Error("Browser watch renewal predecessor unavailable");
+      }else if(leaseRevision!==0||lease.renewalFrom||grant.deliveryEpoch!==undefined)throw Error("Browser watch renewal predecessor unavailable");
       if(!saved&&receipts.length>=128)throw Error("Browser watch configuration limit");
       if (!prior && leases.length >= 128) throw Error("Browser watch lease limit");
       const id = await this.ensure(signal);
       signal?.throwIfAborted();
       await this.options.store.put(WATCH_CONFIG_KEY,[...receipts.filter(item=>item.producer!==grant.producer),
         {owner:grant.owner,producer:grant.producer,generation:grant.generation,lifecycleRevision,leaseRevision,expiresAt:grant.expiresAt,
-          declaredExpiresAt:grant.expiresAt,leaseDigest,sourceDigest} satisfies WatchConfigurationReceipt]);
+          declaredExpiresAt:grant.expiresAt,leaseDigest,sourceDigest,
+          scope:{profile:grant.profile,epoch:grant.epoch,connectionId:grant.connectionId,connectionRevision:grant.connectionRevision},
+          ...(saved?.restoreConfirmed?{restoreConfirmed:saved.restoreConfirmed}:{}),
+          ...(grant.deliveryEpoch===undefined?{}:{deliveryEpoch:grant.deliveryEpoch})} satisfies WatchConfigurationReceipt]);
       // Write ahead of the encrypted dispatch: a lost reply cannot make an active
       // producer invisible to a reconstructed host's idle shutdown.
       await this.options.store.put(WATCH_IDLE_KEY,[...leases.filter(item => item.producer !== grant.producer),
-        {owner:grant.owner,producer:grant.producer,generation:grant.generation,lifecycleRevision,leaseRevision,expiresAt:Math.max(grant.expiresAt,prior?.expiresAt??0)}]);
+        {owner:grant.owner,producer:grant.producer,generation:grant.generation,lifecycleRevision,leaseRevision,expiresAt:Math.max(grant.expiresAt,prior?.expiresAt??0),
+          ...(grant.deliveryEpoch===undefined?{}:{deliveryEpoch:grant.deliveryEpoch})}]);
       const maintenance = await this.watchMaintenanceRecord();
       await this.options.store.put(WATCH_MAINTENANCE_KEY,{owner:this.options.owner,state:"needs-attention",reason:"scheduled",
         nextAt:Math.min(maintenance?.nextAt??Infinity,Date.now()+WATCH_REFRESH_MS,grant.expiresAt),
         ...(maintenance?.lastConfirmedAt === undefined?{}:{lastConfirmedAt:maintenance.lastConfirmedAt})} satisfies BrowserWatchMaintenance);
       const status = this.watchStatusValue(await this.invokePrivate(id,{operation:"watch-configure",lease},signal));
       if (status.producer !== grant.producer || status.generation !== grant.generation || status.expiresAt !== grant.expiresAt ||
+        status.deliveryEpoch!==grant.deliveryEpoch ||
         (status.leaseRevision??0)!==leaseRevision||(leaseRevision>0&&status.leaseRevision===undefined)||
         (status.lifecycleRevision ?? 0) !== lifecycleRevision || (lease.resumeFrom !== undefined && status.lifecycleRevision === undefined))
         throw Error("Browser watch configure unconfirmed");
@@ -1482,6 +1602,8 @@ export class CodegraffSandbox {
         watchPause: (producer, signal, lifecycleRevision) => this.watchPause(producer,signal,lifecycleRevision),
         watchStatus: () => this.watchStatus(),
         watchAcknowledgeGap: (producer,generation,missed,signal) => this.watchAcknowledgeGap(producer,generation,missed,signal),
+        watchRestoreProof: (producer,challenge,hostThrough,signal) => this.watchRestoreProof(producer,challenge,hostThrough,signal),
+        watchReauthorize: (producer,request,signal) => this.watchReauthorize(producer,request,signal),
         hasActiveWatchLease: () => this.hasActiveWatchLease(),
         executeScoped: (action, policy, signal) => readAndFlush({operation:"execute-scoped",action,policy},signal),
         authorizeInspection: (policy, signal) => invoke({operation:"authorize-inspection",policy},signal),

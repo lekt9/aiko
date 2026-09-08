@@ -51,6 +51,9 @@ export interface MemoryBinding {
   eraseCopies?: (observations: readonly string[], operationId: string) => Promise<HarnessDependencyErasureReceipt>;
   /** Shares the host's restore admission boundary, including asynchronous private-copy cleanup. */
   withErasure?: <T>(operation: () => Promise<T>) => Promise<T>;
+  /** Owner-scoped admission around all non-erasure native tool work, including
+   * asynchronous sources. A closed original write needs receipt-only recovery. */
+  withMemory?: <T>(request: { key: string; operation: string; input: unknown; signal: AbortSignal }, run: () => Promise<T>) => Promise<T>;
   /** Required for native memory_erase. Independent host authority is resolved
    * per call; absent/unavailable authority never falls back to local deletion. */
   erasureAuthority?: MemoryErasureBinding | (() => Promise<MemoryErasureBinding>);
@@ -375,6 +378,7 @@ export function memoryTools(
                 "sensitive_material",
                 "Credentials must not enter memory",
               );
+            const execute = async (): Promise<ReadReceipt | MemoryReceipt> => {
             let logSource: ReturnType<typeof tardigradeLogSource> | undefined;
             if (operation === "refresh_logs") {
               const args = object(input, ["after"]);
@@ -699,7 +703,7 @@ export function memoryTools(
                   try {
                     const admission = await authority.prepare();
                     context.signal.throwIfAborted();
-                    if (admission.deletionRequired) authority.erase();
+                    if (admission.deletionRequired) await authority.eraseNative();
                   } catch (error) {
                     // A failed operation or cancellation cannot imply rollback.
                     // Only a verified exact unchanged native archive releases it.
@@ -762,6 +766,10 @@ export function memoryTools(
             } finally {
               memory.close();
             }
+            };
+            return binding.withMemory && operation !== "erase"
+              ? binding.withMemory({ key, operation, input, signal: context.signal }, execute)
+              : execute();
           },
           catch: (error) =>
             error instanceof MemoryError && /^[a-z_]+$/.test(error.code)

@@ -6,6 +6,7 @@ import type { Event } from "tardie/core/event";
 import type { NativeTool } from "tardie/component/tool";
 import { sandboxDigest, type SandboxJobReceipt } from "./sandbox-job.ts";
 import { projectRelativePath } from "./project-instructions.ts";
+import { isFinalResponseCall } from "./channel-response.ts";
 
 /** Repository identifiers resolve through trusted owner grants, never guest paths. */
 export type CodingWorkspaceCommand =
@@ -162,13 +163,11 @@ export function codingWorkspaceInference<R>(base: Layer.Layer<Infer, never, R>, 
       if (request.identity.actor !== "aiko" || request.identity.thread !== thread) return yield* Effect.die(Error("Coding inference scope mismatch"));
       const pending = codingWorkspacePending(yield* log.read, owner, thread, grantRevision);
       const action = yield* delegate.react({ ...request, system: `${request.system}\n\nCoding completion requires successful fresh coding_workspace test receipts after the last edit or undo in every modified workspace. An interrupted or failed check is not verification. Resolve uncertain operations before testing. ${pending.length ? `Still requiring verification: ${JSON.stringify(pending)}.` : ""}` }, key, signal);
-      const terminal = (call: { name: string; arguments: unknown }) => call.name === "respond" ||
-        ["send_message", "telegram_send", "telegram_voice", "telegram_screenshot"].includes(call.name) && (call.arguments as any)?.final === true;
-      if (action.kind === "calls" && action.calls.some(terminal) && action.calls.some(call => !terminal(call)))
+      if (action.kind === "calls" && action.calls.length > 1 && action.calls.some(isFinalResponseCall))
         return { kind: "fail" as const, error: "Coding completion must follow tool results; send the final response in a separate action after verification.",
           usage: action.usage, endpoint: action.endpoint, mode: action.mode,
           failure: { cause: "output_validation_failed" as const, attempts: 0, policy: { source: "coding_workspace_verification" } } };
-      if (action.kind !== "complete" && !(action.kind === "call" && terminal(action)) && !(action.kind === "calls" && action.calls.some(terminal))) return action;
+      if (action.kind !== "complete" && !(action.kind === "call" && isFinalResponseCall(action)) && !(action.kind === "calls" && action.calls.some(isFinalResponseCall))) return action;
       const remaining = codingWorkspacePending(yield* log.read, owner, thread, grantRevision);
       if (!remaining.length) return action;
       return { kind: "fail" as const, error: `Coding completion refused: successful fresh checks are required for ${JSON.stringify(remaining)}.`,

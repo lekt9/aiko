@@ -41,6 +41,7 @@
     "db:verify": "bun --env-file=.env scripts/verify-supabase.ts",
     "aiko:cloud:build": "bun scripts/build-aiko-cloudflare.ts",
     "aiko:cloud:deploy": "bun scripts/deploy-aiko-cloudflare.ts --deploy",
+    "ship": "bun --no-env-file scripts/ship.ts",
     "aiko:cloud:verify": "bun scripts/verify-portable-cloud.ts"
   },
   "devDependencies": {

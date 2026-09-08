@@ -1,0 +1,39 @@
+{
+  "verifiedAt": "2026-09-08T16:23:27.205Z",
+  "identity": {
+    "owner": "local",
+    "instance": "demo",
+    "telegramBound": false
+  },
+  "nativePath": [
+    "execute",
+    "tools.call",
+    "integration_call",
+    "Composio SDK session.execute"
+  ],
+  "discoveryLogId": "log_6c76EWLyTnPx",
+  "composio": {
+    "metaTool": "COMPOSIO_MULTI_EXECUTE_TOOL",
+    "appTool": "COMPOSIO_SEARCH_FETCH_URL_CONTENT",
+    "logId": "log_UsJ-xtKaH4Ql",
+    "providerRequestId": "d02717f8633ae26e4b2729f082228754",
+    "url": "https://news.ycombinator.com/",
+    "source": "cached",
+    "successful": true,
+    "title": "Hacker News",
+    "returnedCharacters": 2500
+  },
+  "agentmail": {
+    "operation": "GET /v0/auth/me",
+    "httpStatus": 200,
+    "scope": "credential validation only; no inbox provisioned or mail read"
+  },
+  "paidAikoInference": false,
+  "telegramDelivery": false,
+  "deployed": false,
+  "limits": [
+    "No Gmail or Outlook authorization",
+    "No live owner-bound AgentMail inbox",
+    "No live SSO, OTP or cookie capture"
+  ]
+}

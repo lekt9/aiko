@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { privateDirectory } from "./accounts.ts";
+import { holdRestoredBrowserWatches } from "./browser-watch-restore.ts";
 import {
   BACKUP_CHUNK_BYTES,
   validateBackupFiles,
@@ -246,6 +247,9 @@ export async function publishVmRestore(
   ) {
     const db = new Database(evidence);
     try {
+      // Commit before the directory becomes visible to a new runner. Current
+      // sign-in revisions alone cannot authorize leases recovered from backup.
+      holdRestoredBrowserWatches(db, owner);
       const hasLogin = db
         .query(
           "SELECT name FROM sqlite_master WHERE type='table' AND name='native_login'",

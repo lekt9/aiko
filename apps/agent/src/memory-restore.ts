@@ -37,6 +37,9 @@ export function openGuardedMemory(options: {
   /** Separate trusted control-plane authority is required on a fresh recovery target.
    * Never derive it from the candidate archive, request body or imported account state. */
   restoreAuthority?: RestoreAuthority;
+  /** Synchronous executor custody checks inside EACH native transaction. The
+   * host must supply this for all-write admission, including direct callers. */
+  writeAuthority?: { check(scope: string): void; after(scope: string): void };
 }): Memory {
   const { storage, scope } = options;
   storage.exec(`CREATE TABLE IF NOT EXISTS ${TABLE} (scope TEXT PRIMARY KEY, fence TEXT NOT NULL)`);
@@ -53,6 +56,7 @@ export function openGuardedMemory(options: {
   const guardedStorage: MemoryStorage = {
     ...storage,
     transaction: run => storage.transaction(() => {
+      options.writeAuthority?.check(scope);
       // A recovered checkpoint without its journal does not make a fresh write
       // safe. Only a transaction restoring that native erasure history can
       // resume writes; otherwise its new data would omit the subject fences.
@@ -69,6 +73,7 @@ export function openGuardedMemory(options: {
       // Preparation may immediately follow the first write on this same handle.
       // Retain its checkpoint atomically, not only when a later handle opens.
       if (!local() && memory.journal.scopeVersion(scope) > 0) retain(memory.erasureFence());
+      options.writeAuthority?.after(scope);
       return result;
     }),
   };

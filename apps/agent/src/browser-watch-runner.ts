@@ -3,6 +3,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import type { VaultCipher } from "../../server/src/crypto.ts";
 import { CdpBackgroundListener, type BackgroundObservation } from "./cdp-background-listener.ts";
 import { BrowserObservationQueue } from "./browser-event-queue.ts";
+import { browserWatchRestoreHold, ensureBrowserWatchRestoreTable, type BrowserWatchRestoreStatus, type BrowserWatchRestoreProof, type BrowserWatchReauthorizeRequest } from "./browser-watch-restore.ts";
 import { browserEventOrigin, type BrowserProducerGrant } from "./browser-events.ts";
 import { harnessDigest } from "./harness-library.ts";
 
@@ -43,6 +44,7 @@ export interface BrowserWatchRunnerStatus {
   /** Observation history at/before this privacy cut is deliberately excluded. */
   excludedBefore?: number;
   coverageGap?: BrowserWatchCoverageGap;
+  restore?: BrowserWatchRestoreStatus;
 }
 type Capture = Pick<CdpBackgroundListener,"connect"|"close"|"renewRecording"|"flush"|"health"> & {readonly observerTargetId?:string};
 type StoredLease = BrowserWatchLease & {pausedThrough?:number;observationFloor?:number;coverageLapse?:BrowserWatchCoverageLapse};
@@ -75,6 +77,8 @@ export class BrowserWatchRunner {
     createCapture?:(options:ConstructorParameters<typeof CdpBackgroundListener>[0])=>Capture;
   }) {
     this.queue=new BrowserObservationQueue(options.db);
+    ensureBrowserWatchRestoreTable(options.db);
+    options.db.exec("CREATE TABLE IF NOT EXISTS browser_watch_restore_receipts(producer TEXT PRIMARY KEY,owner TEXT NOT NULL,challenge TEXT NOT NULL,request_digest TEXT NOT NULL,delivery_epoch TEXT NOT NULL)");
     options.db.exec("CREATE TABLE IF NOT EXISTS browser_watch_leases(producer TEXT PRIMARY KEY,owner TEXT NOT NULL,envelope TEXT NOT NULL); CREATE TABLE IF NOT EXISTS browser_watch_privacy(owner TEXT PRIMARY KEY,envelope TEXT NOT NULL); CREATE TABLE IF NOT EXISTS browser_watch_health(producer TEXT NOT NULL,owner TEXT NOT NULL,generation INTEGER NOT NULL,envelope TEXT NOT NULL,pending INTEGER NOT NULL,PRIMARY KEY(producer,generation))");
     options.db.exec("CREATE TABLE IF NOT EXISTS browser_watch_observation_floors(producer TEXT PRIMARY KEY,owner TEXT NOT NULL,floor INTEGER NOT NULL,lapse_from INTEGER NOT NULL,lease_revision INTEGER NOT NULL)");
   }
@@ -94,7 +98,8 @@ export class BrowserWatchRunner {
     if(!g||g.owner!==this.options.owner||!g.active||!Number.isSafeInteger(g.expiresAt)||g.expiresAt<=this.now()||g.expiresAt>this.now()+86_400_000||
       !Number.isSafeInteger(g.registeredAt)||g.registeredAt>this.now()||!Number.isSafeInteger(g.generation)||g.generation<1||
       !/^[a-zA-Z0-9_.:-]{1,160}$/.test(g.producer)||!g.epoch||!g.profile||!g.connectionId||!g.connectionRevision||g.secret.length<32||
-      !g.origins.length||g.origins.length>16||!g.kinds.length||g.kinds.some(k=>!["push","notification","network"].includes(k)))throw Error("browser_watch_lease_invalid");
+      !g.origins.length||g.origins.length>16||!g.kinds.length||g.kinds.some(k=>!["push","notification","network"].includes(k))||
+      g.deliveryEpoch!==undefined&&!/^[a-zA-Z0-9_.:-]{1,160}$/.test(g.deliveryEpoch))throw Error("browser_watch_lease_invalid");
     g.origins.forEach(browserEventOrigin);
     const url=new URL(lease.ingestUrl);
     if(url.protocol!=="https:"||url.username||url.password||url.search||url.hash||url.port||url.pathname!==`/v1/browser-events/${this.options.owner}`)throw Error("browser_watch_ingress_invalid");
@@ -102,7 +107,14 @@ export class BrowserWatchRunner {
     for(const route of lease.networkRoutes??[])if(!/^(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)$/.test(route.method)||!/^\/[a-zA-Z0-9_/:.{}-]{0,511}$/.test(route.route)||route.route.includes(".."))throw Error("browser_watch_route_invalid");
     return lease;
   }
-  private eligible(entry:Entry){return this.watches.get(entry.lease.grant.producer)===entry&&!this.closed&&!this.suspended&&!entry.stopped&&entry.lease.grant.active&&entry.lease.grant.expiresAt>this.now()&&this.options.authorized(entry.lease.grant);}
+  private restoreHold(entry:Entry){return browserWatchRestoreHold(this.options.db,this.options.owner,entry.lease.grant.producer);}
+  private pauseWatermark(entry:Entry){
+    if(!this.restoreHold(entry))return this.queue.highWatermark(entry.lease.grant);
+    const state=this.queue.verifiedState(entry.lease.grant);
+    if(!state)throw Error("browser_watch_queue_watermark_unavailable");
+    return state.head;
+  }
+  private eligible(entry:Entry){return this.watches.get(entry.lease.grant.producer)===entry&&!this.closed&&!this.suspended&&!entry.stopped&&entry.lease.grant.active&&entry.lease.grant.expiresAt>this.now()&&!this.restoreHold(entry)&&this.options.authorized(entry.lease.grant);}
   private async savePrivacy(suspended:boolean,excludedBefore:number){
     const envelope=await this.options.cipher.seal(`unlock:browser-watch-privacy:v1:${this.options.owner}`,{suspended,excludedBefore});
     this.options.db.query("INSERT INTO browser_watch_privacy VALUES(?,?) ON CONFLICT(owner) DO UPDATE SET envelope=excluded.envelope").run(this.options.owner,JSON.stringify(envelope));
@@ -127,7 +139,10 @@ export class BrowserWatchRunner {
           !Number.isSafeInteger(floor.lease_revision)||floor.lease_revision<1||floor.lease_revision>(lease.leaseRevision??0))throw Error("browser_watch_observation_floor_invalid");
         lease.observationFloor=floor.floor;lease.coverageLapse={from:floor.lapse_from,to:floor.floor,leaseRevision:floor.lease_revision};
       }
-      if(lease.pausedThrough!==undefined&&lease.pausedThrough!==this.queue.highWatermark(lease.grant))throw Error("browser_watch_queue_watermark_unavailable");
+      // A restore hold preserves an existing pause even when continuity cannot
+      // be proved. It never manufactures an empty queue to make resume pass.
+      const held=browserWatchRestoreHold(this.options.db,this.options.owner,row.producer);
+      if(!held&&lease.pausedThrough!==undefined&&lease.pausedThrough!==this.queue.highWatermark(lease.grant))throw Error("browser_watch_queue_watermark_unavailable");
       if(lease.grant.active&&lease.grant.expiresAt>this.now()){
         const raw={...lease};delete raw.observationFloor;delete raw.coverageLapse;
         this.validate(raw);
@@ -193,6 +208,50 @@ export class BrowserWatchRunner {
     const result=await this.mutate(()=>this.configureLease(raw));
     await this.tick();this.schedule();return this.status().find(s=>s.producer===result)!;
   }
+  restoreProof(producer:string,challenge:string,hostThrough:number):BrowserWatchRestoreProof {
+    const entry=this.watches.get(producer);
+    if(this.closed||!entry)throw Error("browser_watch_restore_proof_unavailable");
+    const hold=this.restoreHold(entry),g=entry.lease.grant;
+    if(!hold||hold.challenge!==challenge)throw Error("browser_watch_restore_challenge_changed");
+    return {owner:g.owner,producer:g.producer,profile:g.profile,epoch:g.epoch,generation:g.generation,connectionId:g.connectionId,connectionRevision:g.connectionRevision,
+      lifecycleRevision:entry.lease.lifecycleRevision??0,leaseRevision:entry.lease.leaseRevision??0,...(g.deliveryEpoch===undefined?{}:{deliveryEpoch:g.deliveryEpoch}),
+      expiresAt:g.expiresAt,challenge:hold.challenge,at:hold.at,...this.queue.restoreProof(g,hostThrough)};
+  }
+  async reauthorize(producer:string,raw:BrowserWatchReauthorizeRequest,signal?:AbortSignal):Promise<BrowserWatchRunnerStatus> {
+    const request=structuredClone(raw);
+    await this.mutate(async()=>{
+      signal?.throwIfAborted();
+      const entry=this.watches.get(producer);
+      if(this.closed||!entry||request.producer!==producer||request.owner!==this.options.owner||
+        !/^[a-zA-Z0-9_.:-]{1,160}$/.test(request.deliveryEpoch)||request.deliveryEpoch===request.previousDeliveryEpoch)throw Error("browser_watch_restore_request_invalid");
+      const digest=harnessDigest(request),hold=this.restoreHold(entry);
+      if(!hold){
+        const receipt=this.options.db.query("SELECT * FROM browser_watch_restore_receipts WHERE producer=?").get(producer) as {owner:string;request_digest:string;delivery_epoch:string}|null;
+        if(receipt?.owner!==this.options.owner||receipt.request_digest!==digest||receipt.delivery_epoch!==entry.lease.grant.deliveryEpoch)throw Error("browser_watch_restore_challenge_changed");
+        return;
+      }
+      const {previousDeliveryEpoch,deliveryEpoch,...scope}=request;
+      const expected={...scope,...(previousDeliveryEpoch===null?{}:{deliveryEpoch:previousDeliveryEpoch})};
+      const check=()=>{
+        signal?.throwIfAborted();
+        if(this.closed||this.watches.get(producer)!==entry||this.suspended||entry.stopped||!entry.lease.grant.active||entry.lease.grant.expiresAt<=this.now()||!this.options.authorized(entry.lease.grant))throw Error("browser_watch_restore_authority_unavailable");
+        if(harnessDigest(this.restoreProof(producer,request.challenge,request.hostThrough))!==harnessDigest(expected))throw Error("browser_watch_restore_proof_changed");
+      };
+      check();
+      const next=structuredClone(entry.lease);next.grant.deliveryEpoch=deliveryEpoch;
+      const envelope=await this.options.cipher.seal(this.context(producer),next);
+      this.options.db.transaction(()=>{
+        check();
+        this.queue.acknowledgeRestoredPrefix(entry.lease.grant,request.hostThrough,request.prefixDigest);
+        this.options.db.query("UPDATE browser_watch_leases SET envelope=? WHERE producer=? AND owner=?").run(JSON.stringify(envelope),producer,this.options.owner);
+        this.options.db.query("INSERT INTO browser_watch_restore_receipts VALUES(?,?,?,?,?) ON CONFLICT(producer) DO UPDATE SET owner=excluded.owner,challenge=excluded.challenge,request_digest=excluded.request_digest,delivery_epoch=excluded.delivery_epoch")
+          .run(producer,this.options.owner,request.challenge,digest,deliveryEpoch);
+        this.options.db.query("DELETE FROM browser_watch_restore_holds WHERE producer=? AND owner=? AND challenge=?").run(producer,this.options.owner,request.challenge);
+      })();
+      entry.lease=next;entry.status.acknowledged=request.hostThrough;entry.nextAttempt=0;
+    });
+    await this.tick();this.schedule();return this.status().find(status=>status.producer===producer)!;
+  }
   private async configureLease(raw:BrowserWatchLease) {
     if(this.closed)throw Error("browser_watch_runner_closed");
     const lease:StoredLease=this.validate(raw),key=lease.grant.producer,prior=this.watches.get(key),wasStopped=prior?.stopped;
@@ -202,6 +261,7 @@ export class BrowserWatchRunner {
     if(prior&&prior.lease.grant.generation!==lease.grant.generation)throw Error("browser_watch_source_immutable_new_producer");
     if(prior&&prior.lease.grant.generation===lease.grant.generation){
       const revision=lease.lifecycleRevision??0,previous=prior.lease.lifecycleRevision??0;
+      if(lease.grant.deliveryEpoch!==prior.lease.grant.deliveryEpoch)throw Error("browser_watch_delivery_epoch_changed");
       if(leaseRevision<previousLeaseRevision||leaseRevision>previousLeaseRevision+1)throw Error("browser_watch_stale_lease");
       if(renewing){
         if(lease.renewalFrom?.leaseRevision!==previousLeaseRevision||lease.renewalFrom.expiresAt!==prior.lease.grant.expiresAt||
@@ -212,8 +272,8 @@ export class BrowserWatchRunner {
       if(revision<previous||revision===previous&&prior.stopped&&!preservePause)throw Error("browser_watch_stale_lifecycle");
       if(revision>previous&&(!prior.stopped||prior.status.state!=="paused"||prior.status.pausedThrough===undefined||
         lease.resumeFrom?.lifecycleRevision!==previous||lease.resumeFrom.pausedThrough!==prior.status.pausedThrough||
-        prior.status.pausedThrough!==this.queue.highWatermark(prior.lease.grant)))throw Error("browser_watch_resume_unconfirmed");
-      const stable=(l:StoredLease)=>{const c=structuredClone(l);c.grant.expiresAt=0;c.grant.active=true;delete c.lifecycleRevision;delete c.resumeFrom;delete c.pausedThrough;delete c.leaseRevision;delete c.renewalFrom;delete c.observationFloor;delete c.coverageLapse;return harnessDigest(c);};
+        prior.status.pausedThrough!==this.pauseWatermark(prior)))throw Error("browser_watch_resume_unconfirmed");
+      const stable=(l:StoredLease)=>{const c=structuredClone(l);c.grant.expiresAt=0;c.grant.active=true;delete c.grant.deliveryEpoch;delete c.lifecycleRevision;delete c.resumeFrom;delete c.pausedThrough;delete c.leaseRevision;delete c.renewalFrom;delete c.observationFloor;delete c.coverageLapse;return harnessDigest(c);};
       if(stable(prior.lease)!==stable(lease))throw Error("browser_watch_generation_conflict");
     }else if((lease.lifecycleRevision??0)!==0||lease.resumeFrom||leaseRevision!==0||lease.renewalFrom)throw Error("browser_watch_resume_unconfirmed");
     if(preservePause){lease.grant.active=false;lease.pausedThrough=prior!.lease.pausedThrough;}
@@ -328,7 +388,7 @@ export class BrowserWatchRunner {
       if(!this.eligible(entry)){
         await entry.capture?.close();entry.capture=undefined;
         entry.status.state=entry.stopped||entry.lease.grant.expiresAt<=this.now()?"paused":"needs-attention";
-        entry.status.reason=this.suspended?"private-sign-in":entry.stopped?"paused":entry.lease.grant.expiresAt<=this.now()?"lease-expired":"connection-unavailable";continue;
+        entry.status.reason=entry.stopped?"paused":entry.lease.grant.expiresAt<=this.now()?"lease-expired":this.restoreHold(entry)?"restore-authorization-required":this.suspended?"private-sign-in":"connection-unavailable";continue;
       }
       if(entry.nextAttempt>this.now())continue;
       try {
@@ -380,15 +440,18 @@ export class BrowserWatchRunner {
       const entry=this.watches.get(producer);if(!entry)throw Error("browser_watch_missing");
       if(entry!==current||(entry.lease.lifecycleRevision??0)!==lifecycleRevision)throw Error("browser_watch_stale_lifecycle");
       entry.stopped=true;entry.delivery.abort();entry.lease.grant.active=false;
-      entry.lease.pausedThrough=this.queue.highWatermark(entry.lease.grant);
+      entry.lease.pausedThrough=this.pauseWatermark(entry);
       const envelope=await this.options.cipher.seal(this.context(producer),entry.lease);
       this.options.db.query("UPDATE browser_watch_leases SET envelope=? WHERE producer=? AND owner=?").run(JSON.stringify(envelope),producer,this.options.owner);
       await entry.capture?.close();entry.capture=undefined;entry.status.state="paused";entry.status.reason="paused";
       entry.status.lifecycleRevision=lifecycleRevision;entry.status.pausedThrough=entry.lease.pausedThrough;
-      return {...entry.status};
+      return this.status().find(status=>status.producer===producer)!;
     });
   }
-  status(){return [...this.watches.values()].map(entry=>({...entry.status,...(entry.gap?{coverageGap:structuredClone(entry.gap)}:{}),...(this.excludedBefore?{excludedBefore:this.excludedBefore}:{})}));}
+  status(){return [...this.watches.values()].map(entry=>{
+    const hold=this.restoreHold(entry),queue=hold?this.queue.verifiedState(entry.lease.grant):undefined;
+    return {...entry.status,...(hold?{restore:{...hold,...(queue?{queue}:{})}}:{}),...(entry.gap?{coverageGap:structuredClone(entry.gap)}:{}),...(this.excludedBefore?{excludedBefore:this.excludedBefore}:{})};
+  });}
   async close(){this.closed=true;clearTimeout(this.timer);this.lifetime.abort();await Promise.allSettled([...this.watches.values()].map(entry=>entry.capture?.close()));await this.running;await this.mutations;}
 }
 export function routeMatches(template:string,path:string){

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { selectLoginEmail, type PrivateLoginEmail } from "../src/native-gmail-page.ts";
 import { googleIdentityRequest } from "../src/native-google-sso.ts";
 import { runPrivateLogin, type NativeLoginAssistanceDependencies } from "../src/native-login-assistance.ts";
-import type { NativeLoginState } from "../src/native-login.ts";
+import { nativeLogin, type NativeLoginState } from "../src/native-login.ts";
 import { ConnectorEngine, type ConnectorStore } from "../src/connectors.ts";
 import { connectorApi } from "../src/connector-api.ts";
 
@@ -71,6 +71,14 @@ function runtime() {
   return { request, deps, source, grant, calls, get target() { return target; }, set target(state) { target = state; }, get dispatches() { return dispatches; }, get reads() { return reads; }, revokeDuringRestore() { revokedDuringRestore = true; } };
 }
 
+test("assisted actions reject credential and arbitrary navigation inputs at the private boundary", async () => {
+  const fixture = runtime();
+  for (const extra of [{ password: "never-dispatch" }, { username: recipient }, { code: "456789" }, { url: "https://untrusted.example/" }, { text: "never-dispatch" }]) {
+    await expect(runPrivateLogin({ ...fixture.request, ...extra }, fixture.deps)).rejects.toThrow("Unexpected assisted sign-in input");
+  }
+  expect(fixture.calls).toHaveLength(0); expect(fixture.reads).toBe(0); expect(fixture.target.assistance).toBeUndefined();
+});
+
 test("a lost Google click acknowledgement is durably fenced and never repeated by polling or replay", async () => {
   const fixture = runtime();
   expect((await runPrivateLogin(fixture.request, fixture.deps)).assistance?.status).toBe("uncertain");
@@ -99,6 +107,38 @@ test("source authority is rechecked after restore and before the website receive
   const fixture = runtime(); fixture.revokeDuringRestore();
   expect((await runPrivateLogin(fixture.request, fixture.deps)).assistance?.status).toBe("source_unavailable");
   expect(fixture.dispatches).toBe(0); expect(fixture.calls).not.toContain("Target.createTarget");
+});
+
+test("assistance expiry during a private read stops the next effect even while the Gmail lease is valid", async () => {
+  const fixture = runtime(), clock = Date.now;
+  const expiresAt = clock() + 1000;
+  fixture.target = { ...fixture.target, assistance: { id: fixture.request.assistanceId, source: fixture.grant, method: "google", startedAt: clock(), expiresAt, stage: "ready", status: "working" } };
+  fixture.deps.vault.identity = async () => { Date.now = () => expiresAt + 1; return recipient; };
+  try {
+    expect((await runPrivateLogin({ ...fixture.request, action: "finish" }, fixture.deps)).assistance?.status).toBe("expired");
+    expect(fixture.dispatches).toBe(0); expect(fixture.calls).not.toContain("Target.createTarget");
+  } finally { Date.now = clock; }
+});
+
+test("private form insertion and submission each recheck the original assistance authority", async () => {
+  for (const denyAt of [1, 2]) {
+    const state: NativeLoginState = { connectionId: crypto.randomUUID(), domain, targetId: "target", status: "pending", revision: 1, expiresAt: Date.now() + 60_000 };
+    let checks = 0, inserted = 0, submitted = 0;
+    await expect(nativeLogin({ connectionId: state.connectionId, domain, action: "credentials", username: recipient }, {
+      read: () => state, save() {}, beforeCredentialDispatch() { if (++checks === denyAt) throw Error("Assistance expired or revoked"); },
+      cdp: { close() {}, async send(method, params: any) {
+        if (method === "Target.attachToTarget") return { sessionId: "session" };
+        if (method === "Input.insertText") inserted++;
+        if (method === "Runtime.evaluate") {
+          if (params.expression.includes("HTMLFormElement.prototype.requestSubmit.call")) submitted++;
+          return { result: { value: params.expression === "location.hostname" ? domain : params.expression === "location.origin" ? `https://${domain}` : true } };
+        }
+        return {};
+      } },
+    })).rejects.toThrow("Assistance expired or revoked");
+    expect(inserted).toBe(denyAt - 1); expect(submitted).toBe(0);
+    expect(state.inputDispatched).toBe(true); // Preserve the uncertain effect fence.
+  }
 });
 
 test("the connector host pins owner-scoped Gmail approval, rejects injected grants, and withdraws it after disconnect", async () => {

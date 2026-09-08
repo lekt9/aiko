@@ -1,8 +1,9 @@
 import { browserWatchHarnessActions } from "./browser-watch-actions.ts";
 import { browserWatchActorActions } from "./browser-watch-actor-actions.ts";
 import { browserWatchWebhookActions, browserWatchWebhookPermitRequired, type BrowserWatchWebhookBinding } from "./browser-watch-webhook-actions.ts";
+import { browserWatchRestoreAdmissionRequired } from "./browser-watch-reauthorization.ts";
 import { channelControlState, controlOperationId } from "./channel-controls.ts";
-import { browserEventKey, browserEventAppendAllowed, createBrowserEventAdmission, type BrowserProducerGrant } from "./browser-events.ts";
+import { browserEventKey, browserEventAppendAllowed, browserEventAdmissionRequired, createBrowserEventAdmission, type BrowserProducerGrant } from "./browser-events.ts";
 import { browserWatchEventKey, browserWatchAppendAllowed, createBrowserWatches, type BrowserWatchBindings, type BrowserWatchDispatch } from "./browser-watches.ts";
 import {
   createChannelLogSources,
@@ -67,7 +68,7 @@ export interface ChannelHost {
   seed(thread: string, events: readonly Event[]): Promise<void>;
   commitRoot(address: string, event: Event): Promise<void>;
   /** Actual guarded native metadata commit. History seed is not this capability. */
-  appendControl?(thread: string, events: readonly Event[]): Promise<unknown>;
+  appendControl?(thread: string, events: readonly Event[], options?: {wake?: boolean}): Promise<unknown>;
 }
 
 /** Host-owned capabilities only. Owner, custody journal and native channel
@@ -80,7 +81,7 @@ export interface BrowserWatchNativeActions {
  * silently lose its application authority fence after host reconstruction. */
 export const browserWatchActorAdmissionRequired = (events: readonly Event[]) => events.some(e => e.type === "MessageReceived" &&
   (!!(e.input as {browserWatch?:unknown}|undefined)?.browserWatch || String(e.id).startsWith("watch:")));
-export const browserWatchDispatchAdmissionRequired = (events: readonly Event[]) => browserWatchActorAdmissionRequired(events) || browserWatchWebhookPermitRequired(events);
+export const browserWatchDispatchAdmissionRequired = (events: readonly Event[]) => browserWatchActorAdmissionRequired(events) || browserWatchWebhookPermitRequired(events) || browserWatchRestoreAdmissionRequired(events);
 export type BrowserWatchHostPolicy = (context: {
   owner: string;
   thread: string;
@@ -245,6 +246,21 @@ export function createHostedChannels(
     )
       throw new Error("channel_commit_conflict");
     if (!events.length) return;
+    if (browserWatchRestoreAdmissionRequired(events)) {
+      if (events.some(e => !browserWatchRestoreAdmissionRequired([e])) || !host().appendControl)
+        throw Error("watch_restore_guarded_commit_required");
+      await host().appendControl!(thread, events, {wake:true});
+      return;
+    }
+    if (browserEventAdmissionRequired(events)) {
+      if (events.some(e => !browserEventKey(e)) || !host().appendControl)
+        throw Error("browser_guarded_commit_required");
+      await host().appendControl!(thread, events, {wake:true});
+      const committed = await host().read(thread);
+      if (!events.every(e => committed.some(p => browserEventKey(p) === browserEventKey(e) && harnessDigest(p) === harnessDigest(e))))
+        throw Error("browser_admission_unavailable");
+      return;
+    }
     if (browserWatchWebhookPermitRequired(events)) {
       if (events.some(e => e.type !== "AikoBrowserWatchWebhookPermitted") || !host().appendControl)
         throw Error("watch_webhook_guarded_commit_required");
@@ -615,17 +631,31 @@ export function createHostedChannels(
     });
   }
   const refresh = async () => { await watches?.refresh(); };
+  const producerGrant = (producer: string, events?: readonly Event[]) => {
+    const configured = policy.browserProducers?.grant(producer);
+    const watched = watches?.producerGrants(events).filter(grant => grant.producer === producer) ?? [];
+    // An explicit host producer cannot silently replace a retained watch.
+    if ((configured ? 1 : 0) + watched.length !== 1) return undefined;
+    if (configured) return { ...configured, active: configured.active && !!policy.browserProducers?.current() };
+    return watched[0];
+  };
+  const browserAdmissionAllowed = (events: readonly Event[], read: () => readonly Event[]) => {
+    if (!browserEventAdmissionRequired(events)) return true;
+    const rows = read();
+    return browserEventAppendAllowed(events, () => rows) && events.every(e => {
+      if (!browserEventKey(e)) return true;
+      const grant = producerGrant(String(e.producer), rows);
+      return !!grant && grant.owner === owner && e.owner === owner && grant.active && grant.expiresAt > Date.now() &&
+        grant.epoch === e.epoch && grant.generation === e.generation && grant.profile === e.profile &&
+        grant.connectionId === e.connectionId && grant.connectionRevision === e.connectionRevision && grant.deliveryEpoch === e.deliveryEpoch &&
+        grant.kinds.includes(e.kind as import("./browser-events.ts").BrowserEventKind) &&
+        grant.origins.includes((e.fields as {origin?:string})?.origin ?? "");
+    });
+  };
   const admitBrowser = policy.browserProducers || watches
     ? createBrowserEventAdmission({ owner, journal: wiringJournal,
         current: () => !!policy.browserProducers?.current() || !!watchBinding?.current(),
-        grant: producer => {
-          const configured = policy.browserProducers?.grant(producer);
-          const watched = watches?.producerGrants().filter(grant => grant.producer === producer) ?? [];
-          // An explicit host producer cannot silently replace a retained watch.
-          if ((configured ? 1 : 0) + watched.length !== 1) return undefined;
-          if (configured) return { ...configured, active: configured.active && !!policy.browserProducers?.current() };
-          return watched[0];
-        },
+        grant: producer => producerGrant(producer),
       })
     : undefined;
   return {
@@ -645,6 +675,8 @@ export function createHostedChannels(
     actorAdmissionAllowed: (events: readonly Event[], read: () => readonly Event[]) => !browserWatchActorAdmissionRequired(events) ||
       !!watchBinding?.current() && !!watchActor?.admissionAllowed(events, read),
     dispatchAdmissionAllowed: (events: readonly Event[], read: () => readonly Event[]) =>
+      browserAdmissionAllowed(events, read) &&
+      (!browserWatchRestoreAdmissionRequired(events) || !!watchBinding?.current() && !!watches?.restoreAdmissionAllowed(events, read)) &&
       (!browserWatchActorAdmissionRequired(events) || !!watchBinding?.current() && !!watchActor?.admissionAllowed(events, read)) &&
       (!browserWatchWebhookPermitRequired(events) || !!watchBinding?.current() && !!watchWebhook?.admissionAllowed(events, read)),
     /** Restore private watch grant projections before native recovery. */

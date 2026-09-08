@@ -1,0 +1,26 @@
+apiVersion: cell/v0
+kind: Cell
+metadata:
+  name: integrations-verify
+  description: Check native integration isolation and MCP compatibility without live accounts
+spec:
+  membrane:
+    inputs: {}
+    outputs:
+      result: { schema: object }
+    caps: { allow_spawn: true, allow_write: ["out/**"] }
+  run:
+    kind: python
+    code: |
+      def run(inputs, ctx):
+          import os, subprocess
+          root = os.environ['UNLOCK_ROOT']
+          command = ['bun', '--no-env-file', 'test',
+              'apps/agent/test/integrations.test.ts',
+              'apps/agent/test/general-mcp.test.ts',
+              'apps/agent/test/general-mcp-config.test.ts',
+              'apps/agent/test/tool-router-tools.test.ts']
+          run = subprocess.run(command, cwd=root, text=True, stdout=subprocess.PIPE,
+              stderr=subprocess.STDOUT, timeout=120)
+          return {'result': {'passed': run.returncode == 0, 'exitCode': run.returncode,
+              'command': command, 'output': run.stdout}}

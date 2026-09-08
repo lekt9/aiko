@@ -425,8 +425,11 @@ describe("native Tardie vertical slice", () => {
     expect(await app.service.host.threads()).toHaveLength(0);
     await app.request("/telegram/webhook", update(1, 123), headers);
     await app.service.host.drive();
-    expect(sends).toBe(1);
+    expect(sends).toBe(2); // One early update and one final reply; neither has a receipt.
     let log = (await app.service.host.read("user-123")) as AikoEvent[];
+    expect(log.find((e) => e.type === "AikoProgressSettled")?.result).toEqual({
+      status: "unknown", reason: "transport",
+    });
     expect(log.find((e) => e.type === "AikoDeliverySettled")?.result).toEqual({
       status: "unknown", reason: "transport",
     });
@@ -434,7 +437,7 @@ describe("native Tardie vertical slice", () => {
     await app.restart();
     await app.request("/telegram/webhook", update(1, 123), headers);
     await app.service.host.drive();
-    expect(sends).toBe(1);
+    expect(sends).toBe(2);
     expect(
       (await app.request("/api/messages").then((r) => r.json())).messages,
     ).toHaveLength(0);

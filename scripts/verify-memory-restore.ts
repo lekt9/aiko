@@ -15,6 +15,7 @@ import { createMemoryAuthorityRegistry } from ${JSON.stringify(join(root, "apps/
 import { prepareMemoryErasure, memoryErasureAuthority, memoryAuthorityFingerprint } from ${JSON.stringify(join(root, "apps/agent/src/memory-erasure-authority.ts"))};
 import { memoryRestoreAdmission } from ${JSON.stringify(join(root, "apps/agent/src/memory-restore-authority.ts"))};
 import { nativeMemoryImportPublication } from ${JSON.stringify(join(root, "apps/agent/src/memory-import-publication.ts"))};
+import { createMemoryWriteAuthority } from ${JSON.stringify(join(root, "apps/agent/src/memory-write-authority.ts"))};
 import { createCloudflareAccountHost } from ${JSON.stringify(join(root, "apps/agent/src/cloudflare-host.ts"))};
 import { Effect, Layer } from ${JSON.stringify(Bun.resolveSync("effect", join(root, "apps/agent")))};
 import { Self } from ${JSON.stringify(Bun.resolveSync("tardie/core/runtime", join(root, "apps/agent")))};
@@ -137,6 +138,43 @@ export class ExternalMemory extends DurableObject {
   }catch(e){return Response.json({error:String(e),stack:e.stack},{status:500});}finally{memory.close();}
  }
 }
+export class NativeWrite extends DurableObject {
+ async fetch(request) {
+  const preparing=new URL(request.url).pathname.endsWith("/prepare"),owner="67890",writer=preparing?1:2;
+  const remote=this.env.AUTHORITY.get(this.env.AUTHORITY.idFromName("native-write")),command=(method,...args)=>remote.command(method,args,writer);
+  try {
+   if(preparing)await command("admit",owner);
+   const authority={owner,writer,fingerprint:memoryAuthorityFingerprint(await command("key",owner)),read:owner=>command("read",owner),
+    event:(owner,key)=>command("event",owner,key),erasureClaim:(owner,key)=>command("erasureClaim",owner,key),append:(owner,event)=>command("append",owner,event)};
+   const storage=cloudflareStorage(this.ctx.storage);let memory;
+   const control=createMemoryWriteAuthority({storage,memory:()=>memory,authority});
+   memory=openGuardedMemory({storage,scope:"aiko:"+owner,writeAuthority:control.guard});
+   const write=key=>({key,producer:{kind:"agent",reference:"synthetic-workerd-write"}});
+   if(preparing) {
+    const entered=Promise.withResolvers();
+    this.ctx.waitUntil(control.write("interrupted-source",{},async()=>{
+     memory.remember({subject:"partial",title:"Partial",type:"fact",payload:"NATIVE_WRITE_PARTIAL"},write("partial"));
+     entered.resolve();await new Promise(()=>{});
+    }));
+    await entered.promise;await this.ctx.storage.sync();
+    check((await command("read",owner)).pending.kind==="write","write admission missing before process cut");
+    return Response.json({ok:true,nativePartialCommit:true,executionHeld:true});
+   }
+   check((await control.reconcile("interrupted-source")).status==="pending","unknown writer released without native fence");
+   let denied=false;try{await command("advanceWriter",owner);}catch{denied=true;}check(denied,"pending writer allowed takeover");
+   const before=JSON.stringify(memory.exportArchive());
+   const result=await control.reconcile("interrupted-source",{fence:true});
+   check(result.status==="closed"&&result.receipt.outcome==="interrupted","native write closure not verified");
+   check(before===JSON.stringify(memory.exportArchive()),"writer reconciliation changed native memory");
+   rejects(()=>memory.remember({subject:"unadmitted",title:"Denied",type:"fact",payload:"denied"},write("unadmitted")),"admission");
+   check((await command("advanceWriter",owner)).writer===2,"writer handoff blocked after native closure");
+   await control.write("new-source",{},()=>memory.remember({subject:"new",title:"New",type:"fact",payload:"NEW_GENERATION"},write("new")));
+   check(memory.scan().items.length===2,"partial memory lost or source executed again");
+   await this.ctx.storage.sync();memory.close();
+   return Response.json({ok:true,nativeExecutionFenced:true,partialPreserved:true,reexecuted:false,writerHandoff:true});
+  }catch(e){return Response.json({error:String(e),stack:e.stack},{status:500});}
+ }
+}
 export class NativeImport extends DurableObject {
  async fetch(request) {
   const path=new URL(request.url).pathname,owner="67890",scope="aiko:"+owner,importId="native-import-001",operationId="restore:account:"+importId;
@@ -249,7 +287,7 @@ export class Authority extends DurableObject {
   finally{await registry.close();}
  }
 }
-export default {fetch(request,env){const path=new URL(request.url).pathname;if(path==="/ready")return Response.json({ready:true});if(path.startsWith("/native-import/"))return env.IMPORT.get(env.IMPORT.idFromName("target")).fetch(request);if(path.startsWith("/external/"))return env.EXTERNAL.get(env.EXTERNAL.idFromName(path.split("/")[2])).fetch(request);if(path.startsWith("/authority/"))return env.AUTHORITY.get(env.AUTHORITY.idFromName("registry")).fetch(request);return env.FIXTURE.get(env.FIXTURE.idFromName("fixture")).fetch(request);}};
+export default {fetch(request,env){const path=new URL(request.url).pathname;if(path==="/ready")return Response.json({ready:true});if(path.startsWith("/native-write/"))return env.WRITE.get(env.WRITE.idFromName("writer")).fetch(request);if(path.startsWith("/native-import/"))return env.IMPORT.get(env.IMPORT.idFromName("target")).fetch(request);if(path.startsWith("/external/"))return env.EXTERNAL.get(env.EXTERNAL.idFromName(path.split("/")[2])).fetch(request);if(path.startsWith("/authority/"))return env.AUTHORITY.get(env.AUTHORITY.idFromName("registry")).fetch(request);return env.FIXTURE.get(env.FIXTURE.idFromName("fixture")).fetch(request);}};
 `;
 await writeFile(join(dir,"worker.ts"),worker);
 // Freeze the current dirty candidate, not HEAD. Discover the actual bundled
@@ -271,7 +309,7 @@ assert.equal(built.outputs.length,1,"Unexpected fixture build outputs");
 const bundle = new Uint8Array(await built.outputs[0]!.arrayBuffer()), bundleSha256=createHash("sha256").update(bundle).digest("hex");
 await writeFile(join(dir,"worker.js"),bundle);
 await writeFile(join(dir,"source-freeze.json"),JSON.stringify({inputs:before,bundleSha256,bun:Bun.version},null,2));
-await writeFile(join(dir,"wrangler.json"),JSON.stringify({name:"memory-restore-local",main:join(dir,"worker.js"),no_bundle:true,compatibility_date:"2026-09-01",compatibility_flags:["nodejs_compat"],durable_objects:{bindings:[{name:"FIXTURE",class_name:"Fixture"},{name:"AUTHORITY",class_name:"Authority"},{name:"EXTERNAL",class_name:"ExternalMemory"},{name:"IMPORT",class_name:"NativeImport"}]},migrations:[{tag:"v1",new_sqlite_classes:["Fixture","Authority","ExternalMemory","NativeImport"]}]}));
+await writeFile(join(dir,"wrangler.json"),JSON.stringify({name:"memory-restore-local",main:join(dir,"worker.js"),no_bundle:true,compatibility_date:"2026-09-01",compatibility_flags:["nodejs_compat"],durable_objects:{bindings:[{name:"FIXTURE",class_name:"Fixture"},{name:"AUTHORITY",class_name:"Authority"},{name:"EXTERNAL",class_name:"ExternalMemory"},{name:"IMPORT",class_name:"NativeImport"},{name:"WRITE",class_name:"NativeWrite"}]},migrations:[{tag:"v1",new_sqlite_classes:["Fixture","Authority","ExternalMemory","NativeImport","NativeWrite"]}]}));
 const socket=createServer();await new Promise<void>(resolve=>socket.listen(0,"127.0.0.1",resolve));
 const port=(socket.address() as {port:number}).port;await new Promise<void>(resolve=>socket.close(()=>resolve()));
 let child:ReturnType<typeof Bun.spawn>|undefined;let log="";
@@ -288,10 +326,10 @@ async function call(path:string){const response=await fetch('http://127.0.0.1:'+
 try{
  await start();await call("/prepare");await call("/authority/prepare");
  for(const scenario of ["cleanup","cancel","loss"])await call(`/external/${scenario}/prepare`);
- await call("/native-import/prepare");await stop();
+ await call("/native-import/prepare");await call("/native-write/prepare");await stop();
  await start();await call("/lose");await call("/authority/settle");
  for(const scenario of ["cleanup","cancel","loss"])await call(`/external/${scenario}/recover`);
- await call("/native-import/reconcile");await stop();
+ await call("/native-import/reconcile");await call("/native-write/reconcile");await stop();
  await start();await call("/restore");await stop();
  await start();await call("/verify");await call("/authority/verify");
  const report={verified:true,runtime:"actual local workerd",coldRestarts:3,providerCalls:0,bundleSha256,sourceInputs:Object.keys(before).length,evidence,directory:dir};

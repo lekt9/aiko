@@ -14,6 +14,10 @@ export interface MemoryErasureBinding extends ErasureAuthorityPort {
   erasureClaim(owner: string, receiptKey: string): Promise<MemoryAuthorityClaim | undefined>;
   /** Stable host HMAC, with key custody outside candidate archives. Never a model argument. */
   fingerprint(value: unknown): string;
+  /** Native executor custody, supplied by the same controller that guards all
+   * memory writes. Close its token before external completion/abort. */
+  withNativeMutation?: <T>(claim: MemoryAuthorityClaim, run: () => T) => Promise<T>;
+  fenceNativeErasure?: (claim: MemoryAuthorityClaim, unchanged: () => void) => Promise<void>;
 }
 export interface ErasureCleanupReceipt { status: "complete"; reference: string; digest: string }
 function canonical(value: unknown): string {
@@ -71,7 +75,8 @@ export async function prepareMemoryErasure(options: {
       claim.writer > authority.writer || claim.native?.tool !== "memory_erase" ||
       resume && claim.native.receiptKey !== resume || input && claim.native?.requestFingerprint !== authority.fingerprint(requestIdentity(memory, input)))
     throw Error("Original erasure authority unavailable or changed");
-  return memoryErasureAuthority({ ...options, claim, cleanupOnly: !!resume || claim.writer < authority.writer, fingerprint: authority.fingerprint });
+  return memoryErasureAuthority({ ...options, claim, cleanupOnly: !!resume || claim.writer < authority.writer, fingerprint: authority.fingerprint,
+    mutate: authority.withNativeMutation, fenceNative: authority.fenceNativeErasure });
 }
 
 /** No caller success boolean or missing receipt can release a claim. A verified
@@ -80,6 +85,8 @@ export async function prepareMemoryErasure(options: {
 export function memoryErasureAuthority(options: {
   memory: Memory; authority: ErasureAuthorityPort; claim: MemoryAuthorityClaim;
   input?: Input; signal?: AbortSignal; fingerprint?: (value: unknown) => string; cleanupOnly?: boolean;
+  mutate?: MemoryErasureBinding["withNativeMutation"];
+  fenceNative?: MemoryErasureBinding["fenceNativeErasure"];
 }) {
   const { memory, authority, signal, fingerprint } = options;
   const claim = structuredClone(options.claim), input = options.input && structuredClone(options.input);
@@ -111,6 +118,11 @@ export function memoryErasureAuthority(options: {
     }
   };
   let admitted = false;
+  const erase = () => {
+    checkSignal(signal);
+    if (options.cleanupOnly || !admitted || !input) throw Error("Native deletion was not admitted");
+    return memory.eraseSubject(input);
+  };
   return {
     receiptKey,
     async prepare() {
@@ -145,23 +157,26 @@ export function memoryErasureAuthority(options: {
       return { deletionRequired: !prior };
     },
     /** Synchronous: the caller must keep the owner gate after prepare. */
-    erase() {
-      checkSignal(signal);
-      if (options.cleanupOnly || !admitted || !input) throw Error("Native deletion was not admitted");
-      return memory.eraseSubject(input);
-    },
+    erase,
+    async eraseNative() { return options.mutate ? options.mutate(structuredClone(claim), erase) : erase(); },
     async abortUnchanged() {
       admitted = false;
       if (options.cleanupOnly) throw Error("Cleanup-only recovery cannot abort the original operation");
       // Cancellation is the reason to abort, not permission to skip verification.
       pending(await authority.read(claim.owner));
-      if (!fingerprint || !claim.native!.beforeState || receipt() || !same(memory.erasureFence(), claim.beforeFence) ||
-          snapshot(memory, fingerprint) !== claim.native!.beforeState) throw Error("Unchanged native state could not be verified");
+      const unchanged = () => {
+        if (!fingerprint || !claim.native!.beforeState || receipt() || !same(memory.erasureFence(), claim.beforeFence) ||
+            snapshot(memory, fingerprint) !== claim.native!.beforeState) throw Error("Unchanged native state could not be verified");
+      };
+      if (options.fenceNative) await options.fenceNative(structuredClone(claim), unchanged);
+      else unchanged();
       admitted = false;
+      const beforeState = claim.native!.beforeState;
+      if (!beforeState) throw Error("Unchanged native state could not be verified");
       const event: MemoryAuthorityEvent = { type: "AikoMemoryAuthorityEraseAborted", owner: claim.owner, scope: claim.scope,
         writer: claim.writer, key: `erase-abort:${claim.key}`, at: claim.at, expectedRevision: claim.expectedRevision + 1, claimKey: claim.key,
         witness: { kind: "unchanged-native-state", fence: claim.beforeFence, callKey: claim.native!.callKey,
-          requestFingerprint: claim.native!.requestFingerprint, reference: "native-archive-before-claim/v1", digest: claim.native!.beforeState } };
+          requestFingerprint: claim.native!.requestFingerprint, reference: "native-archive-before-claim/v1", digest: beforeState } };
       return appendExact(event);
     },
     async complete(cleanup: ErasureCleanupReceipt) {

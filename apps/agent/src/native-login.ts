@@ -42,7 +42,11 @@ export function validateNativeInput(input: NativeLoginInput) {
   }
   for (const value of [input.attemptId,input.challengeId,input.submissionId]) if (value !== undefined && !loginUuid(value)) throw Error("Invalid login identity");
   if(input.expectedRevision !== undefined && (!Number.isSafeInteger(input.expectedRevision)||input.expectedRevision<1)) throw Error("Invalid login revision");
-  if (["assist", "assist_consent"].includes(input.action) && (!loginUuid(input.attemptId) || !loginUuid(input.assistanceId) || (input.action === "assist" && (!loginUuid(input.sourceConnectionId) || !loginAssistanceMethods.includes(input.assistMethod!))))) throw Error("Invalid assisted sign-in binding");
+  if (["assist", "assist_consent"].includes(input.action)) {
+    const allowed = ["connectionId", "domain", "action", "attemptId", "assistanceId", "gmailGrant", ...(input.action === "assist" ? ["sourceConnectionId", "assistMethod"] : [])];
+    if (Object.keys(input).some(key => !allowed.includes(key))) throw Error("Unexpected assisted sign-in input");
+    if (!loginUuid(input.attemptId) || !loginUuid(input.assistanceId) || (input.action === "assist" && (!loginUuid(input.sourceConnectionId) || !loginAssistanceMethods.includes(input.assistMethod!)))) throw Error("Invalid assisted sign-in binding");
+  }
   if (input.action === "credentials") {
     if (![input.username,input.password,input.code].some(value => typeof value === "string" && value.length > 0)) throw Error("Credentials required");
     for (const value of [input.username,input.password,input.code]) if (value !== undefined && (typeof value !== "string" || value.length > 2048)) throw Error("Invalid credentials");
@@ -52,7 +56,7 @@ export function validateNativeInput(input: NativeLoginInput) {
   if (input.action === "key" && !["Enter","Tab","Backspace","Escape"].includes(input.key ?? "")) throw Error("Invalid sign-in key");
   if (input.action === "scroll" && (!Number.isFinite(input.delta) || Math.abs(input.delta!) > 640)) throw Error("Invalid sign-in scroll");
 }
-export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMissingTarget?:boolean; cdp:PrivateCdp; read():NativeLoginState|undefined; save(state:NativeLoginState):void; credentials?(state:NativeLoginState,input:NativeLoginInput):void; verified?(state:NativeLoginState,cookies:unknown[],identity?:string):Promise<boolean>}):Promise<NativeLoginView> {
+export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMissingTarget?:boolean; cdp:PrivateCdp; read():NativeLoginState|undefined; save(state:NativeLoginState):void; beforeCredentialDispatch?(state:NativeLoginState):void; credentials?(state:NativeLoginState,input:NativeLoginInput):void; verified?(state:NativeLoginState,cookies:unknown[],identity?:string):Promise<boolean>}):Promise<NativeLoginView> {
   validateNativeInput(input);
   if(["assist","assist_consent","login","renew"].includes(input.action)) throw Error("Use the private vault sign-in operation");
   const {cdp}=dependencies; let state = dependencies.read();
@@ -235,12 +239,17 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMi
         if(location.origin !== ${JSON.stringify(currentOrigin)} || location.protocol !== 'https:' || !e || !safeForm(e)) return false;
         e.focus();e.select();return document.activeElement === e;})()`);
       if (!focused) throw Error("Sign-in page changed; try again");
+      dependencies.beforeCredentialDispatch?.(state);
       await cdp.send("Input.insertText",{text:input[name]},sessionId);
     }
     // Submit the selected login form, not an arbitrary button elsewhere on the page.
+    dependencies.beforeCredentialDispatch?.(state);
     const submitted = await evaluate(nativeLoginSubmit(currentOrigin));
     if (!submitted) throw Error("Sign-in page changed; inspect it before continuing");
-    if(submitted==="enter")for(const type of ["keyDown","keyUp"])await cdp.send("Input.dispatchKeyEvent",{type,key:"Enter",code:"Enter",windowsVirtualKeyCode:13},sessionId);
+    if(submitted==="enter") {
+      dependencies.beforeCredentialDispatch?.(state);
+      for(const type of ["keyDown","keyUp"])await cdp.send("Input.dispatchKeyEvent",{type,key:"Enter",code:"Enter",windowsVirtualKeyCode:13},sessionId);
+    }
     dependencies.credentials?.(state,input);
     if(input.code && state.submission) {state.submission.status="acknowledged";nativeLoginObservation(state,"submission_acknowledged");dependencies.save(state);}
     return {...summary(), fields: []};

@@ -9,7 +9,7 @@ import { artifactReferences, replyArtifacts } from "./database-artifacts.ts";
 import type { DatabaseBinding } from "./database-component.ts";
 
 export const RESPONSE_INSTRUCTIONS =
-  "Every foreground user request must end with a response tool. Use respond(text) for the final answer; the host routes it to the originating chat, API or console using the existing persona and durable outbox. There is no destination argument. A final send_message, telegram_send, telegram_voice or telegram_screenshot also satisfies this for Telegram. Progress, reactions and connection recommendations are not final answers. After the final response tool, do no more work. Queued means accepted for delivery, not confirmed delivered. Never resend an unknown delivery. Report actual blockers without claiming unfinished work succeeded.";
+  "Every foreground user request must end with a response tool. Use respond(text) for the final answer; the host routes it to the originating chat, API or console using the existing persona and durable outbox. There is no destination argument. A final send_message, telegram_send, telegram_voice or telegram_screenshot also satisfies this for Telegram. Progress, reactions and connection recommendations are not final answers. A final response must be the only call in its native action, after all preceding work and checks have returned; never batch it with another call, including another final reply. Final response tools are direct native tools, not tools.call targets inside execute. After the final response tool, do no more work. Queued means accepted for delivery, not confirmed delivered. Never resend an unknown delivery. Report actual blockers without claiming unfinished work succeeded.";
 
 /** Composition can outlive inference; report its durable intent until the reply exists. */
 export function preparingReplies(log: readonly Event[]): string[] {
@@ -157,6 +157,10 @@ const terminalTools = new Set([
   "telegram_voice",
   "telegram_screenshot",
 ]);
+export function isFinalResponseCall(call: { name: string; arguments: unknown }): boolean {
+  return call.name === "respond" || terminalTools.has(call.name) &&
+    (call.arguments as { final?: unknown } | null)?.final === true;
+}
 function finalResponse(request: InferRequest) {
   // Infer receives a projected trajectory: prior failed terminals are omitted.
   // Read the retained native epoch stamps instead of replaying a full-history turn projection.
@@ -225,6 +229,17 @@ export function withRequiredResponse(
                 ? { kind: "fail" as const, error: final.error }
                 : { kind: "complete" as const, output: final.output };
             const action = yield* binding.react(request, key, signal);
+            // Native batches dispatch siblings concurrently. A final answer
+            // cannot depend on their as-yet-unseen receipts. Reject the whole
+            // batch before ordinary dispatch, rather than dropping a call.
+            // Earlier authorized speculation is not undone by this rejection.
+            if (action.kind === "calls" && action.calls.length > 1 && action.calls.some(isFinalResponseCall))
+              return {
+                kind: "fail" as const,
+                error: "Final response refused: await the work and its acceptance checks, then send one standalone final response. This batch was not admitted; inspect any earlier or speculative work before retrying.",
+                usage: action.usage, endpoint: action.endpoint, mode: action.mode,
+                failure: { cause: "output_validation_failed" as const, attempts: 0, policy: { source: "aiko_final_response_boundary" } },
+              };
             if (action.kind === "calls") return {
               ...action,
               calls: action.calls.map(call => call.name === "respond" && typeof (call.arguments as any)?.text === "string"

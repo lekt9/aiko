@@ -1,6 +1,6 @@
 import { browserWatchApi } from "./browser-watch-api.ts";
 import { harnessLibraryApi, harnessLibraryReadRequest } from "./harness-library-api.ts";
-import { browserEventKey, browserEventAppendAllowed, browserEventIngress, type BrowserProducerPolicy } from "./browser-events.ts";
+import { browserEventKey, browserEventAppendAllowed, browserEventAdmissionRequired, browserEventIngress, type BrowserProducerPolicy } from "./browser-events.ts";
 import { browserWatchEventKey, browserWatchAppendAllowed } from "./browser-watches.ts";
 import { createSecretaryWorkBinding, secretaryWorkApi, secretaryWorkView } from "./secretary-work.ts";
 import { workAppendAllowed, workEventKey } from "./commitments.ts";
@@ -9,6 +9,7 @@ import { CodegraffCodingWorkspace } from "./coding-workspace-host.ts";
 import { ProjectContext, projectContextEventKey, type ProjectContextOptions } from "./project-instructions.ts";
 import { GeneralMcp, type McpBinding } from "./general-mcp.ts";
 import { configuredMcpBinding } from "./general-mcp-config.ts";
+import { configuredIntegrations } from "./integrations.ts";
 import { createDatabaseBinding } from "./database-host.ts";
 import { databaseInference } from "./database.ts";
 import { databaseEventKey } from "./database-component.ts";
@@ -234,6 +235,8 @@ export async function createService(
     config.memoryEmbedding?.apiKey ?? "",
     config.cerebrasKey ?? "",
     config.arcadeKey ?? "",
+    config.integrations?.composioKey ?? "",
+    config.integrations?.agentmailKey ?? "",
     ...Object.values(config.connectorVault?.accounts ?? {}).map((a) => a.token),
     config.voiceKey ?? "",
     config.operatorToken,
@@ -531,6 +534,23 @@ export async function createService(
     }finally{directory.close();}
   };
   const mcpClients=new Map<string,GeneralMcp|undefined>();
+  const integrationClients = new Map<string, ReturnType<typeof configuredIntegrations>>();
+  const integrationsFor = (owner: string, thread: string) => {
+    if (!integrationClients.has(thread)) {
+      const configPin = config.integrations;
+      integrationClients.set(thread, configPin ? configuredIntegrations({ owner, thread, instance: config.instanceId ?? config.mode,
+        config: configPin, store: connectorStore, read: () => host.read(thread),
+        current: () => validOwner(owner) && config.codeMode === true && bindingOf(thread)?.owner === owner &&
+          !!config.integrations?.owners.includes(owner) && config.integrations.composioKey === configPin.composioKey && config.integrations.agentmailKey === configPin.agentmailKey,
+        deliverLinks: async (links, signal) => {
+          if (!telegram || !validOwner(owner)) return "rejected";
+          return (await telegram.sendRich(owner, { kind: "text", text: "Connect your app to continue. Only approve the access you want Aiko to have.",
+            buttons: links.map(url => [{ text: "Connect app", url }]) }, signal)).status;
+        },
+      }) : undefined);
+    }
+    return integrationClients.get(thread);
+  };
   const projectContexts=new Map<string,ProjectContext|undefined>();
   const projectFor=(owner:string,thread:string)=>{
     const coding=overrides.projectContext?undefined:config.codeMode?codingFor(owner):undefined;
@@ -616,7 +636,7 @@ export async function createService(
     actorName: "aiko",
     actorInstance: config.instanceId ?? config.mode,
     workspaceSql: false,
-    canAppend: (_thread,events,read)=>(channelHosts.get(bindingOf(_thread)?.owner??"")?.dispatchAdmissionAllowed(events,read)??!browserWatchDispatchAdmissionRequired(events))&&workAppendAllowed(_thread,events,read)&&proactiveAppendAllowed(events,read,_thread)&&harnessLibraryAppendAllowed(events,read)&&mediaProcessingAppendAllowed(events,read)&&channelWiringAppendAllowed(events,read)&&channelLogSourceAppendAllowed(events,read)&&browserEventAppendAllowed(events,read)&&browserWatchAppendAllowed(events,read),
+    canAppend: (_thread,events,read)=>(channelHosts.get(bindingOf(_thread)?.owner??"")?.dispatchAdmissionAllowed(events,read)??(!browserWatchDispatchAdmissionRequired(events)&&!browserEventAdmissionRequired(events)))&&workAppendAllowed(_thread,events,read)&&proactiveAppendAllowed(events,read,_thread)&&harnessLibraryAppendAllowed(events,read)&&mediaProcessingAppendAllowed(events,read)&&channelWiringAppendAllowed(events,read)&&channelLogSourceAppendAllowed(events,read)&&browserEventAppendAllowed(events,read)&&browserWatchAppendAllowed(events,read),
     keyOf: (e) =>
       databaseEventKey(e) ??
       workerEventKey(e) ??
@@ -862,6 +882,7 @@ export async function createService(
                           ...(codingFor(owner)?codingWorkspaceTools(codingFor(owner)!.binding(thread,redact)):[]),
                 ...(overrides.workerTools?.(owner,thread)??[]),
                           ...(mcpFor(owner,thread)?.tools()??[]),
+                          ...(integrationsFor(owner, thread)?.tools() ?? []),
                 ...(projectFor(owner,thread)?.tools()??[]),
                           ...(registryFor(owner)?.providerAdapters?.tools(()=>channelsFor(owner)!)??[]),
                           ...(ownedTelegram ? createTelegramTools({
@@ -1718,6 +1739,7 @@ export async function createService(
             const disposed = await Promise.allSettled([
               ...[...telegramLifecycles.values()].map(lifecycle => lifecycle.close()),
               ...[...mcpClients.values()].map(client => client?.close()),
+              ...[...integrationClients.values()].map(client => client?.close()),
               browser?.close(),
             ]);
             const errors = disposed.filter(result => result.status === "rejected");

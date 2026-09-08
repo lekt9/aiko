@@ -1702,3 +1702,78 @@ test("guarded host decisions arriving after the private deadline never release a
     expect(f.sandbox.busy).toBe(false);
   } finally {f.restore();}
 });
+
+test("restore holds survive encrypted status reconstruction without waking the VM or clearing authority",async()=>{
+  const f=fixture();await f.sandbox.ensure();const remote=await watchTransport(f.sandbox),lease=watchLease();
+  const restore={challenge:crypto.randomUUID(),at:Date.now(),queue:{head:8,acknowledged:3,offered:6}};
+  try {
+    await f.sandbox.watchConfigure(lease);
+    const held={...remote.states.get(lease.grant.producer)!,state:"needs-attention" as const,reason:"restore-authorization-required",restore};
+    remote.states.set(lease.grant.producer,held);
+    const requests=remote.requests.length,commands=remote.commands.length,calls=f.calls.length;
+    expect(await f.sandbox.watchStatus()).toEqual([held]);
+    expect(remote.requests.slice(requests).map(value=>value.operation)).toEqual(["watch-status"]);
+    expect(remote.commands.slice(commands).some(command=>command.endsWith(" peek-health"))).toBe(true);
+    expect(remote.commands.slice(commands).some(command=>command.endsWith(" health"))).toBe(false);
+    expect(f.calls.slice(calls).every(call=>call.path==="/v1/sandboxes/vm-fixture"&&call.body===undefined)).toBe(true);
+    const rebuilt=new CodegraffSandbox(f.options),transport=await watchTransport(rebuilt);
+    transport.states.set(lease.grant.producer,held);
+    try {
+      expect((await rebuilt.watchStatus())[0]!.restore).toEqual(restore);
+      expect(await rebuilt.hasActiveWatchLease()).toBe(true);
+      expect(transport.requests.every(value=>value.operation==="watch-status")).toBe(true);
+      await f.options.gateway.request("/v1/sandboxes/vm-fixture/stop",{});
+      const before=transport.requests.length,provider=f.calls.length;
+      await expect(rebuilt.watchStatus()).rejects.toThrow("runner unavailable");
+      expect(transport.requests).toHaveLength(before);
+      expect(f.calls.slice(provider).every(call=>call.path==="/v1/sandboxes/vm-fixture"&&call.body===undefined)).toBe(true);
+    }finally{transport.restore();}
+    expect(remote.uploads.join()+remote.commands.join()).not.toContain(restore.challenge);
+    expect(await f.state.get("codegraff:browser-watch-leases")).toMatchObject([{producer:lease.grant.producer,generation:1,lifecycleRevision:0}]);
+  }finally{remote.restore();}
+},30000);
+
+test("restore metadata validates exact challenge and ordered queue cursors, including explicit paused holds",async()=>{
+  const f=fixture();await f.sandbox.ensure();const remote=await watchTransport(f.sandbox),lease=watchLease();
+  try {
+    await f.sandbox.watchConfigure(lease);const original=remote.states.get(lease.grant.producer)!;
+    const restore={challenge:crypto.randomUUID(),at:Date.now(),queue:{head:8,acknowledged:3,offered:6}};
+    const held={...original,state:"needs-attention" as const,reason:"restore-authorization-required",restore};
+    remote.states.set(lease.grant.producer,held);
+    expect((await f.sandbox.watchStatus())[0]!.restore).toEqual(restore);
+    remote.states.set(lease.grant.producer,{...held,state:"paused",reason:"paused",pausedThrough:8});
+    expect((await f.sandbox.watchStatus())[0]).toMatchObject({state:"paused",pausedThrough:8,restore});
+    remote.states.set(lease.grant.producer,{...held,restore:{challenge:restore.challenge,at:restore.at}});
+    expect((await f.sandbox.watchStatus())[0]!.restore).toEqual({challenge:restore.challenge,at:restore.at});
+    for(const invalid of [null,[],false,{...restore,challenge:"-".repeat(36)},{...restore,challenge:restore.challenge.toUpperCase()},
+      {...restore,at:0},{...restore,at:-1},{...restore,at:1.1},{...restore,at:Number.MAX_SAFE_INTEGER+1},{...restore,payload:"PRIVATE_RESTORE_PAYLOAD"}]){
+      remote.states.set(lease.grant.producer,{...held,restore:invalid as typeof restore});
+      await expect(f.sandbox.watchStatus()).rejects.toThrow("restore status invalid");
+    }
+    for(const queue of [null,[],false,{head:8,acknowledged:-1,offered:6},{head:8,acknowledged:7,offered:6},
+      {head:5,acknowledged:3,offered:6},{head:8.5,acknowledged:3,offered:6},{head:Number.MAX_SAFE_INTEGER+1,acknowledged:3,offered:6},
+      {head:8,acknowledged:3},{head:8,acknowledged:3,offered:6,payload:"PRIVATE_QUEUE_PAYLOAD"}]){
+      remote.states.set(lease.grant.producer,{...held,restore:{...restore,queue:queue as typeof restore.queue}});
+      await expect(f.sandbox.watchStatus()).rejects.toThrow("restore queue invalid");
+    }
+    for(const state of ["watching","catching-up"] as const){
+      remote.states.set(lease.grant.producer,{...held,state});await expect(f.sandbox.watchStatus()).rejects.toThrow("restore status invalid");
+    }
+    remote.states.set(lease.grant.producer,{...held,reason:"recording"});await expect(f.sandbox.watchStatus()).rejects.toThrow("restore status invalid");
+  }finally{remote.restore();}
+},30000);
+
+test("restore holds do not bypass exact producer generation or lifecycle confirmation",async()=>{
+  const f=fixture();await f.sandbox.ensure();const remote=await watchTransport(f.sandbox),lease=watchLease();
+  const restore={challenge:crypto.randomUUID(),at:Date.now(),queue:{head:0,acknowledged:0,offered:0}};
+  try {
+    await f.sandbox.watchConfigure(lease);
+    for(const change of [{producer:"another-producer"},{generation:2},{lifecycleRevision:1},{leaseRevision:1}]){
+      remote.reply((output,request)=>request.operation==="watch-configure"?{...output,...change,state:"needs-attention",reason:"restore-authorization-required",restore}:output);
+      await expect(f.sandbox.watchConfigure(lease)).rejects.toThrow("configure unconfirmed");
+    }
+    remote.reply((output,request)=>request.operation==="watch-configure"?{...output,state:"needs-attention",reason:"restore-authorization-required",restore}:output);
+    expect((await f.sandbox.watchConfigure(lease)).restore).toEqual(restore);
+    expect(remote.requests.every(value=>["watch-configure"].includes(value.operation))).toBe(true);
+  }finally{remote.restore();}
+},30000);

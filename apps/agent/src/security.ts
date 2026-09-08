@@ -23,7 +23,7 @@ export function redactor(secrets: readonly string[] = []) {
         "[redacted credential]",
       )
       .replace(
-        /\b(?:aiko_|arc_proj|sk-|ghp_|github_pat_)[A-Za-z0-9_-]{12,}\b/g,
+        /\b(?:aiko_|arc_proj|ak_|am_(?:us|eu)_|sk-|ghp_|github_pat_)[A-Za-z0-9_-]{12,}\b/g,
         "[redacted]",
       )
       .replace(/\b\d{6,}:[A-Za-z0-9_-]{20,}\b/g, "[redacted bot token]");

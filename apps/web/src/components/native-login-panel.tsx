@@ -101,11 +101,12 @@ export function NativeLoginPanel({
   // Never poll credential actions or replace a code the owner is still typing.
   useEffect(() => {
     if (busy || view?.requiresOrigin ||
+        ["source_unavailable", "unsupported", "ambiguous", "expired"].includes(view?.assistance?.status ?? "") ||
         (!submitted && view?.status !== "pending") ||
         ["connected", "disconnected"].includes(view?.status ?? "")) return;
     const abort = new AbortController();
     observer.current = abort;
-    const deadline = Math.min(observeUntil, view?.expiresAt ?? Infinity, view?.challenge?.expiresAt ?? Infinity);
+    const deadline = Math.min(observeUntil, view?.expiresAt ?? Infinity, view?.challenge?.expiresAt ?? Infinity, view?.assistance?.expiresAt ?? Infinity);
     let timer: ReturnType<typeof setTimeout>;
     let checks = 0;
     const poll = async () => {
@@ -142,7 +143,7 @@ export function NativeLoginPanel({
       if (observer.current === abort) observer.current = undefined;
       setObserving(false);
     };
-  }, [busy, connectionId, submitted, view?.status, view?.requiresOrigin, view?.expiresAt, view?.challenge?.expiresAt, observeUntil]);
+  }, [busy, connectionId, submitted, view?.status, view?.requiresOrigin, view?.expiresAt, view?.challenge?.expiresAt, view?.assistance?.expiresAt, view?.assistance?.status, observeUntil]);
   async function act(action: string, fields: object = {}) {
     if (cancelling.current) return;
     if (controller.current && !controller.current.signal.aborted) return;
@@ -564,7 +565,7 @@ export function NativeLoginPanel({
                 : "Getting your login ready…"}
           </p>
         )}
-        {observing && !busy && (
+        {observing && !busy && !view?.assistance && (
           <p className="credential-progress" role="status">
             Waiting for verification. If you approve in the app, Aiko will check automatically.
           </p>

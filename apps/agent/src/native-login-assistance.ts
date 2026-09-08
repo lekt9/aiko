@@ -23,7 +23,8 @@ export interface NativeLoginAssistanceDependencies extends Core {
 export async function runPrivateLogin(input: NativeLoginInput, deps: NativeLoginAssistanceDependencies): Promise<NativeLoginView> {
   validateNativeInput(input);
   let identityRejected = false;
-  const coreDeps: Core = { ...deps, verified: async (verified, cookies, identity) => {
+  let authorizeDispatch = () => deps.signal?.throwIfAborted();
+  const coreDeps: Core = { ...deps, beforeCredentialDispatch: current => { deps.beforeCredentialDispatch?.(current); authorizeDispatch(); }, verified: async (verified, cookies, identity) => {
     if (verified.assistance) {
       const pin = verified.assistance;
       let expected = pin.stage !== "ready" ? deps.vault.pendingIdentity({ ...verified, revision: verified.revision - 1 }) : undefined;
@@ -63,11 +64,12 @@ export async function runPrivateLogin(input: NativeLoginInput, deps: NativeLogin
   const check = () => {
     deps.signal?.throwIfAborted();
     const current = deps.read();
-    if (!current || current.status !== "pending" || current.attemptId !== attemptId || current.assistance?.id !== assistance.id || current.expiresAt <= Date.now()) throw Error("Assisted sign-in changed");
+    if (!current || current.status !== "pending" || current.attemptId !== attemptId || current.assistance?.id !== assistance.id || current.expiresAt <= Date.now() || assistance.expiresAt <= Date.now()) throw Error("Assisted sign-in changed");
     const source = deps.source(assistance.source.connectionId);
     if (!sameGmailGrant(assistance.source, input.gmailGrant) || !source || source.domain !== GMAIL_DOMAIN || source.status !== "connected" || source.revision !== assistance.source.revision || source.expiresAt !== assistance.source.expiresAt) throw Error("Gmail source changed");
     return source;
   };
+  authorizeDispatch = () => { check(); };
   const update = (status: LoginAssistanceStatus, stage = assistance.stage) => {
     const current = deps.read()!;
     if (current.attemptId !== attemptId || current.assistance?.id !== assistance.id) throw Error("Assisted sign-in changed");
@@ -196,7 +198,7 @@ export async function runPrivateLogin(input: NativeLoginInput, deps: NativeLogin
     if (!bridge.status().ready) update("source_unavailable");
   } catch {
     // A private transport error contains no safe provider/body text to return.
-    update(["requesting", "choosing", "consenting", "consuming"].includes(assistance.stage) ? "uncertain" : "source_unavailable");
+    update(["requesting", "choosing", "consenting", "consuming"].includes(assistance.stage) ? "uncertain" : assistance.expiresAt <= Date.now() ? "expired" : "source_unavailable");
   } finally {
     if (temporaryTarget) {
       try { const closed = await cdp.send("Target.closeTarget", { targetId: temporaryTarget }); if (closed?.success === false) throw Error("Private cleanup unconfirmed"); }

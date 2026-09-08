@@ -1,5 +1,21 @@
 # Connector login, agent memory and backup verification
 
+## Deployment recheck — 2026-09-08
+
+Worker `67efbc4a-f28a-424a-8693-25a1e8963f57` was already published by the parallel release at 16:06 UTC from Unlock `097b611c` and shared runtime `0933948b`. This connector check did not republish, change keys or webhook settings, or include later concurrent working-tree edits. Use [the hosted entry instructions](aiko-hosted.md#open-the-connector-interface).
+
+**Reachable, but full connector readiness is blocked:**
+
+- Public assets, authenticated catalog discovery (8,252 tools), and anonymous-access rejection passed. The 390px browser check loaded the real app list with the isolated canary bearer and simulated Telegram presentation; this is not a real Telegram-client session test.
+- 116 focused connector/login tests passed; one opt-in live-browser test skipped. These ran against the isolated deployed-source snapshot.
+- A fresh Worker → Codegraff synthetic sign-in verified and saved credentials at 16:27 UTC. Its indexing job then failed with `connection_context_index_failed`; the complete native-login/index verifier did **not** pass. Both the prior and new synthetic canary grants were disconnected with confirmed private cleanup.
+- The full catalog/router verifier repeatedly failed with HTTP 409, including after canary cleanup. Separate routing reads succeeded, but a tagged probe also returned HTTP 503 with a Cloudflare Durable Object storage-reset reference. The underlying cause remains unresolved; no automatic replay of sign-in inputs or application writes was used.
+- Scheduled-task reads reported `promises_unavailable` because deployed code mode was disabled. No unrelated feature gates or grants were enabled to make checks pass.
+
+Evidence is retained privately under `artifacts/connector-availability-20260908/`, including `summary.json`, `host-diagnostic.json`, `index-diagnostic.json`, the native login receipt and cleanup receipts. `/ready`, a catalog result, or a saved connection must not substitute for these failed execution gates. Next: diagnose routing/storage resets and connection-context indexing on the isolated canary, then rerun the complete checks before declaring readiness.
+
+## Historical complete witness
+
 Verified on 2026-09-07 against `https://aiko-agent.lewis-6d8.workers.dev/connect` using the isolated `acct_cloudflare_e2e02` account and synthetic credentials.
 
 | Requirement | Implementation and evidence |

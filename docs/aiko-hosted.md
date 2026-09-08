@@ -76,6 +76,14 @@ The deploy command saves only canary credentials, the recovery key and the deplo
 
 Use the deployed `/` console or `/control` with the appropriate credential. `/connect` serves the connector interface. These URLs do not proxy through the developer's computer. Account tokens carry read/write scopes and cannot choose another account by changing query parameters. Telegram sessions are verified against the deployed bot credentials.
 
+### Open the connector interface
+
+For this installation, open [Aiko in Telegram](https://t.me/aikospillstea_bot?start=web), press **Start** if needed, then choose **Connect apps** from the chat menu. Select an app or **Add a website**, and complete its private sign-in. Passwords and verification codes belong in that form, never in chat.
+
+The public page is [Aiko Connect](https://aiko-agent.lewis-6d8.workers.dev/connect). Opening it in an ordinary browser does not authenticate you: the current connector UI requires a verified Telegram Mini App launch. Account bearer credentials work with the API and console; they are not a sign-in option on `/connect`. Do not put credentials in URL parameters.
+
+A successful `/ready` response checks configuration, not connector execution. Before a connector handoff, run `bun scripts/verify-connectors-deployment.ts` and the isolated native-login/index check in [connector verification](connector-verification.md). Preserve failed receipts; a verified login does not prove indexing or reusable tools succeeded.
+
 Use [encrypted cloud backups and recovery](aiko-cloud-backup.md) to replace a lost remote browser VM or restore an account. Keep `AIKO_BACKUP_KEY`, `AIKO_MANAGER_KEY`, operator credentials and Cloudflare/Codegraff access in durable secret custody. The cloud service continues when the development machine is off; access to the cloud providers and recovery keys is still required.
 
 The historical local demo, SQLite export tools and optional vault service remain available for development and migration. They are not the hosted entry point.

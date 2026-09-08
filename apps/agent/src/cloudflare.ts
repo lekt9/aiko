@@ -1,7 +1,8 @@
 import { browserWatchApi } from "./browser-watch-api.ts";
 import { harnessLibraryApi, harnessLibraryReadRequest } from "./harness-library-api.ts";
-import { configuredBrowserWatchPolicy, parseBrowserWatchDeployment } from "./browser-watch-config.ts";
-import { browserEventKey, browserEventAppendAllowed, browserEventIngress, type BrowserProducerPolicy } from "./browser-events.ts";
+import { configuredBrowserWatchPolicy, configuredBrowserWatchWebhooks, parseBrowserWatchDeployment } from "./browser-watch-config.ts";
+import { composeWebhookAdapters } from "./webhook-adapter.ts";
+import { browserEventKey, browserEventAppendAllowed, browserEventAdmissionRequired, browserEventIngress, type BrowserProducerPolicy } from "./browser-events.ts";
 import { browserWatchEventKey, browserWatchAppendAllowed } from "./browser-watches.ts";
 import { createSecretaryWorkBinding, secretaryWorkApi, secretaryWorkView } from "./secretary-work.ts";
 import { armAt } from "tardie/cloudflare/alarm";
@@ -20,6 +21,7 @@ import { ProjectContext, projectContextEventKey, type ProjectContextOptions } fr
 import { WORKER_BROWSER_OPERATIONS } from "./browser.ts";
 import { GeneralMcp, type McpBinding } from "./general-mcp.ts";
 import { configuredMcpBinding, parseMcpServers } from "./general-mcp-config.ts";
+import { configuredIntegrations, parseIntegrationOwners } from "./integrations.ts";
 import { createObservedNetworkTools, resolveObservedRead, listObservedReads } from "./observed-network.ts";
 import { databaseEntities } from "./database-entities.ts";
 import { publicWebTool } from "./public-web.ts";
@@ -201,6 +203,10 @@ import {
 } from "./password-managers.ts";
 
 export interface AikoCloudflareEnv {
+  /** Non-secret deployment identity, stamped by the release command. */
+  AIKO_RELEASE_ID?: string;
+  AIKO_RELEASE_COMMIT?: string;
+  AIKO_RELEASE_BROWSER_SOURCE?: string;
   AIKO_REGISTRY_FACTORY?: RegistryHostFactory;
   /** Trusted transport edges; defaults still own registry policy and assembly. */
   AIKO_REGISTRY_SANDBOX?: (owner: string, kv: import("./workflow-host.ts").WorkflowKV) => RegistrySandboxTransport | undefined;
@@ -209,6 +215,9 @@ export interface AikoCloudflareEnv {
   AIKO_CODING_REPOSITORIES?: string;
   AIKO_MCP?: (owner:string,thread:string)=>McpBinding|undefined;
   AIKO_MCP_SERVERS?: string;
+  AIKO_INTEGRATION_OWNERS?: string;
+  COMPOSIO_API_KEY?: string;
+  AGENTMAIL_API_KEY?: string;
   AIKO_PROJECT_CONTEXT?: (owner:string,thread:string)=>ProjectContextOptions|undefined;
   AIKO_WORKER_TOOLS?: (owner:string,thread:string)=>import("tardie/component/tool").NativeTool<import("tardie/core/runtime").Self|EventLog>[];
   AIKO_MODEL_FETCH?: Parameters<typeof createModelRouting>[0]["fetch"];
@@ -224,6 +233,8 @@ export interface AikoCloudflareEnv {
   AIKO_BROWSER_WATCHES?: BrowserWatchHostPolicy;
   /** Owner-scoped deployment catalog. No callbacks or credentials in this JSON. */
   AIKO_BROWSER_WATCH_CONFIG?: string;
+  /** Owner-scoped referenced webhook keys. Secret values never enter deployment metadata. */
+  AIKO_BROWSER_WATCH_WEBHOOK_KEYS?: string;
   AIKO_CHANNEL_ADAPTERS?: { forOwner(owner: string): ChannelAdapterBindings | undefined };
   AIKO_BACKUPS?: R2Bucket;
   AIKO_BACKUP_KEY?: string;
@@ -351,6 +362,7 @@ function configOf(env: AikoCloudflareEnv, requireModel = true): AikoConfig {
       },
     ),
     arcadeKey: env.ARCADE_API_KEY,
+    integrations: { owners: parseIntegrationOwners(env.AIKO_INTEGRATION_OWNERS), composioKey: env.COMPOSIO_API_KEY, agentmailKey: env.AGENTMAIL_API_KEY },
     cartesiaKey: env.AIKO_CARTESIA_KEY,
     cartesiaVoiceId: env.AIKO_CARTESIA_VOICE_ID,
     cartesiaModel: env.AIKO_CARTESIA_MODEL,
@@ -505,6 +517,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
           config.modelKey ?? "",
           config.cerebrasKey ?? "",
           config.arcadeKey ?? "",
+          config.integrations?.composioKey ?? "",
+          config.integrations?.agentmailKey ?? "",
           config.cartesiaKey ?? "",
           config.botToken ?? "",
           config.webhookSecret ?? "",
@@ -570,6 +584,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       config.modelKey ?? "",
       config.cerebrasKey ?? "",
       config.arcadeKey ?? "",
+      config.integrations?.composioKey ?? "",
+      config.integrations?.agentmailKey ?? "",
       config.managerKey ?? "",
       ...Object.values(config.connectorVault?.accounts ?? {}).map(
         (a) => a.token,
@@ -945,6 +961,16 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       return routing?.contextForHistory(model).contextWindowTokens??config.modelRouting?.contextWindowTokens??32768;
     };
     const mcpClients=new Map<string,GeneralMcp|undefined>();
+    const integrations = configuredIntegrations({ owner, thread: `user-${owner}`, instance: config.instanceId ?? config.mode,
+      config: config.integrations!, store: doStore, read: () => host.read(`user-${owner}`),
+      current: () => !!validOwner(configOf(this.env, false), owner) && this.env.AIKO_CODE_MODE === "true" &&
+        parseIntegrationOwners(this.env.AIKO_INTEGRATION_OWNERS).includes(owner) && this.env.COMPOSIO_API_KEY === config.integrations?.composioKey && this.env.AGENTMAIL_API_KEY === config.integrations?.agentmailKey,
+      deliverLinks: async (links, signal) => {
+        if (!telegram || !validOwner(configOf(this.env, false), owner)) return "rejected";
+        return (await telegram.sendRich(owner, { kind: "text", text: "Connect your app to continue. Only approve the access you want Aiko to have.",
+          buttons: links.map(url => [{ text: "Connect app", url }]) }, signal)).status;
+      },
+    });
     const projectContexts=new Map<string,ProjectContext|undefined>();
     const projectFor=(thread:string)=>{
       const currentCoding=this.env.AIKO_PROJECT_CONTEXT?undefined:configOf(this.env,false).codeMode?codingFor():undefined;
@@ -973,7 +999,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       return codingFor();
     };
     const workerBindingFor=(thread:string):WorkerBinding=>({owner,thread,readParent:()=>host.read(`user-${owner}`),readChild:()=>host.read(thread),mcpCurrent:()=>mcpFor(thread)?.binding.servers()??[],active:()=>!!validOwner(configOf(this.env,false),owner)&&configOf(this.env,false).codeMode===true&&bindingOf(thread)?.owner===owner&&!registry?.availability?.()&&!registry?.unavailableReason,modelLayer:(model,effort)=>{if(!routing)throw Error("Worker model routing unavailable");return routing.layerFor(model,effort);}});
-    const channelAdapters = this.env.AIKO_CHANNEL_ADAPTERS?.forOwner(owner) ?? registry?.providerAdapters?.adapters;
+    const baseChannelAdapters = this.env.AIKO_CHANNEL_ADAPTERS?.forOwner(owner) ?? registry?.providerAdapters?.adapters;
     const registryLibrary=registry?.sources?.library??registry?.library;
     const registryJournal={read:()=>host.read(`user-${owner}`),append:async(events:Event[])=>{await host.seed(`user-${owner}`,events);}};
     const wiring=registryLibrary?.verifiers.size&&registry?.authorizeReceiving?{blobs:registryLibrary.blobs,...channelHarnessHandlers(registry.sources?sourceAwareHarnessBinding(registryLibrary,registryJournal):registryLibrary,registryJournal,registry.authorizeReceiving,{accepts:(...a)=>registry.continuations?.accepts(...a)??Promise.resolve(false),execute:(...a)=>registry.continuations!.execute(...a),reconcile:(...a)=>registry.continuations!.reconcile(...a)})}:undefined;
@@ -982,11 +1008,21 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       throw Error("Browser watches require native private sign-in, synchronous account storage, and the enabled harness registry");
     if (deployedWatchConfig && this.env.AIKO_BROWSER_WATCHES)
       throw Error("Configure browser watches with either deployment JSON or an in-process factory");
+    const webhookMount = deployedWatchConfig?.webhooks?.length ? configuredBrowserWatchWebhooks({
+      owner, destinations: () => configOf(this.env,false).browserWatchDeployment?.owners[owner]?.webhooks ?? [],
+      keys: () => this.env.AIKO_BROWSER_WATCH_WEBHOOK_KEYS,
+      current: () => !!validOwner(configOf(this.env,false),owner) && configOf(this.env,false).codeMode === true && !registry?.availability?.() && !registry?.unavailableReason,
+      // Use the exact private VM owning native sign-in and the source lease.
+      transport: {sandbox:capabilities!.sandbox,codeTransport:(input,signal)=>capabilities!.sandbox.codeSegment(input,signal),placement:"codegraff"},
+      journal:registryJournal,blobs:registryLibrary!.blobs,kv:workflowKV,
+    }) : undefined;
+    const channelAdapters = webhookMount ? baseChannelAdapters ? composeWebhookAdapters(baseChannelAdapters,webhookMount.webhook,registryJournal) : webhookMount.webhook.adapters : baseChannelAdapters;
     const browserWatches = this.env.AIKO_BROWSER_WATCHES ?? (deployedWatchConfig ? configuredBrowserWatchPolicy({
       owner, configuration: () => configOf(this.env, false).browserWatchDeployment,
       connections: connectors, runner: capabilities!.sandbox,
       library: new HarnessLibrary(registry!.sources ? sourceAwareHarnessBinding(registryLibrary!, registryJournal) : registryLibrary!, registryJournal),
       receivingAuthority: registry!.defaultAuthorityRef!,
+      webhooks: webhookMount,
       current: () => !!validOwner(configOf(this.env, false), owner) && configOf(this.env, false).codeMode === true && !registry?.availability?.() && !registry?.unavailableReason,
     }) : undefined);
     const channels = channelAdapters || wiring ? createHostedChannels(owner, () => host, channelAdapters, {
@@ -1009,7 +1045,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       actorInstance: config.instanceId!,
       ownsThread: (thread) => threadBinding(thread)?.owner === owner,
       allowIndependentChildren: true,
-      onClose:()=>Promise.all([...mcpClients.values()].map(client=>client?.close())).then(()=>undefined),
+      onClose:()=>Promise.all([...mcpClients.values(), integrations].map(client=>client?.close())).then(()=>undefined),
       allowChild: (parent, child) =>
         parent === `user-${owner}` && !!validOwner(configOf(this.env, false), owner) &&
         // The native host also requires the exact retained ChildCreated call ID
@@ -1067,7 +1103,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       canDeliver: (_thread,events,read) => !browserWatchActorAdmissionRequired(events) ||
         !!channels?.actorAdmissionAllowed(events,read) && browserWatchAppendAllowed(events,read),
       canAppend: (_thread, events, read) =>
-        (channels?.dispatchAdmissionAllowed(events,read)??!browserWatchDispatchAdmissionRequired(events)) && workAppendAllowed(_thread,events,read) && proactiveAppendAllowed(events,read,_thread) && mediaProcessingAppendAllowed(events,read) && automationAppendAllowed(events, read) && channelAppendAllowed(events, read) && channelWiringAppendAllowed(events,read) && harnessLibraryAppendAllowed(events,read) && channelBridgeAppendAllowed(events,read) && channelLogSourceAppendAllowed(events,read) && browserEventAppendAllowed(events,read) && browserWatchAppendAllowed(events,read),
+        (channels?.dispatchAdmissionAllowed(events,read)??(!browserWatchDispatchAdmissionRequired(events)&&!browserEventAdmissionRequired(events))) && workAppendAllowed(_thread,events,read) && proactiveAppendAllowed(events,read,_thread) && mediaProcessingAppendAllowed(events,read) && automationAppendAllowed(events, read) && channelAppendAllowed(events, read) && channelWiringAppendAllowed(events,read) && harnessLibraryAppendAllowed(events,read) && channelBridgeAppendAllowed(events,read) && channelLogSourceAppendAllowed(events,read) && browserEventAppendAllowed(events,read) && browserWatchAppendAllowed(events,read),
       actorFor: (thread) => {
         if(harnessExperimentTrialIsChild(thread))return registryTrialActor(
           requested => requested === owner && validOwner(configOf(this.env, false), owner) ? registry?.experiments : undefined,
@@ -1225,6 +1261,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                               ...(coding?codingWorkspaceTools(coding.binding(thread,redact)):[]),
                   ...(this.env.AIKO_WORKER_TOOLS?.(owner,thread)??[]),
                               ...(mcpFor(thread)?.tools()??[]),
+                              ...(thread === `user-${owner}` ? integrations?.tools() ?? [] : []),
                   ...(projectFor(thread)?.tools()??[]),
                               ...(registry?.providerAdapters?.tools(()=>channels!)??[]),
                               ...telegramTools,
@@ -1276,6 +1313,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
           : contextual, sandbox);
       },
     });
+    if (webhookMount && channels && await webhookMount.initialize(channels)) await host.recover();
     await channels?.refresh();
     this.ops("runtime.boot_completed", { owner, ms: Date.now() - bootStarted });
     return { host, config, binding, databases, redact, capabilities, connectors, route, renderLogin, telegram, channels, media:registry?.media, providerAdapters:registry?.providerAdapters, experiments:registry?.experiments, registryReadiness:()=>registryReadiness(registry,configOf(this.env, false).codeMode===true&&!!harnessFor(`user-${owner}`)),
@@ -2281,6 +2319,11 @@ export default {
           verboseFallbacksSince: config.verboseFallbacksSince ?? 0,
           storage: "durable-object",
           harness: "tardie@0.22.0",
+          release: env.AIKO_RELEASE_ID ? {
+            id: env.AIKO_RELEASE_ID,
+            commit: env.AIKO_RELEASE_COMMIT,
+            browserSource: env.AIKO_RELEASE_BROWSER_SOURCE,
+          } : null,
           models: {
             ...Object.fromEntries(
               Object.entries(config.modelRouting!.roles).map(

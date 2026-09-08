@@ -188,8 +188,9 @@ def open_fixture(scenario, initial_scenario='ready', values=None):
  wait_for('document.body.innerText.includes("Use my Telegram account")')
  js('window.Telegram={WebApp:{initData:"fixture-launch",ready(){},expand(){}}};window.__scenario='+json.dumps(initial_scenario))
  click('button','Use my Telegram account')
- wait_for('!!document.querySelector(".native-login") || document.body.innerText.includes("Finish sign-in")')
- if not js('!!document.querySelector(".native-login")'):click('button','Finish sign-in')
+ # A tile's “Finish sign-in” status can paint before the launch effect opens
+ # the panel. It is not a button; wait for the actual owner-bound panel.
+ wait_for('!!document.querySelector(".native-login")')
  wait_for('document.querySelector("#website-username")?.disabled === false')
  for selector,value in (values if values is not None else [('#website-username','fixture-user'),('#website-password','fixture-password')]):
   root=cdp('DOM.getDocument')['root']['nodeId']

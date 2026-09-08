@@ -224,6 +224,10 @@ if (mode === "install") {
                 ? await driver.watchPause(value.producer,cancellation.signal,value.lifecycleRevision)
               : value.operation === "watch-acknowledge-gap" && driver.watchAcknowledgeGap
                 ? await driver.watchAcknowledgeGap(value.producer,value.generation,value.missed,cancellation.signal)
+              : value.operation === "watch-restore-proof" && driver.watchRestoreProof
+                ? await driver.watchRestoreProof(value.producer,value.challenge,value.hostThrough,cancellation.signal)
+              : value.operation === "watch-reauthorize" && driver.watchReauthorize
+                ? await driver.watchReauthorize(value.producer,value.request,cancellation.signal)
               : value.operation === "watch-status" && driver.watchStatus
                 ? await driver.watchStatus()
               : value.operation === "harness-job"

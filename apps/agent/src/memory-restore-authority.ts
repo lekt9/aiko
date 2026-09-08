@@ -78,6 +78,7 @@ export async function memoryRestoreAdmission(options: {
   };
   return {
     operationId: key,
+    get claim() { return structuredClone(claim); },
     fence: structuredClone(claim.beforeFence),
     /** Historical terminal is metadata, never new permission to stage/publish. */
     async prepare(): Promise<{ status: "admitted" | "published" | "cancelled" }> {

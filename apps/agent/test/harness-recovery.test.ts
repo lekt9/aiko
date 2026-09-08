@@ -3,18 +3,19 @@ import { Database } from "bun:sqlite";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect, Layer } from "effect";
-import { actor, agentMessageMethod, codeMode, infer, Infer, outputValidateOnce } from "tardie";
+import { actor, Infer } from "tardie";
 import { createBunHost } from "tardie/bun/host";
 import type { Event } from "tardie/core/event";
-import { HarnessLibrary, harnessBlobStore, harnessDigest, harnessLibraryState, harnessLibraryAppendAllowed, harnessLibraryEventKey, harnessLibraryComponent, harnessLibraryTools, type HarnessContract, type HarnessLibraryBinding, type HarnessDigest } from "../src/harness-library.ts";
-import { recoveryPartialResults } from "../src/harness-recovery-log.ts";
-import { HarnessRecovery, recoveryTask, withHarnessRecovery, type RecoveryTask } from "../src/harness-recovery.ts";
+import { HarnessLibrary, harnessBlobStore, harnessDigest, harnessLibraryState, harnessLibraryAppendAllowed, harnessLibraryEventKey, type HarnessContract, type HarnessExecution, type HarnessLibraryBinding, type HarnessDigest } from "../src/harness-library.ts";
+import { recoveryActive, recoveryPartialResults } from "../src/harness-recovery-log.ts";
+import { HarnessRecovery, recoveryTask, type RecoveryTask } from "../src/harness-recovery.ts";
 import { createHarnessSandboxBinding } from "../src/harness-sandbox.ts";
 import { localHarnessSandbox } from "../src/harness-sandbox-local.ts";
 import { sandboxJobJournal } from "../src/sandbox-job-journal.ts";
 import { sandboxEnvironment } from "../src/sandbox-job-runner.ts";
 import { CodeHarness } from "../src/code-harness.ts";
-import { privateCodeSandbox } from "../src/code-agents.ts";
+import { createAikoActor } from "../src/actor.ts";
+import { harnessSkillDeriver } from "../src/harness-skill.ts";
 import { runCodeSegment } from "../src/code-sandbox-runner.ts";
 import { sqliteWorkflowKV } from "../src/workflow-store.ts";
 import { createCloudflareAccountHost, type AccountStorage } from "../src/cloudflare-host.ts";
@@ -305,6 +306,40 @@ test("task cancellation and mismatched owner/epoch cannot start recovery", async
   expect(f.events.filter(e => e.type === "AikoHarnessRecoveryStarted")).toHaveLength(0);
 });
 
+test("native recovery task association cannot borrow explicitly foreign parent or tool rows", () => {
+  const f = fixture();
+  expect(recoveryActive(f.events, "123", task)).toBe(true); // Legacy native rows need no redundant owner tag.
+  const foreignParent = f.events.map(e => e.type === "MessageReceived" ? { ...e, owner: "456" } : e);
+  expect(recoveryActive(foreignParent, "123", task)).toBe(false);
+  const foreignCall = f.events.map(e => e.type === "ToolCalled" ? { ...e, owner: "456" } : e);
+  expect(recoveryTask(foreignCall, "123", task.thread, { callId: "native-run", turn: task.turn })).toBeUndefined();
+  expect(recoveryActive([...f.events, { type: "TurnCancelled", turn: task.turn, epoch: 0, owner: "456" }], "123", task)).toBe(true);
+  expect(recoveryActive([...f.events, { type: "TurnCancelled", turn: task.turn, epoch: 0, owner: "123" }], "123", task)).toBe(false);
+});
+
+for (const shape of ["message", "call", "both"] as const) test(`atomic impasse admission retains the exact native parent deadline (${shape})`, async () => {
+  const f = fixture(), bad = await f.seed("bad", "return -1;"), deadlineAt = Date.now() + 30_000;
+  f.events[0] = { ...f.events[0]!, ...(shape !== "call" ? { deadlineAt } : {}),
+    ...(shape !== "message" ? { call: { deadlineAt: deadlineAt + (shape === "both" ? 1_000 : 0) } } : {}) };
+  const impasseId = await f.failTwice(bad.digest), index = f.events.findIndex(e => e.type === "AikoHarnessImpasseRecorded" && e.id === impasseId);
+  const impasse = f.events[index]!, before = f.events.slice(0, index);
+  expect(impasse.deadlineAt).toBe(deadlineAt);
+  expect(harnessLibraryAppendAllowed([{ ...impasse, deadlineAt: deadlineAt + 1 }], () => before)).toBe(false);
+  expect(harnessLibraryAppendAllowed([impasse], () => before)).toBe(true);
+  expect(harnessLibraryAppendAllowed([{ ...impasse, deadlineAt: deadlineAt - 1 }], () => before)).toBe(true);
+  expect(f.calls()).toBe(2);
+});
+
+test("malformed original recovery deadlines cannot fall back to a fresh allowance", async () => {
+  const f = fixture(), bad = await f.seed("bad", "return -1;");
+  const impasseId = await f.failTwice(bad.digest), index = f.events.findIndex(e => e.type === "AikoHarnessImpasseRecorded" && e.id === impasseId);
+  const impasse = f.events[index]!, before = f.events.slice(0, index);
+  for (const deadlineAt of ["60000", null, -1, NaN, Infinity, 1.5]) {
+    const invalid = before.map(e => e.type === "MessageReceived" ? { ...e, deadlineAt } : e);
+    expect(harnessLibraryAppendAllowed([impasse], () => invalid)).toBe(false);
+  }
+});
+
 test("the host commit fence serializes competing strategy starts", async () => {
   const f = fixture(), bad = await f.seed("bad", "return -1;"), child = await f.seed("good", "return input.n * 2;", "read", true);
   const impasseId = await f.failTwice(bad.digest);
@@ -394,15 +429,26 @@ for (const backend of ["bun", "account"] as const) for (const mode of ["recovery
   const writer = mode === "reconciliation" ? await f.seed("writer", "return input.n * 2;", "write") : undefined;
   let writes = 0, reads = 0;
   if (writer) {
-    f.binding.execute = async () => { writes++; return { status: "unknown", evidence: ["synthetic-ack-lost"] }; };
-    f.binding.reconcile = async () => { reads++; return { status: "succeeded", output: 14, evidence: ["synthetic-original-receipt"] }; };
+    const execute = f.binding.execute, receipts = new Map<string, { inputDigest: HarnessDigest; execution: HarnessExecution }>();
+    f.binding.execute = async (job, s) => {
+      writes++;
+      receipts.set(job.operationId, { inputDigest: harnessDigest(job.input), execution: await execute(job, s) });
+      return { status: "unknown", evidence: ["synthetic-ack-lost-after-quickjs-receipt"] };
+    };
+    f.binding.reconcile = async job => {
+      reads++;
+      const receipt = receipts.get(job.operationId);
+      return receipt?.inputDigest === harnessDigest(job.input) ? receipt.execution : { status: "unknown", evidence: ["original-receipt-unavailable"] };
+    };
   }
   const directory = await mkdtemp("/tmp/harness-recovery-host-"); cleanups.push(() => rm(directory, { recursive: true, force: true }));
   const db = new Database(":memory:"); cleanups.push(() => db.close());
   const storage: AccountStorage = { sql: { exec: (q, ...args) => { const rows = db.query(q).all(...args as any); return { toArray: () => rows as never }; } }, transactionSync: fn => db.transaction(fn)(), sync: async () => {}, getAlarm: async () => null, setAlarm: async () => {}, deleteAlarm: async () => {} };
   const harness = new CodeHarness("123", task.thread, runCodeSegment, s => s);
-  const tools = withHarnessRecovery(harnessLibraryTools(f.binding), () => f.binding);
-  const definition = actor({ name: "aiko", methods: { message: agentMessageMethod }, components: [harnessLibraryComponent("123"), infer([privateCodeSandbox(codeMode([harness.package(tools)]), harness), outputValidateOnce])] });
+  const definition = createAikoActor({ owner: "123", memory: { owner: "123", thread: task.thread, stateDir: directory, redact: s => s,
+    readPage: async (after, limit) => host.readPage(task.thread, after, limit) },
+    harnessLibrary: f.binding, codeHarness: harness, cognitiveRecovery: true, background: false, requireThinkFeel: false,
+    voice: input => Effect.succeed({ text: input.kind === "answer" ? input.text : input.kind === "task" ? input.receipt : "Fixture reply", source: "template" as const }) });
   const program = writer ? `const first = await tools.call({name:'harness_run',arguments:{digest:${JSON.stringify(writer.digest)},input:{n:7},operationId:'native-write'}}); if(first.status !== 'unknown') throw Error('expected uncertain write'); const checked = await tools.call({name:'harness_reconcile',arguments:{operationId:'native-write',reconciliationId:'read-one'}}); if(checked.status !== 'satisfied') throw Error('receipt did not pass original checker'); return checked;` : `const run = (operationId) => tools.call({name:'harness_run',arguments:{digest:${JSON.stringify(bad.digest)},input:{n:7},operationId}}); await run('native-first'); const failure = await run('native-second'); const stopped = await run('native-third'); if (stopped.status !== 'blocked') throw Error('repeated failure dispatched'); return await tools.call({name:'harness_recover',arguments:{impasseId:failure.impasseId,strategy:'alternate-capability',procedure:${JSON.stringify({ name: good.name, contractDigest: good.contractDigest, input: good.input })}}});`;
   let models = 0;
   const model = Layer.succeed(Infer, { resolve: () => ({ model: { provider: "fixture", model_id: "recovery" } }), react: (request: any) => {
@@ -412,33 +458,46 @@ for (const backend of ["bun", "account"] as const) for (const mode of ["recovery
     expect(returned.result.error).toBeUndefined();
     return Effect.succeed({ kind: "complete" as const, output: "Recovery checked" });
   } });
-  const common = { actorName: "aiko", actorInstance: "recovery-test", actorFor: () => definition,
-    layersFor: () => Layer.merge(harness.inference(model), harness.sandboxLayer()), canAppend: (_thread: string, batch: readonly Event[], read: () => readonly Event[]) => harnessLibraryAppendAllowed(batch, read) };
+  const indexerThread = "background-123-indexer";
+  const indexer = actor({ name: "aiko", methods: {}, components: [harnessSkillDeriver(f.binding)] });
+  const indexerInference = Layer.succeed(Infer, {
+    resolve: () => { throw Error("Indexer must not request inference"); },
+    react: () => Effect.die(Error("Indexer must not request inference")),
+  });
+  const common = { actorName: "aiko", actorInstance: "recovery-test", actorFor: (thread: string) => {
+    if (thread === task.thread) return definition;
+    if (thread === indexerThread) return indexer;
+    throw Error("Unexpected fixture thread");
+  },
+    layersFor: (thread: string) => thread === task.thread ? Layer.merge(harness.inference(model), harness.sandboxLayer()) : indexerInference, canAppend: (_thread: string, batch: readonly Event[], read: () => readonly Event[]) => harnessLibraryAppendAllowed(batch, read) };
   const open = () => backend === "bun" ? createBunHost({ ...common, database: join(directory, "native.sqlite") })
-    : createCloudflareAccountHost({ ...common, storage, ownsThread: t => t === task.thread });
+    : createCloudflareAccountHost({ ...common, storage, ownsThread: t => t === task.thread || t === indexerThread });
   let host = await open(); cleanups.push(() => host.close());
   for (const row of f.events.filter(e => e.type.startsWith("AikoHarness"))) await host.commitRoot(host.self(task.thread), row);
   const before = f.calls();
-  await host.commitRoot(host.self(task.thread), { type: "MessageReceived", id: "native-parent", text: "Use the capability and recover checked failures", at: Date.now() });
+  const parentDeadline = Date.now() + 30_000;
+  await host.commitRoot(host.self(task.thread), { type: "MessageReceived", id: "native-parent", text: "Use the capability and recover checked failures", at: Date.now(), deadlineAt: parentDeadline });
   await host.wake(task.thread);
   const events = await host.read(task.thread);
   if (writer) {
     expect(events.find(e => e.type === "AikoHarnessReconciled")).toMatchObject({ operationId: "native-write", task: { thread: task.thread, turn: "native-parent", epoch: 0 } });
     expect(harnessLibraryState(events, "123").witnesses.get("native-write")?.status).toBe("satisfied");
+    expect(events.find(e => e.type === "AikoHarnessChecked" && e.id === "native-write")?.witness).toMatchObject({ status: "unknown" });
+    expect(f.calls()).toBe(before + 1);
     expect(writes).toBe(1); expect(reads).toBe(1);
   } else {
-    expect(events.find(e => e.type === "AikoHarnessImpasseRecorded")).toMatchObject({ task: { thread: task.thread, turn: "native-parent", epoch: 0 } });
+    expect(events.find(e => e.type === "AikoHarnessImpasseRecorded")).toMatchObject({ task: { thread: task.thread, turn: "native-parent", epoch: 0 }, deadlineAt: parentDeadline });
     expect(events.find(e => e.type === "AikoHarnessRecoverySettled")).toMatchObject({ status: "recovered", parentTaskCompleted: false });
     expect(f.calls()).toBe(before + 3);
   }
   const modelCount = models;
   await host.close(); host = await open(); await host.recover();
   expect(await host.read(task.thread)).toEqual(events);
-  expect(f.calls()).toBe(before + (writer ? 0 : 3)); expect(models).toBe(modelCount);
+  expect(f.calls()).toBe(before + (writer ? 1 : 3)); expect(models).toBe(modelCount);
   if (writer) { expect(writes).toBe(1); expect(reads).toBe(1); }
   const evidence = process.env.AIKO_COGNITIVE_EVIDENCE_DIR;
   if (evidence) {
     await mkdir(evidence, { recursive: true });
-    await writeFile(join(evidence, `${backend}-${mode}-events.json`), JSON.stringify({ actor: "aiko", instance: "recovery-test", thread: task.thread, models, executions: f.calls() - before + writes, receiptReads: reads, events }, null, 2));
+    await writeFile(join(evidence, `${backend}-${mode}-events.json`), JSON.stringify({ actor: "aiko", instance: "recovery-test", thread: task.thread, models, executions: f.calls() - before, writes, receiptReads: reads, events }, null, 2));
   }
 });

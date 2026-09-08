@@ -12,6 +12,7 @@ import {
 import {
   channelHarnessHandlers,
   createHostedChannels,
+  type BrowserWatchHostPolicy,
 } from "../src/channel-host.ts";
 import {
   channelAppendAllowed,
@@ -60,6 +61,7 @@ import { runCodeSegment } from "../src/code-sandbox-runner.ts";
 import { createVoice } from "../src/voice.ts";
 import { PERSONA } from "../src/config.ts";
 import { setupWebhookSandbox } from "./webhook-sandbox-fixture.ts";
+import { configuredBrowserWatchPolicy, configuredBrowserWatchWebhooks, parseBrowserWatchDeployment } from "../src/browser-watch-config.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -67,17 +69,19 @@ afterEach(async () => {
 });
 
 /** Actual native account assembly; only the browser producer and HTTP socket are fixtures. */
-async function fixture(options: { guarded?: boolean } = {}) {
-  const owner = "watch-webhook-assembly",
+async function fixture(options: { guarded?: boolean; deployment?: boolean } = {}) {
+  const owner = options.deployment ? "123" : "watch-webhook-assembly",
     thread = `user-${owner}`;
   let db = new Database(":memory:"),
     alarm: number | null = null,
     nativeWebhook = true;
   let preparedSnapshot: Uint8Array | undefined;
+  let startedSnapshot: Uint8Array | undefined;
   const stateDir = await mkdtemp("/tmp/browser-watch-webhook-assembly-");
   const calls: WebhookRequest[] = [];
   const sandbox = options.guarded ? await setupWebhookSandbox(owner) : undefined;
   let connectionCurrent = true;
+  let destinationEnabled = true;
   let beforePermitCommit: () => void = () => {};
   let beforeRequest: () => Promise<void> = async () => {};
   let host!: Awaited<ReturnType<typeof createCloudflareAccountHost>>,
@@ -109,17 +113,22 @@ async function fixture(options: { guarded?: boolean } = {}) {
   const config: BrowserWatchConfig = {
     id: "new-request",
     label: "New requests",
-    connectionId: "site",
-    connectionRevision: "r1",
+    connectionId: options.deployment ? "11111111-1111-4111-8111-111111111111" : "site",
+    connectionRevision: options.deployment ? "7" : "r1",
     sourceGeneration: 1,
-    origin: "https://site.example",
+    origin: options.deployment ? "https://site.example.com" : "https://site.example",
     kind: "push",
     outcome: "received",
-    action: { kind: "webhook", destination: "saved-hook" },
+    action: { kind: "webhook", destination: options.deployment ? "requests-v1" : "saved-hook" },
     expiresAt: policy.expiresAt,
     backlog: 8,
     maxOccurrences: 256,
   };
+  const deployment = () => parseBrowserWatchDeployment(JSON.stringify({version:1,ingressOrigin:"https://aiko.example.com",owners:{[owner]:{
+    sources:[{connectionId:config.connectionId,label:config.label,origin:config.origin,sourceGeneration:1,events:[{id:"new",label:"New request",kind:"push",outcome:"received"}]}],
+    actions:destinationEnabled?[{id:"deliver",label:"Send request",action:config.action}]:[],defaults:{expiresInMs:60000,backlog:8,maxOccurrences:256},
+    webhooks:destinationEnabled?[{id:"requests-v1",url:policy.url,signingKeyRef:"key",expiresAt:policy.expiresAt,maxBytes:policy.maxBytes,retentionMs:policy.retentionMs}]:[],
+  }}}));
   const storage: AccountStorage = {
     sql: {
       exec: (sql, ...args) => {
@@ -129,6 +138,8 @@ async function fixture(options: { guarded?: boolean } = {}) {
     },
     transactionSync: (fn) => db.transaction(fn)(),
     sync: async () => {
+      if (!startedSnapshot && db.query("SELECT 1 FROM aiko_thread_events WHERE json_extract(event,'$.type')='AikoBrowserWatchStarted'").get() &&
+        !db.query("SELECT 1 FROM aiko_thread_events WHERE json_extract(event,'$.type')='AikoChannelOutputPrepared'").get()) startedSnapshot = db.serialize();
       // Capture a durable crash boundary before any native outbox dispatch starts.
       if (
         !preparedSnapshot &&
@@ -200,7 +211,10 @@ async function fixture(options: { guarded?: boolean } = {}) {
       },
     };
     const library = new HarnessLibrary(libraryBinding, journal);
-    const webhook = createWebhookAdapterHost({
+    const mounted = options.deployment ? configuredBrowserWatchWebhooks({owner,destinations:()=>deployment()!.owners[owner]!.webhooks!,
+      keys:()=>JSON.stringify({version:1,owners:{[owner]:{key:policy.signingKey}}}),current:()=>true,
+      journal,blobs,kv,transport:{sandbox:sandbox!.sandbox,placement:"codegraff",codeTransport:async()=>{throw Error("unused");}}}) : undefined;
+    const webhook = mounted?.webhook ?? createWebhookAdapterHost({
       owner,
       policies: () => [policy],
       currentOwner: () => true,
@@ -223,7 +237,8 @@ async function fixture(options: { guarded?: boolean } = {}) {
         journal,
         async (o, authority) => o === owner && authority === "watch-grant",
       ),
-      browserWatches: () => ({
+      browserWatches: context => {
+        const manual: ReturnType<BrowserWatchHostPolicy> = {
         library,
         receivingAuthority: "watch-grant",
         current: () => true,
@@ -288,7 +303,18 @@ async function fixture(options: { guarded?: boolean } = {}) {
               },
             }
           : {}),
-      }),
+        };
+        if (!options.deployment) return manual;
+        const authority = () => connectionCurrent ? {owner,connectionId:config.connectionId,native:true as const,status:"connected" as const,
+          domain:new URL(config.origin).hostname,revision:7,expiresAt:policy.expiresAt} : undefined;
+        const status = (producer:string) => ({...privateLeases.get(producer)!,state:privateLeases.get(producer)!.state as "watching"|"paused",reason:"fixture",expiresAt:policy.expiresAt});
+        return configuredBrowserWatchPolicy({owner,configuration:deployment,library,receivingAuthority:"watch-grant",current:()=>true,webhooks:mounted,
+          connections:{browserWatchAuthority:async()=>authority(),browserWatchAuthorities:async()=>authority()?[authority()!]:[],browserWatchCommitAuthority:()=>authority()},
+          runner:{watchContext:async()=>({owner,profile:"owned"}),watchConfigure:async lease=>{await manual.configureLease(lease);return status(lease.grant.producer);},
+            watchPause:async(producer,signal,revision)=>{await manual.pauseLease(producer,signal,revision);return status(producer);},
+            watchStatus:async()=>[...privateLeases.keys()].map(status),watchAcknowledgeGap:async()=>{throw Error("unused");}},
+        })!(context);
+      },
     });
     const definition = createAikoActor({
       owner,
@@ -334,6 +360,7 @@ async function fixture(options: { guarded?: boolean } = {}) {
         channelAppendAllowed(batch, read);
       },
     });
+    if (mounted && await mounted.initialize(channels)) await host.recover();
     await channels.refresh();
     return webhook;
   };
@@ -362,6 +389,7 @@ async function fixture(options: { guarded?: boolean } = {}) {
     calls,
     sandbox,
     revokeConnection: () => { connectionCurrent = false; },
+    removeDestination: () => { destinationEnabled = false; },
     beforePermitCommit: (callback: () => void) => { beforePermitCommit = callback; },
     get channels() {
       return channels;
@@ -375,7 +403,7 @@ async function fixture(options: { guarded?: boolean } = {}) {
       beforeRequest = callback;
     },
     setup: async () => {
-      await channels.run(
+      if (!options.deployment) await channels.run(
         channels.runtime.configure(
           webhook.bindingInput("requests", "webhook", 1),
         ),
@@ -416,6 +444,9 @@ async function fixture(options: { guarded?: boolean } = {}) {
     restart: async () => {
       await host.close();
       await open();
+    },
+    restoreStarted: async () => {
+      expect(startedSnapshot).toBeDefined();await host.close();db.close();db=Database.deserialize(startedSnapshot!);await open();
     },
     restorePreparedWithoutCapability: async () => {
       expect(preparedSnapshot).toBeDefined();
@@ -651,3 +682,19 @@ test("synchronous connection revocation at actual native permit append denies th
   expect(privateRunner.operations.filter(value=>value.operation==="guarded-continue"&&value.input.allow)).toHaveLength(0);
   await f.restart();await privateRunner.restart();await f.drive();expect(privateRunner.sockets).toBe(0);
 },20000);
+
+for (const change of ["key", "url", "removal"] as const) test(`configured destination ${change} cannot remap an accepted watch task before outbox preparation`,async()=>{
+  const f=await fixture({guarded:true,deployment:true}),privateRunner=f.sandbox!;
+  await f.setup();await f.ingest();await f.drive();expect(privateRunner.sockets).toBe(1);
+  const original=f.events(),beforeSockets=privateRunner.sockets;
+  if (change === "key") f.policy.signingKey="ROTATED_PRIVATE_KEY_REQUIRES_NEW_DESTINATION_000000";
+  else if (change === "url") f.policy.url="https://hooks.receiver.com/new-destination";
+  else f.removeDestination();
+  await f.restoreStarted();
+  const cut=await f.events();expect(cut.some(e=>e.type==="AikoBrowserWatchStarted")).toBe(true);
+  expect(cut.some(e=>e.type==="AikoChannelOutputPrepared")).toBe(false);
+  await f.drive();expect(privateRunner.sockets).toBe(beforeSockets);
+  expect((await f.events()).some(e=>e.type==="AikoChannelOutputPrepared")).toBe(false);
+  expect((await f.events()).filter(e=>e.type==="AikoChannelBindingIntent")).toEqual((await original).filter(e=>e.type==="AikoChannelBindingIntent"));
+  const discovery=await f.channels.watches!.discovery(AbortSignal.timeout(5000));expect(discovery.actions).toEqual([]);
+},30000);

@@ -5,7 +5,7 @@ import { Self } from "tardie/core/runtime";
 import type { Event } from "tardie/core/event";
 import type { NativeTool } from "tardie/component/tool";
 import { HarnessLibrary, harnessDigest, harnessLibraryState, type HarnessDigest, type HarnessJson, type HarnessJournal, type HarnessLibraryBinding } from "./harness-library.ts";
-import { RECOVERY_POLICY, recoveryActive, recoverySame as same, recoveryOwned as owned, recoveryTask, recoveryUncertainWrite, repeatedHarnessFailure, recoveryWitness, recoveryPartialResults, harnessReconciledWitness, type RecoveryTask } from "./harness-recovery-log.ts";
+import { RECOVERY_POLICY, recoveryActive, recoveryDeadline, recoverySame as same, recoveryOwned as owned, recoveryTask, recoveryUncertainWrite, repeatedHarnessFailure, recoveryWitness, recoveryPartialResults, harnessReconciledWitness, type RecoveryTask } from "./harness-recovery-log.ts";
 export { RECOVERY_POLICY, recoveryTask, equivalentHarnessFailures, type RecoveryTask } from "./harness-recovery-log.ts";
 
 export type RecoveryStrategy = "verified-procedure" | "refresh-schema" | "alternate-capability" | "owner-information";
@@ -37,9 +37,8 @@ export class HarnessRecovery {
     const old = owned(events, this.binding.owner, "AikoHarnessImpasseRecorded").find(e => e.id === id);
     if (old) return old;
     const { contract } = await this.library.resolve(association.harnessDigest as HarnessDigest);
-    const message = events.find(e => e.type === "MessageReceived" && e.id === task.turn && (e.epoch ?? 0) === task.epoch);
-    const nativeDeadline = Number((message?.call as any)?.deadlineAt ?? message?.deadlineAt ?? Number.MAX_SAFE_INTEGER);
-    const deadlineAt = Math.min(Number(recent[0]!.at) + 60_000, nativeDeadline);
+    const deadlineAt = recoveryDeadline(events, this.binding.owner, task, Number(recent[0]!.at));
+    if (deadlineAt === undefined) throw Error("Original parent recovery budget unavailable");
     await this.current(task, signal);
     await this.emit("AikoHarnessImpasseRecorded", id, { task, signature: association.signature, harnessDigest: association.harnessDigest,
       contractDigest: association.contractDigest, contextDigest: association.contextDigest, inputRef: association.inputRef,
@@ -106,8 +105,8 @@ export class HarnessRecovery {
     const id = `reconcile:${harnessDigest([RECOVERY_POLICY, task, operationId, reconciliationId]).slice(7)}`;
     const attempts = owned(events, this.binding.owner, "AikoHarnessRunStarted").filter(e => e.receiptOf === operationId);
     if (attempts.length >= 2 && !attempts.some(e => e.id === id)) return { status: "unknown", reason: "reconciliation-read-budget-exhausted" };
-    const message = events.find(e => e.type === "MessageReceived" && e.id === task.turn && (e.epoch ?? 0) === task.epoch);
-    const deadlineAt = Math.min(Number((message?.call as any)?.deadlineAt ?? message?.deadlineAt ?? Number.MAX_SAFE_INTEGER), Number(association.at) + 60_000);
+    const deadlineAt = recoveryDeadline(events, this.binding.owner, task, Number(association.at));
+    if (deadlineAt === undefined) return { status: "unknown", reason: "parent-reconciliation-budget-unavailable" };
     if (deadlineAt <= Date.now()) return { status: "unknown", reason: "parent-reconciliation-budget-expired" };
     const deadline = AbortSignal.any([signal, AbortSignal.timeout(deadlineAt - Date.now())]);
     const input = await this.binding.blobs.get(this.binding.owner, association.inputRef as HarnessDigest) as HarnessJson;
@@ -160,7 +159,11 @@ export class HarnessRecovery {
       instruction: "Two recovery strategies were already attempted. Explain the blocker and retained partial results; do not repeat them." };
     if (!prior && started.some(e => !owned(events, this.binding.owner, "AikoHarnessRecoverySettled").some(r => r.id === e.id)))
       return { status: "blocked", reason: "recovery-subgoal-already-active" };
-    if (!Number.isSafeInteger(impasse.deadlineAt) || Number(impasse.deadlineAt) <= Date.now()) return { status: "blocked", reason: "parent-recovery-budget-expired",
+    const originalDeadline = recoveryDeadline(events, this.binding.owner, task, Number(impasse.at));
+    if (originalDeadline === undefined || !Number.isSafeInteger(impasse.deadlineAt) || Number(impasse.deadlineAt) > originalDeadline)
+      return { status: "blocked", reason: "parent-recovery-budget-invalid",
+        ...recoveryPartialResults(events, this.binding.owner, task), successCondition: impasse.successCondition, parentTaskCompleted: false };
+    if (Number(impasse.deadlineAt) <= Date.now()) return { status: "blocked", reason: "parent-recovery-budget-expired",
       ...recoveryPartialResults(events, this.binding.owner, task), successCondition: impasse.successCondition, parentTaskCompleted: false,
       instruction: "The original recovery deadline has passed. Explain the unmet outcome and checked partial results; do not reset the budget or retry uncertain actions." };
     const deadline = AbortSignal.any([signal, AbortSignal.timeout(Number(impasse.deadlineAt) - Date.now())]);

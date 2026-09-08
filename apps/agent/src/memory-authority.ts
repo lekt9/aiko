@@ -6,7 +6,7 @@ const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const fence = z.object({ version: z.literal(1), scope: identity, seq: integer, digest }).strict()
   .refine(f => f.seq !== 0 || f.digest === "0".repeat(64));
 const common = { at: z.number().finite(), owner: identity, scope: identity, writer: integer, key: identity, expectedRevision: integer };
-const claim = z.object({ ...common, type: z.literal("AikoMemoryAuthorityClaimed"), kind: z.enum(["erase", "restore"]),
+const claim = z.object({ ...common, type: z.literal("AikoMemoryAuthorityClaimed"), kind: z.enum(["erase", "restore", "write"]),
   fingerprint: digest, beforeFence: fence,
   native: z.object({ tool: identity, callKey: identity, requestFingerprint: digest,
     // Optional only for historical claims. Such claims cannot use verified abort.
@@ -24,6 +24,9 @@ const schema = z.discriminatedUnion("type", [
   z.object({ ...common, type: z.literal("AikoMemoryAuthorityEraseAborted"), claimKey: identity,
     witness: z.object({ kind: z.literal("unchanged-native-state"), fence, callKey: identity,
       requestFingerprint: digest, reference: identity, digest }).strict() }).strict(),
+  z.object({ ...common, type: z.literal("AikoMemoryAuthorityWriteClosed"), claimKey: identity,
+    witness: z.object({ status: z.literal("closed"), operationId: identity, fingerprint: digest, fence,
+      outcome: z.enum(["returned", "failed", "interrupted"]), stateDigest: digest, reference: identity, digest }).strict() }).strict(),
   z.object({ ...common, type: z.literal("AikoMemoryAuthorityRestoreSettled"), claimKey: identity,
     witness: z.object({ status: z.enum(["published", "cancelled"]), operationId: identity,
       fingerprint: digest, fence, reference: identity, digest }).strict() }).strict(),
@@ -102,6 +105,9 @@ export function projectMemoryAuthority(history: readonly unknown[], scope: Memor
           if (pending.kind !== "erase" || !equal(event.witness.fence, state.fence) ||
             event.witness.callKey !== pending.native?.callKey || event.witness.requestFingerprint !== pending.native?.requestFingerprint)
             throw Error("Invalid unchanged-state witness");
+        } else if (event.type === "AikoMemoryAuthorityWriteClosed") {
+          if (pending.kind !== "write" || event.witness.operationId !== pending.key || event.witness.fingerprint !== pending.fingerprint ||
+              !equal(event.witness.fence, state.fence)) throw Error("Invalid native write closure");
         } else if (pending.kind !== "restore" || event.witness.operationId !== pending.key ||
           event.witness.fingerprint !== pending.fingerprint || !equal(event.witness.fence, state.fence)) {
           throw Error("Invalid restore settlement");

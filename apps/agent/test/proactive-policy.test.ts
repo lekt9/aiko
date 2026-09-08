@@ -57,6 +57,29 @@ test("foreground epochs, owners and pending siblings cannot release one another"
   expect(proactiveForegroundBusy([...rows, { type: "TurnCancelled", turn: "task", epoch: 1 }], "123")).toBe(false);
 });
 
+test("an explicitly foreign decision receipt cannot finish or suppress this owner's native wait", () => {
+  const proposed = contribution("shared-id");
+  const wait = { ...proactiveWaitMethod.event({ invocation: { method: "proactiveWait", id: "owner-wait", epoch: 0 },
+    input: { decisionId: "shared-id" }, at: now, deadlineAt: now + 60_000 }), owner: "123", contributionVersion: 2 };
+  const state = (rows: Event[]) => proactiveWaitMethod.projection.output(rows).invocationState({ method: "proactiveWait", id: "owner-wait", epoch: 0 });
+  for (const foreign of [
+    { type: "AikoProactiveAccepted", owner: "456", id: "shared-id", at: now },
+    { type: "AikoProactiveSuppressed", owner: "456", id: "shared-id", at: now },
+    { type: "AikoDeliverySettled", owner: "456", turn: "proactive:shared-id", at: now },
+  ]) {
+    expect(proactiveEligibility([proposed, foreign], "123", "shared-id")).toBeDefined();
+    expect(state([proposed, wait, foreign])).toEqual({ status: "pending" });
+  }
+  expect(state([proposed, wait, { type: "AikoProactiveAccepted", owner: "123", id: "shared-id", at: now }])).toEqual({ status: "completed", output: "recheck" });
+  expect(state([proposed, wait, { type: "AikoDeliverySettled", turn: "proactive:shared-id", at: now }])).toEqual({ status: "completed", output: "recheck" });
+});
+
+test("foreign delivery settlement cannot release an owned admission reservation", () => {
+  const rows = [preferences({ dailyLimit: 1 }), accepted("earlier")];
+  expect(proactivePolicy([...rows, { type: "AikoDeliverySettled", owner: "456", turn: "proactive:earlier", at: now }], "123", decision("later"), now).reason).toBe("daily-interruption-budget");
+  expect(proactivePolicy([...rows, { type: "AikoDeliverySettled", owner: "123", turn: "proactive:earlier", at: now }], "123", decision("later"), now).status).toBe("allow");
+});
+
 test("new evidence supersedes unsent contributions without extending the old expiry or crossing owners", () => {
   const old = contribution("old");
   expect(contributionStatus([old, { ...contribution("foreign"), owner: "456" }], "123", "old", now)).toBe("current");

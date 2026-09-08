@@ -7,7 +7,7 @@ const SSO = "sso-login-fixture.aiko.ai", OTP = "otp-login-fixture.aiko.ai", LINK
 const identity = "fixture@example.test";
 const metrics = { ssoRequests: 0, accountChoices: 0, consents: 0, otpRequests: 0, linkRequests: 0, otpConsumed: 0, linkConsumed: 0 };
 const messages: { from: string; to: string; signedBy: string; date: string; text: string; link?: string }[] = [];
-const pending = new Map<string, { host: string; value: string; consumed: boolean }>();
+const pending = new Map<string, { host: string; value: string; consumed: boolean; variant?: string }>();
 const grants = new Map<string, { host: string; state: string }>();
 const page = (body: string) => new Response(`<!doctype html><meta name="unlock-gmail-fixture" content="synthetic"><meta name="viewport" content="width=device-width"><title>Unlock Gmail fixture</title>${body}`, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
 const redirect = (location: string, cookie?: string) => new Response(null, { status: 302, headers: { location, ...(cookie ? { "set-cookie": cookie } : {}) } });
@@ -63,7 +63,7 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.UNLOC
       if (url.pathname === "/verify") return page('<h1>Check your phone</h1><p>Enter your verification code.</p><form method="post" action="/verify"><label>Code<input name="code" autocomplete="one-time-code"></label><button>Verify</button></form>');
       return page('<h1>Sign in</h1><form id="login" method="post" action="/identifier"><input name="action" type="hidden" value="login"><label>Email<input name="username" autocomplete="username"></label></form><button type="submit" form="login">Next</button>');
     }
-    if (jar.connected === host) return page(`<h1>Signed in to ${host}</h1><button data-testid="account-menu" data-email="${identity}">Your account</button>`);
+    if (jar.connected === host) return page(`<h1>Signed in to ${host}</h1><button data-testid="account-menu" data-email="${pending.get(jar.pending!)?.variant === 'wrong-account' ? 'other@example.test' : identity}">Your account</button>`);
     if (host === SSO) {
       if (url.pathname === "/start") {
         metrics.ssoRequests++; const state = crypto.randomUUID();
@@ -82,12 +82,16 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.UNLOC
       const fields = await request.formData();
       if (fields.get("username") !== identity) return new Response("Wrong recipient", { status: 400 });
       const id = crypto.randomUUID(), value = host === OTP ? String(100000 + crypto.getRandomValues(new Uint32Array(1))[0]! % 900000) : crypto.randomUUID();
-      pending.set(id, { host, value, consumed: false });
+      const variant = url.searchParams.get("fixture_case") || undefined;
+      pending.set(id, { host, value, consumed: false, variant });
       if (host === OTP) metrics.otpRequests++; else metrics.linkRequests++;
-      messages.push({ from: `signin@${host}`, to: identity, signedBy: host, date: new Date().toISOString(),
-        text: host === OTP ? `Your verification code is ${value}. Use it to sign in. Request: ${id}` : `Use this link to sign in to your account. Request: ${id}`,
-        ...(host === LINK ? { link: `https://${host}/accept?token=${value}&state=${id}` } : {}),
-      });
+      const reference = variant === "wrong-request" ? crypto.randomUUID() : id;
+      const email = { from: `signin@${host}`, to: identity, signedBy: variant === "wrong-signer" ? "untrusted.example" : host, date: new Date().toISOString(),
+        text: host === OTP ? `Your verification code is ${value}. Use it to sign in. Request: ${reference}` : `Use this link to sign in to your account. Request: ${reference}`,
+        ...(host === LINK ? { link: `https://${variant === "foreign-link" ? "untrusted.example" : host}/accept?token=${value}&state=${reference}` } : {}),
+      };
+      messages.push(email);
+      if (variant === "ambiguous") messages.push({ ...email });
       return redirect("/waiting", cookie("pending", id));
     }
     if (url.pathname === "/accept" || url.pathname === "/verify") {
@@ -98,7 +102,7 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.UNLOC
       return redirect("/", cookie("connected", host));
     }
     if (url.pathname === "/waiting") return page(host === OTP ? `<h1>Check your email</h1><form method="post" action="/verify"><input type="hidden" name="state" value="${html(jar.pending || '')}"><label>Verification code<input name="code" autocomplete="one-time-code"></label><button>Verify</button></form>` : `<h1>Check your inbox</h1><p>A sign-in link was sent to your email.</p><input type="hidden" name="state" value="${html(jar.pending || '')}">`);
-    return page('<h1>Sign in</h1><form method="post" action="/email"><label>Email<input name="username" autocomplete="username" type="email"></label><button>Continue</button></form>');
+    return page(`<h1>Sign in</h1><form method="post" action="/email?fixture_case=${encodeURIComponent(url.searchParams.get('fixture_case') || '')}"><label>Email<input name="username" autocomplete="username" type="email"></label><button>Continue</button></form>`);
   },
 });
 console.log(`Synthetic Gmail chain fixture on 127.0.0.1:${server.port}`);

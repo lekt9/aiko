@@ -15,6 +15,7 @@ import { parsePlaneCredentials, type PlaneCredential } from "./plane-auth.ts";
 import { DEFAULT_MODEL_LIMITS, type ModelLimits } from "./model-budget-policy.ts";
 import { parseMcpServers, type ConfiguredMcpServers } from "./general-mcp-config.ts";
 import { safeUserId } from "./security.ts";
+import { parseIntegrationOwners, type IntegrationConfig } from "./integrations.ts";
 import { parseBrowserWatchDeployment, type BrowserWatchDeployment } from "./browser-watch-config.ts";
 import {
   parseManagerKey,
@@ -68,6 +69,7 @@ export type AikoConfig = {
   /** Only secrets explicitly named by MCP header references; never published to tools. */
   mcpSecrets?: Readonly<Record<string,string|undefined>>;
   arcadeKey?: string;
+  integrations?: IntegrationConfig;
   cartesiaKey?: string;
   cartesiaVoiceId?: string;
   cartesiaModel?: string;
@@ -400,6 +402,7 @@ export async function loadConfig(
       ),
     ),
     arcadeKey: get("ARCADE_API_KEY"),
+    integrations: { owners: parseIntegrationOwners(get("AIKO_INTEGRATION_OWNERS")), composioKey: get("COMPOSIO_API_KEY"), agentmailKey: get("AGENTMAIL_API_KEY") },
     cartesiaKey: get("AIKO_CARTESIA_KEY"),
     cartesiaVoiceId: get("AIKO_CARTESIA_VOICE_ID"),
     cartesiaModel: get("AIKO_CARTESIA_MODEL"),
