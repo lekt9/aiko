@@ -33,6 +33,7 @@ export interface BrowserWatchRunnerStatus {
   lifecycleRevision?: number;
   leaseRevision?: number;
   observationFloor?: number;
+  deliveryEpoch?: string;
   coverageLapse?: BrowserWatchCoverageLapse;
   pausedThrough?: number;
   state: "watching" | "catching-up" | "needs-attention" | "paused";
@@ -248,7 +249,7 @@ export class BrowserWatchRunner {
           .run(producer,this.options.owner,request.challenge,digest,deliveryEpoch);
         this.options.db.query("DELETE FROM browser_watch_restore_holds WHERE producer=? AND owner=? AND challenge=?").run(producer,this.options.owner,request.challenge);
       })();
-      entry.lease=next;entry.status.acknowledged=request.hostThrough;entry.nextAttempt=0;
+      entry.lease=next;entry.status.deliveryEpoch=deliveryEpoch;entry.status.acknowledged=request.hostThrough;entry.nextAttempt=0;
     });
     await this.tick();this.schedule();return this.status().find(status=>status.producer===producer)!;
   }
@@ -449,8 +450,8 @@ export class BrowserWatchRunner {
     });
   }
   status(){return [...this.watches.values()].map(entry=>{
-    const hold=this.restoreHold(entry),queue=hold?this.queue.verifiedState(entry.lease.grant):undefined;
-    return {...entry.status,...(hold?{restore:{...hold,...(queue?{queue}:{})}}:{}),...(entry.gap?{coverageGap:structuredClone(entry.gap)}:{}),...(this.excludedBefore?{excludedBefore:this.excludedBefore}:{})};
+    const hold=this.restoreHold(entry),queue=hold||entry.lease.grant.deliveryEpoch?this.queue.verifiedState(entry.lease.grant):undefined;
+    return {...entry.status,...(entry.lease.grant.deliveryEpoch?{deliveryEpoch:entry.lease.grant.deliveryEpoch,...(queue?{acknowledged:queue.acknowledged}:{})}:{}),...(hold?{restore:{...hold,...(queue?{queue}:{})}}:{}),...(entry.gap?{coverageGap:structuredClone(entry.gap)}:{}),...(this.excludedBefore?{excludedBefore:this.excludedBefore}:{})};
   });}
   async close(){this.closed=true;clearTimeout(this.timer);this.lifetime.abort();await Promise.allSettled([...this.watches.values()].map(entry=>entry.capture?.close()));await this.running;await this.mutations;}
 }

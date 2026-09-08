@@ -1,3 +1,4 @@
+import { holdRestoredBrowserWatches } from "../src/browser-watch-restore.ts";
 import { browserWatchApi } from "../src/browser-watch-api.ts";
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
@@ -40,7 +41,7 @@ async function fixture(enabled = true, nativeHarness = false, realPrivateQueue =
     origin: "https://site.example", kind: "push", outcome: "received", action: nativeHarness ? {kind:"harness",digest:harnessDigest(definitions[0]!.artifact),contractDigest:harnessDigest(definitions[0]!.contract),input:definitions[0]!.verifier.cases[0]!.input} : { kind: "actor", instruction: "Summarize the new request" },
     expiresAt: Date.now() + 600_000, backlog: 8, maxOccurrences: 256 };
   let host!: Awaited<ReturnType<typeof createCloudflareAccountHost>>, channels!: ReturnType<typeof createHostedChannels>;
-  let relay = false, loseRenewalReply=false, pendingActions=false;
+  let relay = false, loseRenewalReply=false, loseRestoreReply=false, pendingActions=false;
   const pendingDeadlines=new Map<string,number>();
   const reconciled:BrowserWatchDispatch[]=[];
   const captures:BackgroundListenerOptions[]=[];
@@ -81,7 +82,7 @@ async function fixture(enabled = true, nativeHarness = false, realPrivateQueue =
     channels = createHostedChannels(owner, () => host, undefined, {
       wiring: channelHarnessHandlers(libraryBinding, journal, async (o, authority) => o === owner && authority === "watch-grant" && active),
       browserProducers: { current: () => externalActive, grant: producer => external?.producer === producer ? external : undefined },
-      ...(enabled ? { browserWatches: () => ({ library, receivingAuthority: "watch-grant", current: () => active, authorize: async () => active&&commitAuthority,
+      ...(enabled ? { browserWatches: () => ({ library, receivingAuthority: "watch-grant", current: () => active, configCurrent: () => active&&commitAuthority, authorize: async () => active&&commitAuthority,
         discovery: async () => ({sites:[{connectionId:config.connectionId,label:"Requests site",origin:config.origin,connectionRevision:config.connectionRevision,sourceGeneration:config.sourceGeneration,
           privateProducerSecret:"DO_NOT_RETURN",events:[{id:"new-request",label:"New request",kind:config.kind,outcome:config.outcome}]}],
           actions:[{id:"saved",label:"Saved action",action:config.action},...(nativeHarness?[{id:"unbound",label:"Unbound actor",action:{kind:"actor" as const,instruction:"Not configured"}}]:[])],defaults:{expiresInMs:600000,backlog:8,maxOccurrences:256}}),
@@ -91,6 +92,16 @@ async function fixture(enabled = true, nativeHarness = false, realPrivateQueue =
         configureLease: async (lease: import("../src/browser-watches.ts").BrowserWatchLease) => { leases.push(lease.grant.producer);if(privateRunner){const status=await privateRunner.configure(lease);if(loseRenewalReply&&(lease.leaseRevision??0)>0){loseRenewalReply=false;throw Error("fixture-renewal-ack-lost");}return status;}privateLeases.set(lease.grant.producer,{producer:lease.grant.producer,generation:lease.grant.generation,lifecycleRevision:lease.lifecycleRevision??0,state:"watching"}); },
         pauseLease: async (producer:string,_signal?:AbortSignal,lifecycleRevision=0) => { if(privateRunner)return privateRunner.pause(producer,lifecycleRevision);const prior=privateLeases.get(producer);if(prior&&prior.lifecycleRevision===lifecycleRevision)privateLeases.set(producer,{...prior,state:"paused",pausedThrough:Math.max(0,...(await host.read(thread)).filter(e=>browserEventKey(e)&&e.producer===producer).map(e=>Number(e.sequence)))}); },
         leaseStatus: async (producer:string) => privateRunner ? privateRunner.status().find(s=>s.producer===producer) : privateLeases.get(producer),
+        ...(realPrivateQueue ? {
+          restoreProof: async (producer:string,challenge:string,hostThrough:number) => privateRunner!.restoreProof(producer,challenge,hostThrough),
+          reauthorizeLease: async (p:import("../src/browser-watch-reauthorization.ts").BrowserWatchRestorePermit,signal:AbortSignal) => {
+            const receipt = await privateRunner!.reauthorize(p.producer,{owner:p.owner,producer:p.producer,profile:p.profile,epoch:p.epoch,generation:p.sourceGeneration,
+              connectionId:p.connectionId,connectionRevision:p.connectionRevision,lifecycleRevision:p.lifecycleRevision,leaseRevision:p.leaseRevision,
+              previousDeliveryEpoch:p.previousDeliveryEpoch,deliveryEpoch:p.deliveryEpoch,expiresAt:p.expiresAt,challenge:p.challenge,at:p.restoreAt,
+              queue:{head:p.queueHead,acknowledged:p.queueAcknowledged,offered:p.queueOffered},hostThrough:p.hostThrough,prefixDigest:p.prefixDigest},signal);
+            if(loseRestoreReply){loseRestoreReply=false;throw Error("fixture-restore-ack-lost");}return receipt;
+          },
+        } : {}),
         ...(nativeActor ? {nativeActions:{actor:{timeoutMs:60000,commitCurrent:()=>active&&commitAuthority}}} : nativeHarness ? {} : {
           execute: async (intent: BrowserWatchDispatch) => { calls.push(structuredClone(intent));if(pendingActions)pendingDeadlines.set(intent.operationId,Date.now()+60000);return pendingActions?
             {status:"pending" as const,receipt:{kind:"actor" as const,id:intent.operationId},deadlineAt:pendingDeadlines.get(intent.operationId)!}:
@@ -110,7 +121,7 @@ async function fixture(enabled = true, nativeHarness = false, realPrivateQueue =
         return channels.actorAdmissionAllowed(batch,read) && browserWatchAppendAllowed(batch,read);
       },
       keyOf: e => browserWatchEventKey(e) ?? browserEventKey(e) ?? channelLogSourceEventKey(e) ?? channelWiringEventKey(e) ?? harnessLibraryEventKey(e),
-      canAppend: (_t, batch, read) => channels.actorAdmissionAllowed(batch,read) && browserWatchAppendAllowed(batch, read) && browserEventAppendAllowed(batch, read) && channelLogSourceAppendAllowed(batch, read) && channelWiringAppendAllowed(batch, read) && harnessLibraryAppendAllowed(batch, read),
+      canAppend: (_t, batch, read) => channels.dispatchAdmissionAllowed(batch,read) && browserWatchAppendAllowed(batch, read) && browserEventAppendAllowed(batch, read) && channelLogSourceAppendAllowed(batch, read) && channelWiringAppendAllowed(batch, read) && harnessLibraryAppendAllowed(batch, read),
     });
     if (refresh) await channels.refresh();
   };
@@ -120,6 +131,8 @@ async function fixture(enabled = true, nativeHarness = false, realPrivateQueue =
     items: [{ sequence, occurrence: `push-${sequence}`, kind: "push", observedAt: Date.now(), sourceId: `cdp-${sequence}`, fields: { origin: config.origin, outcome: "received" }, payload: { request: sequence, text: "PRIVATE_WATCH_PAYLOAD" } }] });
   return { config, calls, leases, library, get channels() { return channels; }, models: () => models, events: () => host.read(thread), drive: () => host.recover(), makeBatch,
     get privateRunner(){return privateRunner;}, privateQueue:new BrowserObservationQueue(db),setRelay:(enabled:boolean)=>{relay=enabled;},
+    restorePrivate:async()=>{await privateRunner!.close();holdRestoredBrowserWatches(db,owner);privateRunner=new BrowserWatchRunner(runnerOptions);await privateRunner.restore();},
+    loseRestoreReply:()=>{loseRestoreReply=true;},
     loseRenewalReply:()=>{loseRenewalReply=true;},pendingActions:()=>{pendingActions=true;},reconciled,
     restartPrivate:async()=>{await privateRunner!.close();privateRunner=new BrowserWatchRunner(runnerOptions);await privateRunner.restore();},
     revokeActorAtCommit:()=>{revokeAtActorCommit=true;},actorCommitCuts:()=>actorCommitCuts,
@@ -376,3 +389,35 @@ test("renewal after a private expiry lapse retains queued authorized observation
     expect((await f.events()).filter(e=>e.type==="AikoBrowserWatchLeaseRenewalChecked"&&e.status==="confirmed")).toMatchObject([{coverageLapse:{from,to:from+5000,leaseRevision:1}}]);
   }finally{clock.mockRestore();}
 });
+
+for(const loseAck of [false,true])test(`restored private queue rejoins guarded native watch and action once (lost ack: ${loseAck})`,async()=>{
+  const f=await fixture(true,false,true),signal=()=>AbortSignal.timeout(10000);
+  await f.channels.watches!.configure(f.config,0,signal());await f.drive();f.setRelay(true);
+  await f.capture("before-restore");await f.privateRunner!.tick();await f.drive();
+  expect(f.calls).toHaveLength(1);
+  const first=(await f.events()).find(e=>browserEventKey(e))!,grant=f.channels.watches!.producerGrants()[0]!;
+  f.setRelay(false);await f.capture("queued-before-restore");
+  await f.restorePrivate();await f.restart();
+  const status=(await f.channels.watches!.inspect())[0] as any;
+  expect(status.collector.restore.queue).toMatchObject({head:2,acknowledged:1});
+  const input={id:f.config.id,expectedGeneration:status.generation,expectedLifecycleRevision:status.lifecycleRevision,expectedLeaseRevision:status.leaseRevision,challenge:status.collector.restore.challenge};
+  f.setRelay(true);if(loseAck)f.loseRestoreReply();
+  const result=await f.channels.watches!.reauthorize(input,signal());
+  expect(result).toMatchObject({status:loseAck?"pending":"confirmed"});
+  await f.drive();expect(f.calls).toHaveLength(2);
+  const permit=(await f.events()).find(e=>e.type==="AikoBrowserWatchRestorePermitted")!;
+  expect(permit.hostThrough).toBe(1);expect(permit.queueHead).toBe(2);
+  expect(f.privateRunner!.status()[0]!.restore).toBeUndefined();
+  expect(f.privateRunner!.status()[0]!.deliveryEpoch).toBe(permit.deliveryEpoch);
+  const updated=f.channels.watches!.producerGrants()[0]!;
+  expect(updated).toMatchObject({producer:grant.producer,epoch:grant.epoch,generation:grant.generation,deliveryEpoch:permit.deliveryEpoch});
+  await f.restartPrivate();await f.restart();
+  expect(await f.channels.watches!.reauthorize(input,signal())).toMatchObject({status:"confirmed"});
+  await f.drive();expect(f.calls).toHaveLength(2);
+  await f.capture("after-restore");await f.privateRunner!.tick();await f.drive();
+  expect(f.calls).toHaveLength(3);
+  const events=(await f.events()).filter(e=>browserEventKey(e));
+  expect(events.map(e=>e.sequence)).toEqual([1,2,3]);expect(events[0]).toEqual(first);
+  expect(events.slice(1).map(e=>e.deliveryEpoch)).toEqual([permit.deliveryEpoch,permit.deliveryEpoch]);
+  expect((await f.events()).filter(e=>e.type==="AikoBrowserWatchRestorePermitted")).toEqual([permit]);
+},30_000);

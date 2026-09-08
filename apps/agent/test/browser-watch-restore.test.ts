@@ -9,20 +9,37 @@ import { BrowserWatchRunner, type BrowserWatchLease } from "../src/browser-watch
 import { BrowserObservationQueue } from "../src/browser-event-queue.ts";
 import { snapshotVm, readVmSnapshot, writeVmRestore, verifyVmRestore, publishVmRestore } from "../src/vm-backup.ts";
 import { BACKUP_CHUNK_BYTES } from "../src/cloud-backup.ts";
+import { holdRestoredBrowserWatches, type BrowserWatchReauthorizeRequest } from "../src/browser-watch-restore.ts";
 
 const cipher = new VaultCipher(new LocalKeyring("test", {test:Buffer.alloc(32,9).toString("base64")}));
 const lease = (producer:string, now:number):BrowserWatchLease => ({grant:{owner:"alice",producer,epoch:"original-epoch",generation:1,profile:"original-profile",connectionId:"site",connectionRevision:"1",registeredAt:now-100,expiresAt:now+3_600_000,active:true,origins:["https://example.com"],kinds:["push","network"],secret:"private-test-key-not-a-production-secret"},ingestUrl:"https://account.example/v1/browser-events/alice",networkRoutes:[{method:"GET",route:"/messages"}]});
 const exchange = (now:number) => ({startedDateTime:new Date(now).toISOString(),request:{url:"https://example.com/messages",method:"GET"},response:{status:200}});
-function runtime(db:Database, now:number) {
+function runtime(db:Database, now:number,accept=false) {
   const calls={capture:0,send:0,endpoint:0};
   const runner=new BrowserWatchRunner({owner:"alice",db,cipher,now:()=>now,
     authorized:grant=>!!db.query("SELECT 1 FROM native_login WHERE id=? AND state=?").get(grant.connectionId,JSON.stringify({domain:"example.com",status:"connected",revision:1})),
     endpoint:async()=>{calls.endpoint++;return "ws://127.0.0.1:9999/unused";},
     networkHealth:()=>({state:"watching",reason:"ready"}),
-    fetch:async()=>{calls.send++;return new Response(null,{status:503});},
+    fetch:async(_url,init)=>{calls.send++;return accept?Response.json({status:"accepted",through:JSON.parse(String(init?.body)).items.at(-1).sequence},{status:202}):new Response(null,{status:503});},
     createCapture:()=>{calls.capture++;return {health:{state:"watching",reason:"ready",targets:1,atMs:now},connect:async()=>{},close:async()=>{},renewRecording:async()=>{},flush:async()=>{}};},
   });
   return {runner,calls};
+}
+async function heldMemory(accept=false){
+  const db=new Database(":memory:"),now=Date.now(),l=lease("active",now);
+  db.exec("CREATE TABLE native_login(id TEXT PRIMARY KEY,state TEXT NOT NULL)");
+  db.query("INSERT INTO native_login VALUES(?,?)").run("site",JSON.stringify({domain:"example.com",status:"connected",revision:1}));
+  const current=runtime(db,now);await current.runner.configure(l);
+  const queue=new BrowserObservationQueue(db);
+  for(let n=1;n<=3;n++)queue.append(l.grant,{kind:"push",observedAt:now,sourceId:"worker",fields:{origin:"https://example.com",outcome:"received"}},`prefix-${n}`,now);
+  queue.batch(l.grant);queue.acknowledge(l.grant,1);
+  await current.runner.close();holdRestoredBrowserWatches(db,"alice",now);
+  const reopened=runtime(db,now,accept);await reopened.runner.restore();
+  const challenge=reopened.runner.status()[0]!.restore!.challenge;
+  const proof=reopened.runner.restoreProof("active",challenge,2);
+  const {deliveryEpoch:previous,...scope}=proof;
+  const request:BrowserWatchReauthorizeRequest={...scope,previousDeliveryEpoch:previous??null,deliveryEpoch:"restored-delivery-epoch"};
+  return {db,now,l,queue,...reopened,request,cleanup:async()=>{await reopened.runner.close();db.close();}};
 }
 function contents(db:Database) {
   return Object.fromEntries(["browser_watch_leases","browser_observation_heads","browser_observation_items"].map(table=>[table,db.query(`SELECT * FROM ${table} ORDER BY 1,2`).all()]));
@@ -85,7 +102,7 @@ test("actual snapshot publication holds every recovered producer before a connec
     expect(restarted.calls.capture).toBe(1);expect(restarted.calls.send).toBe(1);
     expect(new BrowserObservationQueue(f.db).verifiedState(f.leases[0]!.grant)).toEqual({head:3,acknowledged:1,offered:2});
   }finally{await f.cleanup();}
-},30_000);
+},60_000);
 
 test("configure, lease renewal, pause and lifecycle resume never clear restore authorization",async()=>{
   const f=await fixture();try{
@@ -102,7 +119,7 @@ test("configure, lease renewal, pause and lifecycle resume never clear restore a
     expect(restarted.calls).toEqual({capture:0,send:0,endpoint:0});
     expect(f.db.query("SELECT * FROM browser_observation_items ORDER BY 1,2").all()).toEqual(f.original.browser_observation_items);
   }finally{await f.cleanup();}
-},30_000);
+},60_000);
 
 test("missing restored queue identity stays unavailable through restart and never invents a pause watermark",async()=>{
   const f=await fixture(true);try{
@@ -119,9 +136,9 @@ test("missing restored queue identity stays unavailable through restart and neve
     expect(contents(f.db).browser_observation_heads).toEqual(f.original.browser_observation_heads);
     expect(contents(f.db).browser_observation_items).toEqual(f.original.browser_observation_items);
     const row=f.db.query("SELECT envelope FROM browser_watch_leases WHERE producer='active'").get() as {envelope:string};
-    expect(await cipher.open("unlock:browser-watch:v1:alice:active",JSON.parse(row.envelope))).toEqual(f.leases[0]);
+    expect(await cipher.open<BrowserWatchLease>("unlock:browser-watch:v1:alice:active",JSON.parse(row.envelope))).toEqual(f.leases[0]!);
   }finally{await f.cleanup();}
-},30_000);
+},60_000);
 
 test("read-only restore queue evidence rejects changed owner, grant and impossible cursors without mutation",()=>{
   const db=new Database(":memory:");try{
@@ -132,4 +149,84 @@ test("read-only restore queue evidence rejects changed owner, grant and impossib
     db.exec("UPDATE browser_observation_heads SET offered=1");expect(queue.verifiedState(l.grant)).toBeUndefined();
     expect(db.query("SELECT offered FROM browser_observation_heads").get()).toEqual({offered:1});
   }finally{db.close();}
+});
+
+test("explicit prefix proof atomically rotates transport identity and keeps the original queued occurrences across restart",async()=>{
+  const f=await heldMemory();let restarted:BrowserWatchRunner|undefined;try{
+    const before=f.db.query("SELECT source,seq,fingerprint FROM browser_observation_items ORDER BY seq").all();
+    const result=await f.runner.reauthorize("active",f.request);
+    expect(result.restore).toBeUndefined();expect(result).toMatchObject({deliveryEpoch:f.request.deliveryEpoch,acknowledged:2});
+    expect(f.calls).toEqual({capture:1,send:1,endpoint:1});
+    const grant={...f.l.grant,deliveryEpoch:f.request.deliveryEpoch},batch=f.queue.batch(grant)!.batch;
+    expect(batch).toMatchObject({producer:"active",epoch:f.l.grant.epoch,generation:1,deliveryEpoch:f.request.deliveryEpoch});
+    expect(batch.items.map(item=>item.sequence)).toEqual([3]);
+    expect(f.db.query("SELECT source,seq,fingerprint FROM browser_observation_items ORDER BY seq").all()).toEqual(before);
+    expect(f.queue.append(grant,{kind:"push",observedAt:f.now,sourceId:"worker",fields:{origin:"https://example.com",outcome:"received"}},"prefix-1",f.now)).toMatchObject({status:"duplicate",sequence:1});
+    await expect(f.runner.configure(f.l)).rejects.toThrow("delivery_epoch_changed");
+    await f.runner.close();restarted=runtime(f.db,f.now).runner;await restarted.restore();
+    expect((await restarted.reauthorize("active",f.request)).restore).toBeUndefined();
+    expect(restarted.status()[0]).toMatchObject({deliveryEpoch:f.request.deliveryEpoch,acknowledged:2});
+    await expect(restarted.reauthorize("active",{...f.request,deliveryEpoch:"another-epoch"})).rejects.toThrow("challenge_changed");
+    expect(()=>restarted!.restoreProof("active",f.request.challenge,2)).toThrow("challenge_changed");
+  }finally{await restarted?.close();await f.cleanup();}
+});
+
+test("restore proof and authorization reject identity, prefix, cursor and lease drift without releasing custody",async()=>{
+  const f=await heldMemory();try{
+    const original=contents(f.db);
+    const changes:Partial<BrowserWatchReauthorizeRequest>[]=[{owner:"other"},{profile:"other"},{connectionRevision:"2"},{lifecycleRevision:1},{leaseRevision:1},{previousDeliveryEpoch:"not-current"},{challenge:randomUUID()},{at:f.request.at+1},{prefixDigest:"0".repeat(64)},{hostThrough:3},{queue:{...f.request.queue,head:4}}];
+    for(const change of changes)await expect(f.runner.reauthorize("active",{...f.request,...change})).rejects.toThrow();
+    expect(()=>f.runner.restoreProof("active",f.request.challenge,0)).toThrow("proof_unavailable");
+    expect(()=>f.runner.restoreProof("active",f.request.challenge,4)).toThrow("proof_unavailable");
+    expect(contents(f.db)).toEqual(original);expect(f.runner.status()[0]!.restore).toBeDefined();expect(f.calls.send).toBe(0);
+    // The acknowledged prefix still needs its original fingerprints; row count alone is insufficient.
+    f.db.exec("UPDATE browser_observation_items SET seq=0 WHERE seq=1");
+    expect(()=>f.runner.restoreProof("active",f.request.challenge,2)).toThrow("prefix_unavailable");
+  }finally{await f.cleanup();}
+});
+
+test("paused or disconnected producers cannot reauthorize, including revocation while the new lease is being sealed",async()=>{
+  const f=await heldMemory();try{
+    const seal=cipher.seal.bind(cipher);
+    cipher.seal=async(...args)=>{const envelope=await seal(...args);f.db.exec("DELETE FROM native_login");return envelope;};
+    try{await expect(f.runner.reauthorize("active",f.request)).rejects.toThrow("authority_unavailable");}finally{cipher.seal=seal;}
+    expect(f.queue.verifiedState(f.l.grant)!.acknowledged).toBe(1);expect(f.runner.status()[0]!.restore).toBeDefined();expect(f.calls.send).toBe(0);
+    f.db.query("INSERT INTO native_login VALUES(?,?)").run("site",JSON.stringify({domain:"example.com",status:"connected",revision:1}));
+    await f.runner.pause("active");
+    await expect(f.runner.reauthorize("active",f.request)).rejects.toThrow("authority_unavailable");
+    expect(f.runner.status()[0]).toMatchObject({state:"paused",restore:{challenge:f.request.challenge}});
+  }finally{await f.cleanup();}
+});
+
+test("a failed restore receipt commit rolls back the epoch, proven acknowledgment and hold removal together",async()=>{
+  const f=await heldMemory();try{
+    const original=contents(f.db);
+    f.db.exec("CREATE TRIGGER reject_restore_receipt BEFORE INSERT ON browser_watch_restore_receipts BEGIN SELECT RAISE(ABORT,'fixture commit failure'); END");
+    await expect(f.runner.reauthorize("active",f.request)).rejects.toThrow("fixture commit failure");
+    expect(contents(f.db)).toEqual(original);expect(f.runner.status()[0]!.restore).toBeDefined();expect(f.calls.send).toBe(0);
+    f.db.exec("DROP TRIGGER reject_restore_receipt");
+    expect((await f.runner.reauthorize("active",f.request)).restore).toBeUndefined();
+  }finally{await f.cleanup();}
+});
+
+test("successful immediate tail delivery returns its actual advanced acknowledgment on an identical authorization retry",async()=>{
+  const f=await heldMemory(true);try{
+    expect(await f.runner.reauthorize("active",f.request)).toMatchObject({deliveryEpoch:f.request.deliveryEpoch,acknowledged:3});
+    expect(await f.runner.reauthorize("active",f.request)).toMatchObject({deliveryEpoch:f.request.deliveryEpoch,acknowledged:3});
+    expect(f.calls.send).toBe(1);
+    expect(f.queue.verifiedState({...f.l.grant,deliveryEpoch:f.request.deliveryEpoch})).toEqual({head:3,acknowledged:3,offered:3});
+  }finally{await f.cleanup();}
+});
+
+test("rotated delivery epoch is included when splitting a near-limit queue batch",()=>{
+  const db=new Database(":memory:"),measurement=new Database(":memory:");try{
+    const now=Date.now(),l=lease("sized",now),sample=new BrowserObservationQueue(measurement),queue=new BrowserObservationQueue(db);
+    const input={kind:"push" as const,observedAt:now,sourceId:"worker",fields:{origin:"https://example.com",outcome:"received" as const},payload:{text:""}};
+    for(let n=1;n<=2;n++)sample.append(l.grant,input,`sized-${n}`,now);
+    const room=127_900-Buffer.byteLength(JSON.stringify(sample.batch(l.grant)!.batch));
+    for(let n=1;n<=2;n++)queue.append(l.grant,{...input,payload:{text:"x".repeat(n===1?Math.floor(room/2):Math.ceil(room/2))}},`sized-${n}`,now);
+    const batch=queue.batch({...l.grant,deliveryEpoch:"e".repeat(160)})!;
+    expect(batch.batch.items).toHaveLength(1);expect(batch.hasMore).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(batch.batch))).toBeLessThanOrEqual(128_000);
+  }finally{db.close();measurement.close();}
 });

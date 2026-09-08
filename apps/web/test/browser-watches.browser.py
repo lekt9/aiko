@@ -76,6 +76,20 @@ viewport(1440,1000);no_overflow();audit('managed-desktop');shot('managed-desktop
 js('document.documentElement.dataset.telegramTheme="dark";true');wait('!document.querySelector(".browser-watches > .button") || getComputedStyle(document.querySelector(".browser-watches > .button")).backgroundColor === (document.documentElement.dataset.telegramTheme === "dark" ? "rgb(44, 44, 46)" : "rgb(233, 233, 239)")')
 no_overflow();audit('managed-dark');shot('managed-dark')
 js('document.documentElement.dataset.telegramTheme="light";true');wait('!document.querySelector(".browser-watches > .button") || getComputedStyle(document.querySelector(".browser-watches > .button")).backgroundColor === (document.documentElement.dataset.telegramTheme === "dark" ? "rgb(44, 44, 46)" : "rgb(233, 233, 239)")')
+urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:4187/preview/restore',method='POST')).close()
+click('button','Refresh watches');wait('document.body.innerText.includes("Verify and continue watch")')
+no_overflow();audit('restored-watch-held');shot('restored-watch-held')
+click('button','Verify and continue watch')
+wait('document.body.innerText.includes("update could not be confirmed")')
+goto_url('http://127.0.0.1:4187/');wait_for_load();wait('document.body.innerText.includes("Check restored watch")')
+click('button','Check restored watch')
+wait('document.body.innerText.includes("Restored watch checked.")')
+assert js('document.querySelector(".watch-status")?.textContent')=='Watching'
+state=json.load(urllib.request.urlopen('http://127.0.0.1:4187/preview/state'))
+restore_calls=[c['input'] for c in state['calls'] if c['operation']=='/reauthorize']
+assert len(restore_calls)==2 and restore_calls[0]==restore_calls[1]
+assert set(restore_calls[0])=={'id','expectedGeneration','expectedLifecycleRevision','expectedLeaseRevision','challenge'}
+record('Restored watch explains the hold and recovers the exact request after lost response and page reload without sending proof or epoch')
 click('button','Delete watch');click('button','Keep watch')
 assert js('document.querySelectorAll(".watch-card").length')==1
 click('button','Delete watch');click('button','Confirm delete')

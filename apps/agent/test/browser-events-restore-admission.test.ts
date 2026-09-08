@@ -52,10 +52,10 @@ async function fixture() {
   });
   // This fixture isolates ingress against retained native history. Restore permit
   // authorization itself is covered by the native watch reauthorization suite.
-  const rotate = async (epoch: string, ownerOverride = owner) => {
+  const rotate = async (epoch: string, ownerOverride = owner, project = true) => {
     await native.seed(thread, [{ type: "AikoBrowserWatchRestorePermitted", id: epoch, owner: ownerOverride,
       producer: grant.producer, epoch: grant.epoch, sourceGeneration: grant.generation, deliveryEpoch: epoch, at: Date.now() }]);
-    if (ownerOverride === owner) grant = { ...grant, deliveryEpoch: epoch };
+    if (ownerOverride === owner && project) grant = { ...grant, deliveryEpoch: epoch };
   };
   return { batch, rotate, read: () => native.read(thread), send: (b: BrowserEventBatch, signature = browserBatchSignature(b, grant.secret)) => channels.browserAdmission!(b, signature),
     before: (fn: () => Promise<void>) => { beforeAppend = fn; }, revoke: () => { grant = { ...grant, active: false }; },
@@ -113,4 +113,12 @@ test("a delivery epoch is signed and owner scoped; malformed or relabeled envelo
   for (const value of ["", "x".repeat(161), "bad epoch", null, 1])
     await expect(f.send({ ...f.batch(2), deliveryEpoch: value } as BrowserEventBatch)).rejects.toThrow("browser_batch_invalid");
   expect((await f.read()).filter(browserEventKey)).toHaveLength(1);
+});
+
+// Native rows must win even if an async grant projection has not refreshed yet.
+test("retained native restore fence rejects stale projection during the actual append", async () => {
+  const f = await fixture();
+  f.before(() => f.rotate("new-native-epoch", "restore-owner", false));
+  await expect(f.send(f.batch(1))).rejects.toThrow("browser_admission_unavailable");
+  expect((await f.read()).filter(browserEventKey)).toHaveLength(0);
 });

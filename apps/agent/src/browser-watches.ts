@@ -15,6 +15,7 @@ import type { BuiltinHarnessDefinition } from "./harness-builtins.ts";
 import type { createChannelWiring, WiringJournal } from "./channel-wiring.ts";
 import { browserWatchActorAppendAllowed, browserWatchActorEventKey } from "./browser-watch-actor-actions.ts";
 import { browserWatchWebhookPermitAppendAllowed } from "./browser-watch-webhook-actions.ts";
+import { createBrowserWatchReauthorization, browserWatchRestoreAppendAllowed, browserWatchRestoreEpoch, browserWatchRestoreHeld, browserWatchRestoreState, type BrowserWatchRestorePorts } from "./browser-watch-reauthorization.ts";
 
 export const BROWSER_WATCH_INTENT_SCHEMA = "aiko.browser-watch-intent.v1";
 export type BrowserWatchAction =
@@ -43,7 +44,7 @@ export interface BrowserWatchDiscovery {
   actions: { id: string; label: string; description?: string; action: BrowserWatchAction; supportsInstruction?: boolean }[];
   defaults: { expiresInMs: number; backlog: number; maxOccurrences: number };
 }
-export interface BrowserWatchBindings {
+export interface BrowserWatchBindings extends BrowserWatchRestorePorts {
   owner: string; journal: WiringJournal; library: HarnessLibrary;
   wiring: ReturnType<typeof createChannelWiring>; sources: ReturnType<typeof createChannelLogSources>;
   receivingAuthority: string;
@@ -65,7 +66,7 @@ export interface BrowserWatchBindings {
   /** Read receipts only. Never replay an uncertain effect. */
   reconcile?(intent: BrowserWatchDispatch, signal: AbortSignal): Promise<BrowserWatchActionResult>;
 }
-const kinds = new Set(["Prepared", "Activated", "Controlled", "Started", "Settled", "ReconcileRequested", "LeaseReleaseChecked", "ActionAccepted", "ActionReceiptChecked", "LeaseRenewalRequested", "LeaseRenewalChecked", "WebhookPermitted"]);
+const kinds = new Set(["Prepared", "Activated", "Controlled", "Started", "Settled", "ReconcileRequested", "LeaseReleaseChecked", "ActionAccepted", "ActionReceiptChecked", "LeaseRenewalRequested", "LeaseRenewalChecked", "WebhookPermitted", "RestoreRequested", "RestorePermitted", "RestoreChecked"]);
 export const browserWatchEventKey = (e: Event) => e.owner && typeof e.id === "string" && e.type.startsWith("AikoBrowserWatch") && kinds.has(e.type.slice(16))
   ? `aiko-browser-watch:${e.owner}:${e.type}:${e.id}` : browserWatchActorEventKey(e);
 const fact = (owner: string, type: string, id: string, data: object): Event => ({ type: `AikoBrowserWatch${type}`, owner, id, at: Date.now(), ...data });
@@ -130,6 +131,10 @@ export function browserWatchNextWake(events: readonly Event[], owner: string): n
     if (release?.status === "pending" && release.nextAt !== undefined) times.push(release.nextAt);
   }
   for (const pending of pendingActions(rows)) times.push(Number(pending.deadlineAt));
+  for (const request of rows.filter(e => e.type === "AikoBrowserWatchRestoreRequested")) {
+    const recovery = browserWatchRestoreState(rows, request);
+    if (recovery?.status === "pending") times.push(recovery.nextAt ?? Number(request.deadlineAt));
+  }
   for (const request of rows.filter(e => e.type === "AikoBrowserWatchLeaseRenewalRequested")) {
     const renewal = renewalState(rows, request);
     if (renewal?.status === "pending" && renewal.nextAt !== undefined) times.push(renewal.nextAt);
@@ -179,7 +184,7 @@ export function browserWatchHarnessDefinitions(): BuiltinHarnessDefinition[] {
 
 /** Pure structural guard composed into the existing serialized host commit gate. */
 export function browserWatchAppendAllowed(batch: readonly Event[], read: () => readonly Event[]) {
-  if (!browserWatchActorAppendAllowed(batch, read) || !browserWatchWebhookPermitAppendAllowed(batch, read)) return false;
+  if (!browserWatchActorAppendAllowed(batch, read) || !browserWatchWebhookPermitAppendAllowed(batch, read) || !browserWatchRestoreAppendAllowed(batch, read)) return false;
   const rows = [...read()];
   for (const e of batch) {
     if (!e.type.startsWith("AikoBrowserWatch")) continue;
@@ -314,16 +319,20 @@ export function createBrowserWatches(binding: BrowserWatchBindings) {
       catch { privateRenewals.delete(String(e.id)); }
     }
   };
-  const effectiveVersion = (value: { config: BrowserWatchConfig; lease: BrowserWatchLease } | undefined) => {
+  const effectiveVersion = (value: { config: BrowserWatchConfig; lease: BrowserWatchLease } | undefined, history: readonly Event[] = rows) => {
     if (!value) return undefined;
-    const request = confirmedRenewal(rows, value.config.id), lease = request && privateRenewals.get(String(request.id));
-    if (!request) return value;
+    const request = confirmedRenewal(history, value.config.id), lease = request && privateRenewals.get(String(request.id));
+    const projected = (v: { config: BrowserWatchConfig; lease: BrowserWatchLease }) => {
+      const g = v.lease.grant, deliveryEpoch = browserWatchRestoreEpoch(history, owner, g.producer, g.epoch, g.generation);
+      return deliveryEpoch ? { ...v, lease: { ...v.lease, grant: { ...g, deliveryEpoch } } } : v;
+    };
+    if (!request) return projected(value);
     if (!lease || lease.grant.producer !== value.lease.grant.producer || lease.grant.epoch !== value.lease.grant.epoch || lease.grant.generation !== value.lease.grant.generation) return undefined;
-    return { config: { ...value.config, expiresAt: Number(request.expiresAt), maxOccurrences: Number(request.maxOccurrences) }, lease };
+    return projected({ config: { ...value.config, expiresAt: Number(request.expiresAt), maxOccurrences: Number(request.maxOccurrences) }, lease });
   };
-  const state = (watchId: string) => {
-    const head = latest(rows, watchId), control = controls(rows, watchId);
-    return { head, control, value: effectiveVersion(head ? privateVersions.get(String(head.id)) : undefined),
+  const state = (watchId: string, history: readonly Event[] = rows) => {
+    const head = latest(history, watchId), control = controls(history, watchId);
+    return { head, control, value: effectiveVersion(head ? privateVersions.get(String(head.id)) : undefined, history),
       status: typeof control?.status === "string" ? control.status : "active" };
   };
   const allowed = async (config: BrowserWatchConfig, operation: "configure" | "dispatch" | "reconcile", signal: AbortSignal) => {
@@ -331,9 +340,20 @@ export function createBrowserWatches(binding: BrowserWatchBindings) {
     if (!binding.current() || (operation !== "reconcile" && config.expiresAt <= Date.now()) || !await binding.authorize(config, operation, signal)) throw Error("watch_authority_unavailable");
     signal.throwIfAborted();
   };
-  const producerGrants = () => [...new Set(rows.filter(e => e.type === "AikoBrowserWatchPrepared").map(e => String(e.watchId)))].flatMap(id => {
-    const s = state(id); if (!s.value) return [];
-    const active = binding.current() && (binding.configCurrent?.(s.value.config) ?? true) && s.status === "active" && s.value.config.expiresAt > Date.now() && rows.some(e => e.type === "AikoBrowserWatchActivated" && e.id === s.head!.id);
+  const restoration = createBrowserWatchReauthorization({ owner, journal, refresh, mutate: mutateLease,
+    restoreProof: binding.restoreProof, reauthorizeLease: binding.reauthorizeLease,
+    current: config => binding.current() && binding.configCurrent?.(config) === true,
+    authorize: (config, signal) => allowed(config, "configure", signal),
+    status: (producer, signal) => binding.leaseStatus?.(producer, signal) ?? Promise.resolve(undefined),
+    scope: (history, id) => {
+      const s = state(id, history);
+      return s.value && s.head ? { ...s.value, generation: Number(s.head.generation), lifecycleRevision: activeLifecycle(history, id),
+        active: s.status === "active" && history.some(e => e.type === "AikoBrowserWatchActivated" && e.id === s.head!.id) } : undefined;
+    },
+  });
+  const producerGrants = (current: readonly Event[] = rows) => [...new Set(current.filter(e => e.type === "AikoBrowserWatchPrepared").map(e => String(e.watchId)))].flatMap(id => {
+    const s = state(id, current); if (!s.value) return [];
+    const active = !browserWatchRestoreHeld(current, owner, id) && binding.current() && (binding.configCurrent?.(s.value.config) ?? true) && s.status === "active" && s.value.config.expiresAt > Date.now() && current.some(e => e.type === "AikoBrowserWatchActivated" && e.id === s.head!.id);
     return [{ ...s.value.lease.grant, active }];
   });
   const sourceGrants = (): ChannelLogSourceGrant[] => [...new Set(rows.filter(e => e.type === "AikoBrowserWatchPrepared").map(e => String(e.watchId)))].flatMap(id => {
@@ -341,7 +361,7 @@ export function createBrowserWatches(binding: BrowserWatchBindings) {
     const pending = renewalRequests(rows, id).at(-1), candidate = pending && { ...s.value.config, expiresAt: Number(pending.expiresAt), maxOccurrences: Number(pending.maxOccurrences) };
     const renewalAllowed = candidate && s.status !== "deleted" && binding.current() && (binding.configCurrent?.(candidate) ?? true);
     return [{ owner, id: `watch-source:${id}`, kind: sourceKind(s.value.config.kind), receivingAuthority: binding.receivingAuthority,
-      active: binding.current() && (binding.configCurrent?.(s.value.config) ?? true) && s.status === "active", expiresAt: s.value.config.expiresAt, maxBindings: 1,
+      active: !browserWatchRestoreHeld(rows, owner, id) && binding.current() && (binding.configCurrent?.(s.value.config) ?? true) && s.status === "active", expiresAt: s.value.config.expiresAt, maxBindings: 1,
       browserOperationId: `watch:${id}:source`,
       ...(renewalAllowed ? { browserLease: { revision: Number(pending!.leaseRevision), expiresAt: candidate!.expiresAt, maxOccurrences: candidate!.maxOccurrences, requestId: String(pending!.id) } } : {}),
       browserSequenceCut: sequenceCut(rows, id, s.value.lease.grant) }];
@@ -637,7 +657,7 @@ export function createBrowserWatches(binding: BrowserWatchBindings) {
   const dispatchCurrent = (intent: BrowserWatchDispatch) => {
     const s = state(intent.watchId), version = effectiveVersion(privateVersions.get(versionId(intent.watchId, intent.generation))), config = version?.config;
     const cut = Math.max(0, ...rows.filter(e => e.type === "AikoBrowserWatchControlled" && e.watchId === intent.watchId && e.status !== "active").map(e => Number(e.cut)));
-    return !!config && binding.current() && (binding.configCurrent?.(config) ?? true) && s.status === "active" && config.expiresAt > Date.now() &&
+    return !!config && !browserWatchRestoreHeld(rows, owner, intent.watchId) && binding.current() && (binding.configCurrent?.(config) ?? true) && s.status === "active" && config.expiresAt > Date.now() &&
       intent.event.sequence > Math.max(cut, sequenceCut(rows, intent.watchId, version!.lease.grant).through) &&
       watchEventMatches(intent.event, config, version!.lease.grant) && harnessDigest(intent.action) === harnessDigest(config.action);
   };
@@ -857,9 +877,10 @@ export function createBrowserWatches(binding: BrowserWatchBindings) {
       try { collector = await binding.leaseStatus?.(value.lease.grant.producer); } catch { collector = { state: "needs-attention", reason: "collector_unavailable" }; }
       if (collector && (collector.producer !== value.lease.grant.producer || collector.generation !== value.lease.grant.generation || collector.lifecycleRevision !== activeLifecycle(rows, id) || Number(collector.leaseRevision ?? 0) !== Number(value.lease.leaseRevision ?? 0)))
         collector = { state: "needs-attention", reason: collector.reason === "collector_unavailable" ? "collector_unavailable" : "collector_scope_mismatch" };
-      const status = s.status !== "active" ? s.status : !binding.current() || !(binding.configCurrent?.(value.config) ?? true) || value.config.expiresAt <= Date.now() || stop ? "needs-attention" :
+      const status = s.status !== "active" ? s.status : browserWatchRestoreHeld(rows, owner, id) || !binding.current() || !(binding.configCurrent?.(value.config) ?? true) || value.config.expiresAt <= Date.now() || stop ? "needs-attention" :
         !activated ? "setting-up" : collector?.state === "watching" ? "watching" : collector?.state === "catching-up" ? "catching-up" : "needs-attention";
       return { id, label: value.config.label, generation: s.head!.generation, controlRevision: Number(s.control?.controlRevision ?? 0), status, release: releaseState(rows, s.control),
+        lifecycleRevision: activeLifecycle(rows, id), reauthorization: browserWatchRestoreState(rows, rows.findLast(e => e.type === "AikoBrowserWatchRestoreRequested" && e.watchId === id)),
         leaseRevision: Number(value.lease.leaseRevision ?? 0), renewal: renewalState(rows, renewalRequests(rows, id).at(-1)),
         ...(activated ? { budget: (() => { const source = channelLogSourceLease(rows, owner, String(activated.sourceId)); return { used: source.used, limit: value.config.maxOccurrences, remaining: Math.max(0, value.config.maxOccurrences - source.used) }; })() } : {}),
         config: value.config, source: { activated: !!activated, ...(stop ? { reason: stop.reason } : {}) }, collector,
@@ -934,6 +955,12 @@ export function createBrowserWatches(binding: BrowserWatchBindings) {
     step: (s, e) => e.owner === owner || (!e.owner && receiptEvent(e)) || ["AlarmFired", "AikoChannelLogSourceWake"].includes(e.type) ? [...s, e] : s,
     output: current => {
       const transitions: ReturnType<typeof effect<any, Self>>[] = [];
+      for (const request of current.filter(e => e.type === "AikoBrowserWatchRestoreRequested")) {
+        const recovery = browserWatchRestoreState(current, request);
+        if (recovery?.status !== "pending" || recovery.nextAt !== undefined && recovery.nextAt > Date.now()) continue;
+        transitions.push(effect({ key: `aiko-browser-watch:restore:${request.id}:${recovery.attempts}`, input: undefined,
+          act: () => Effect.promise(async signal => { await restoration.check(String(request.id), signal); return []; }) }));
+      }
       for (const request of current.filter(e => e.type === "AikoBrowserWatchLeaseRenewalRequested")) {
         const renewal = renewalState(current, request);
         if (renewal?.status !== "pending" || renewal.nextAt !== undefined && renewal.nextAt > Date.now() || controls(current, String(request.watchId))?.status === "deleted") continue;
@@ -973,6 +1000,10 @@ export function createBrowserWatches(binding: BrowserWatchBindings) {
     },
   });
   const tools: NativeTool<Self>[] = [
+    { spec: { name: "browser_watch_reauthorize", description: "Reauthorize a restored watch only after proving its original queue matches retained observations. Never replays tasks or changes its source identity.", inputSchema: {
+      type: "object", properties: { id: { type: "string" }, expectedGeneration: { type: "integer", minimum: 1 }, expectedLifecycleRevision: { type: "integer", minimum: 0 },
+        expectedLeaseRevision: { type: "integer", minimum: 0 }, challenge: { type: "string" } }, required: ["id", "expectedGeneration", "expectedLifecycleRevision", "expectedLeaseRevision", "challenge"], additionalProperties: false } },
+      run: raw => Effect.promise(signal => restoration.reauthorize(raw as Parameters<typeof restoration.reauthorize>[0], signal)) },
     { spec: { name: "browser_watch_renew", description: "Explicitly extend a watch deadline or cumulative occurrence ceiling. Preserves its producer, source cursor, action pins and past receipts; renewing a paused watch does not resume it. Retry identical values to check an uncertain renewal.", inputSchema: { type: "object", properties: {
       id: { type: "string" }, expectedGeneration: { type: "integer", minimum: 1 }, expectedLeaseRevision: { type: "integer", minimum: 0 },
       expiresAt: { type: "integer" }, maxOccurrences: { type: "integer", minimum: 1, maximum: 1000000 } }, required: ["id", "expectedGeneration", "expectedLeaseRevision", "expiresAt", "maxOccurrences"], additionalProperties: false } },
@@ -996,5 +1027,5 @@ export function createBrowserWatches(binding: BrowserWatchBindings) {
     if (!binding.current()) throw Error("watch_owner_denied");
     return result;
   }) }));
-  return { component: nativeComponent, tools: scopedTools, refresh, producerGrants, sourceGrants, configure, activate, control, disconnect, inspect, sample, reconcile, acknowledgeGap, discovery, dispatchCurrent, authorizeAction, renew };
+  return { component: nativeComponent, tools: scopedTools, refresh, producerGrants, sourceGrants, reauthorize: restoration.reauthorize, restoreAdmissionAllowed: restoration.admissionAllowed, configure, activate, control, disconnect, inspect, sample, reconcile, acknowledgeGap, discovery, dispatchCurrent, authorizeAction, renew };
 }

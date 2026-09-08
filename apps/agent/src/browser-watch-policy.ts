@@ -13,7 +13,7 @@ export interface NativeBrowserWatchPolicyOptions {
   ingressOrigin: string;
   connections: Pick<ConnectorEngine, "browserWatchAuthority" | "browserWatchAuthorities">;
   /** The already-owned private browser session; this adapter never constructs one. */
-  runner: Pick<CodegraffSandbox, "watchContext" | "watchConfigure" | "watchPause" | "watchStatus" | "watchAcknowledgeGap">;
+  runner: Pick<CodegraffSandbox, "watchContext" | "watchConfigure" | "watchPause" | "watchStatus" | "watchAcknowledgeGap"> & Partial<Pick<CodegraffSandbox, "watchRestoreProof" | "watchReauthorize">>;
   library: HarnessLibrary;
   receivingAuthority: string;
   current(): boolean;
@@ -188,6 +188,15 @@ export function nativeBrowserWatchPolicy(options:NativeBrowserWatchPolicyOptions
           !Number.isSafeInteger(g.expiresAt)||g.expiresAt<=Date.now()||g.expiresAt>authority.expiresAt)throw Error("watch_authority_unavailable");
         return options.runner.watchConfigure(structuredClone(lease),signal);
       },
+      ...(options.runner.watchRestoreProof && options.runner.watchReauthorize ? {
+        restoreProof: (producer: string, challenge: string, hostThrough: number, signal: AbortSignal) => options.runner.watchRestoreProof!(producer, challenge, hostThrough, boundedSignal(signal)),
+        reauthorizeLease: (p: import("./browser-watch-reauthorization.ts").BrowserWatchRestorePermit, signal: AbortSignal) => options.runner.watchReauthorize!(p.producer, {
+          owner: p.owner, producer: p.producer, profile: p.profile, epoch: p.epoch, generation: p.sourceGeneration,
+          connectionId: p.connectionId, connectionRevision: p.connectionRevision, lifecycleRevision: p.lifecycleRevision, leaseRevision: p.leaseRevision,
+          previousDeliveryEpoch: p.previousDeliveryEpoch, deliveryEpoch: p.deliveryEpoch, expiresAt: p.expiresAt, challenge: p.challenge, at: p.restoreAt,
+          queue: { head: p.queueHead, acknowledged: p.queueAcknowledged, offered: p.queueOffered }, hostThrough: p.hostThrough, prefixDigest: p.prefixDigest,
+        }, boundedSignal(signal)),
+      } : {}),
       pauseLease:(producer,signal,lifecycleRevision)=>options.runner.watchPause(producer,signal,lifecycleRevision),
       leaseStatus:async(producer,signal)=>(await options.runner.watchStatus(signal)).find(status=>status.producer===producer),
       acknowledgeGap:(producer,generation,missed,signal)=>options.runner.watchAcknowledgeGap(producer,generation,missed,signal),

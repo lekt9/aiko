@@ -50,7 +50,7 @@ test("production Worker authenticates owner review and exact consent, runs nativ
   let db = new Database(join(directory, "account.sqlite")), account: any;
   const registryDb = new Database(":memory:"), work = new Set<Promise<unknown>>();
   const savedFetch = globalThis.fetch;
-  let externalCalls = 0, modelCalls = 0, segments = 0;
+  let externalCalls = 0, modelCalls = 0, segments = 0, accountLookups = 0, admissions = 0;
   globalThis.fetch = Object.assign(async () => { externalCalls++; throw Error("Promise fixture forbids all external network"); }, { preconnect: () => { throw Error("No provider preconnect"); } });
   try {
     const module = await import(moduleUrl);
@@ -63,9 +63,11 @@ test("production Worker authenticates owner review and exact consent, runs nativ
       AIKO_REGISTRY_SANDBOX: () => ({ placement: "local", codeTransport: async (...args: Parameters<typeof runCodeSegment>) => { segments++; return runCodeSegment(...args); }, sandbox: { harnessEnvironment: async () => "sha256:" + "a".repeat(64), harnessJob: async () => { throw Error("No job execution in review fixture"); } } }),
     };
     const context = () => ({ id: id(module.accountObjectName(owner)), storage: storageFor(db), waitUntil: (promise: Promise<unknown>) => { work.add(promise); void promise.finally(() => work.delete(promise)); }, blockConcurrencyWhile: (fn: () => Promise<unknown>) => fn() });
-    env.AIKO_ACCOUNTS = { idFromName: id, getByName: (name: string) => { if (name !== module.accountObjectName(owner)) throw Error("Foreign account"); return account; } };
+    env.AIKO_ACCOUNTS = { idFromName: id, getByName: (name: string) => { accountLookups++; if (name !== module.accountObjectName(owner)) throw Error("Foreign account"); return account; } };
     env.AIKO_REGISTRY = { getByName: () => registry };
     const registry = new module.AikoRegistryDO({ storage: storageFor(registryDb) }, env);
+    const admit = registry.admit.bind(registry);
+    registry.admit = (...args: unknown[]) => { admissions++; return admit(...args); };
     account = new module.AikoAccountDO(context(), env);
     const request = (path: string, body?: unknown, bearer = token, origin?: string) => module.default.fetch(new Request("https://fixture.invalid" + path, { method: body === undefined ? "GET" : "POST", headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json", ...(origin ? { origin } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), env);
     expect((await request("/api/promises", undefined, "invalid")).status).toBe(401);
@@ -94,7 +96,14 @@ test("production Worker authenticates owner review and exact consent, runs nativ
     await account.alarm(); await Promise.allSettled([...work]);
     expect(segments).toBe(before); expect(modelCalls).toBe(0); expect(externalCalls).toBe(0);
     expect((await (await request("/v1/promises")).json()).promises[0].state).toBe("settled");
-    expect((await request("/api/promises", undefined, operator)).status).toBe(403);
+    const beforeOperator = { accountLookups, admissions, segments };
+    for (const prefix of ["/api/promises", "/v1/promises"]) {
+      expect((await request(prefix, undefined, operator)).status).toBe(403);
+      expect((await request(`${prefix}/decision`, body, operator)).status).toBe(403);
+      expect((await request(`${prefix}?account=${owner}`, undefined, operator)).status).toBe(403);
+    }
+    expect({ accountLookups, admissions, segments }).toEqual(beforeOperator);
+    expect(modelCalls).toBe(0); expect(externalCalls).toBe(0);
   } finally {
     await (await account?.runtime)?.host.close(); await Promise.allSettled([...work]); globalThis.fetch = savedFetch;
     db.close(); registryDb.close(); URL.revokeObjectURL(moduleUrl); await rm(directory, { recursive: true, force: true });

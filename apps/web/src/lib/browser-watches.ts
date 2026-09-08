@@ -58,11 +58,16 @@ export type WatchStatus = {
   label?: string;
   generation: number;
   controlRevision?: number;
+  lifecycleRevision?: number;
   status: string;
   reason?: string;
   config?: WatchConfig;
   leaseRevision?: number;
   renewal?: WatchRenewal;
+  reauthorization?: {
+    requestId: string; challenge: string; status: "pending" | "confirmed" | "needs-attention";
+    attempts: number; deadlineAt: number; nextAt?: number;
+  };
   budget?: { used: number; limit: number; remaining: number };
   release?: {
     status: "pending" | "confirmed" | "needs-attention";
@@ -74,6 +79,7 @@ export type WatchStatus = {
   collector?: {
     state: string;
     reason?: string;
+    restore?: { challenge: string; at: number; queue?: {head:number;acknowledged:number;offered:number} };
     excludedBefore?: number;
     coverageGap?: {
       generation: number;
@@ -106,6 +112,17 @@ export type WatchRequest = <T>(
 ) => Promise<T>;
 export type WatchReply<T> = { available: true; result: T };
 export const watchPath = "/channels/browser-watches";
+/** A browser can request the current held watch only; the host supplies all continuity proof and authority. */
+export function watchReauthorizationRequest(watch: WatchStatus, now: number) {
+  const pending = watch.reauthorization?.status !== "confirmed" ? watch.reauthorization : undefined;
+  const hold = watch.collector?.restore, challenge = hold?.challenge ?? pending?.challenge;
+  if (!watch.config || watch.config.expiresAt <= now || ["paused", "deleted"].includes(watch.status) ||
+    !challenge || !Number.isSafeInteger(watch.lifecycleRevision) || Number(watch.lifecycleRevision) < 0 ||
+    !Number.isSafeInteger(watch.leaseRevision) || Number(watch.leaseRevision) < 0 ||
+    hold && !hold.queue || pending && hold && pending.challenge !== hold.challenge) return;
+  return { id: watch.id, expectedGeneration: watch.generation, expectedLifecycleRevision: watch.lifecycleRevision!,
+    expectedLeaseRevision: watch.leaseRevision!, challenge };
+}
 export const watchStateLabel = (status: string) =>
   ({
     watching: "Watching",

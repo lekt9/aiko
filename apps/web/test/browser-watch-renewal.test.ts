@@ -117,8 +117,8 @@ afterEach(() => {
   if (original === undefined) delete process.env.AIKO_CONNECTOR_ORIGIN;
   else process.env.AIKO_CONNECTOR_ORIGIN = original;
 });
-test("client preserves exact renewal on uncertain response and proxy uses the owner's fixed endpoint", async () => {
-  const body = makeWatchRenewal(watch, site, 9000, 120, 1000);
+test.each(["renew", "reauthorize"])("client preserves exact %s control on uncertain response and proxy uses the owner's fixed endpoint", async (operation) => {
+  const body = operation === "renew" ? makeWatchRenewal(watch, site, 9000, 120, 1000) : {id:"watch",expectedGeneration:3,expectedLifecycleRevision:2,expectedLeaseRevision:2,challenge:"held-challenge"};
   vi.stubGlobal("window", {});
   const fetch = vi
     .fn()
@@ -128,20 +128,20 @@ test("client preserves exact renewal on uncertain response and proxy uses the ow
     );
   vi.stubGlobal("fetch", fetch);
   await expect(
-    connectorRequest("/channels/browser-watches/renew", body, undefined, {
+    connectorRequest(`/channels/browser-watches/${operation}`, body, undefined, {
       bearer: "owner",
       telegram: false,
     }),
   ).rejects.toThrow();
-  await connectorRequest("/channels/browser-watches/renew", body, undefined, {
+  await connectorRequest(`/channels/browser-watches/${operation}`, body, undefined, {
     bearer: "owner",
     telegram: false,
   });
   expect(fetch.mock.calls[0][1].body).toBe(fetch.mock.calls[1][1].body);
-  expect(fetch.mock.calls[1][0]).toBe("/api/channels/browser-watches/renew");
+  expect(fetch.mock.calls[1][0]).toBe(`/api/channels/browser-watches/${operation}`);
   process.env.AIKO_CONNECTOR_ORIGIN = "https://agent.example";
   const response = await handleConnectorRequest(
-    new Request("https://web.example/api/channels/browser-watches/renew", {
+    new Request(`https://web.example/api/channels/browser-watches/${operation}`, {
       method: "POST",
       headers: {
         authorization: "tms owner",
@@ -152,13 +152,13 @@ test("client preserves exact renewal on uncertain response and proxy uses the ow
   );
   expect(response.status).toBe(200);
   const [url, init] = fetch.mock.calls[2];
-  expect(url.pathname).toBe("/api/channels/browser-watches/renew");
+  expect(url.pathname).toBe(`/api/channels/browser-watches/${operation}`);
   expect(init.headers.Authorization).toBe("tms owner");
   expect(JSON.parse(init.body)).toEqual(body);
   expect(
     (
       await handleConnectorRequest(
-        new Request("https://web.example/api/channels/browser-watches/renew", {
+        new Request(`https://web.example/api/channels/browser-watches/${operation}`, {
           headers: { authorization: "tms owner" },
         }),
       )

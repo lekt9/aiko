@@ -1293,7 +1293,7 @@ export class CodegraffSandbox {
       await replace({...receipt,restorePending:{requestDigest,deliveryEpoch}});
       const status=this.watchStatusValue(await this.invokePrivate(id,{operation:"watch-reauthorize",producer,request},bounded,false,undefined,true));
       if(!this.matchesWatchIncarnation(status,{...receipt,deliveryEpoch})||status.expiresAt!==request.expiresAt||status.restore||
-        status.acknowledged!==request.hostThrough)throw Error("Browser watch restore reauthorization unconfirmed");
+        !Number.isSafeInteger(status.acknowledged)||status.acknowledged!<request.hostThrough)throw Error("Browser watch restore reauthorization unconfirmed");
       const {restorePending:_,...confirmed}=receipt;
       await replace({...confirmed,deliveryEpoch,restoreConfirmed:{requestDigest,deliveryEpoch}});
       const leases=await this.retainedWatchLeases();
@@ -1551,21 +1551,36 @@ export class CodegraffSandbox {
     this.maintaining=true;
     const snapshotId=crypto.randomUUID();
     const invoke=(input:Record<string,unknown>)=>this.invokePrivate(id,{operation:"backup",snapshotId,...input},signal,true);
-    let stopped=false;
+    let stopped=false,published=false;
     try {
       await invoke({action:"pause"});
       const result=await produce({
         write:async(path,offset,bytes)=>{await invoke({action:"write",path,offset,bytes:Buffer.from(bytes).toString("base64")});},
         abort:async()=>{await invoke({action:"discard"});},
         commit:async manifest=>{
+          if(published)throw Error("VM restoration already published");
           await invoke({action:"verify",owner:this.options.owner,files:manifest.files});
           await this.upload(id,`${RUNNER_ROOT}/backups/${snapshotId}/allowed.json`,JSON.stringify(allowed),signal);
           await this.exec(id,`cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js close`,signal);
           stopped=true;
-          const published=runnerReply(await this.exec(id,`cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js restore ${snapshotId}`,signal));
-          if(published.restored!==true) throw Error("VM restoration unconfirmed");
+          const receipt=runnerReply(await this.exec(id,`cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js restore ${snapshotId}`,signal));
+          if(receipt.restored!==true) throw Error("VM restoration unconfirmed");
+          published=true;
         },
       });
+      if(published){
+        // Reopening is part of this explicit restore, never a passive status read.
+        // Snapshot publication has already installed durable producer holds.
+        // Failure here must not turn a completed restore into a retryable publish.
+        let ready=false;
+        try {
+          const bounded=signal?AbortSignal.any([signal,AbortSignal.timeout(15_000)]):AbortSignal.timeout(15_000);
+          const health=runnerReply(await this.exec(id,`cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js health`,bounded));
+          ready=typeof health.replayPublicKey==="string"&&health.replayPublicKey.length>0;
+        }catch{ /* Retain completed publication; passive status reports unavailable. */ }
+        await this.options.store.put(WATCH_MAINTENANCE_KEY,{owner:this.options.owner,state:"needs-attention",
+          reason:ready?"browser-restarted":"watch-unavailable"} satisfies BrowserWatchMaintenance).catch(()=>undefined);
+      }
       return result;
     } finally {
       try {if(!stopped)await this.exec(id,`cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js close`,AbortSignal.timeout(15000));}

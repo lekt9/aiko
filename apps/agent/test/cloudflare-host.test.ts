@@ -69,6 +69,44 @@ test("Router delivery checks current authority in its transaction after alarm aw
   } finally { await host.close(); }
 });
 
+test("control append wake arms before guarded commit and recovers accepted work after immediate host loss", async () => {
+  const durable = storage(), getAlarm = durable.getAlarm;
+  let authorized = true, revokeDuringArm = false, calls = 0;
+  durable.getAlarm = async () => {
+    const alarm = await getAlarm();
+    if (revokeDuringArm) { revokeDuringArm = false; authorized = false; }
+    return alarm;
+  };
+  const definition = actor({ name: "aiko", methods: {}, components: [component({
+    name: "guarded-recovery", initial: () => ({ requested: false, done: false }),
+    step: (state, e) => ({ requested: state.requested || e.type === "GuardedRequested", done: state.done || e.type === "GuardedDone" }),
+    output: state => ({ view: undefined, transitions: !state.requested || state.done ? [] : [effect({
+      key: "guarded-recovery", input: null,
+      act: () => Effect.sync(() => { calls++; return [{ type: "GuardedDone", id: "done", at: Date.now() }]; }),
+    })] }),
+  })] });
+  const options = { storage: durable, actorName: "aiko", actorInstance: "guarded-recovery", ownsThread: (t: string) => t === "user-123",
+    actorFor: () => definition, layersFor: () => Layer.empty, keyOf,
+    canAppend: (_t: string, events: readonly Event[]) => !events.some(e => e.type === "GuardedRequested") || authorized };
+  let host = await createCloudflareAccountHost(options);
+  try {
+    const request = { type: "GuardedRequested", id: "request", at: Date.now() };
+    revokeDuringArm = true;
+    expect((await host.appendControl("user-123", [request], { wake: true })).appended).toBe(0);
+    expect(await host.read("user-123")).toEqual([]);
+    expect(await getAlarm()).not.toBeNull();
+    authorized = true;
+    expect((await host.appendControl("user-123", [request], { wake: true })).appended).toBe(2);
+    expect(calls).toBe(0);
+    await host.close();
+    host = await createCloudflareAccountHost(options);
+    await host.alarm();
+    expect(calls).toBe(1);
+    expect((await host.read("user-123")).filter(e => e.type === "GuardedDone")).toHaveLength(1);
+    await host.alarm(); expect(calls).toBe(1);
+  } finally { await host.close(); }
+});
+
 test("control append guards native metadata and same-SQL admission without scheduling", async () => {
   const durable = storage();
   durable.sql.exec("CREATE TABLE admissions(owner TEXT PRIMARY KEY)");

@@ -5,6 +5,7 @@ import {
   watchPath,
   watchSampleText,
   watchStateLabel,
+  watchReauthorizationRequest,
   type WatchConfig,
   type WatchDiscovery,
   type WatchReply,
@@ -266,6 +267,9 @@ export function BrowserWatchesPanel({
               releasePending =
                 !!watch.release && watch.release.status !== "confirmed",
               gap = watch.collector?.coverageGap,
+              restore = watch.collector?.restore,
+              restorePending = watch.reauthorization && watch.reauthorization.status !== "confirmed",
+              restoreRequest = watchReauthorizationRequest(watch, Date.now()),
               sample = samples[watch.id],
               preview = sample && watchSampleText(sample.payload);
             return (
@@ -341,10 +345,33 @@ export function BrowserWatchesPanel({
                       ? "This watch expired. Extend its limits if the connection still allows watching."
                       : watch.collector?.reason === "private-sign-in"
                         ? "Watching is suspended during private sign-in. Finish signing in, then refresh."
+                        : restore || restorePending
+                          ? "This browser was restored. Watching will stay held until its saved event history and current connection are checked."
                         : gap
                           ? "Some events could not be captured. Review the loss below."
                           : "The source or listener needs attention. Check this connection and refresh its status."}
                   </p>
+                )}
+                {(restore || restorePending) && (
+                  <div className="watch-gap">
+                    <strong>Restored browser</strong>
+                    <p>
+                      {restore && !restore.queue
+                        ? "The saved event history is unavailable. Watching remains held. Refresh to check whether recovery is available."
+                        : restorePending
+                          ? watch.reauthorization?.status === "needs-attention"
+                            ? "Recovery could not be confirmed. Check the existing request; this will not start a new recovery attempt."
+                            : "Checking the saved history and current connection. Refresh or check the existing request for progress."
+                          : "Allow Aiko to verify the saved history and continue this watch with its existing action and limits."}
+                    </p>
+                    {restoreRequest && (
+                      <button type="button" className="text-button" disabled={disabled}
+                        onClick={() => void perform(async () => {
+                          await read("/reauthorize", restoreRequest);
+                        }, "Restored watch checked. Review its current status.")}
+                      >{restorePending ? "Check restored watch" : "Verify and continue watch"}</button>
+                    )}
+                  </div>
                 )}
                 {gap && (
                   <div className="watch-gap">

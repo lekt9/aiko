@@ -106,6 +106,12 @@ const server = Bun.serve({
           attempts: 3,
           deadlineAt: Date.now(),
         };
+      if (watch && url.pathname.endsWith("restore")) {
+        watch.status = "needs-attention";
+        watch.reauthorization = undefined;
+        watch.collector = {state:"needs-attention",reason:"restore-authorization-required",
+          restore:{challenge:crypto.randomUUID(),at:Date.now(),queue:{head:12,acknowledged:10,offered:11}}};
+      }
       if (url.pathname.endsWith("example")) example = true;
       if (url.pathname.endsWith("unavailable")) unavailable = !unavailable;
       if (watch && url.pathname.endsWith("gap")) {
@@ -179,6 +185,7 @@ const server = Bun.serve({
         label: config.label,
         generation: (prior?.generation ?? 0) + 1,
         controlRevision: prior?.controlRevision ?? 0,
+        lifecycleRevision: prior?.lifecycleRevision ?? 0,
         leaseRevision: prior?.leaseRevision ?? 0,
         renewal: prior?.renewal,
         budget: {used: prior?.budget?.used ?? 7, limit: config.maxOccurrences, remaining: config.maxOccurrences - (prior?.budget?.used ?? 7)},
@@ -194,6 +201,19 @@ const server = Bun.serve({
       watches.find((watch) => watch.id === input.id) ||
       watches.find((watch) => watch.lastTaskOperationId === input.operationId);
     if (!watch) return json({ error: "missing" }, 404);
+    if (operation === "/reauthorize") {
+      if(input.expectedGeneration!==watch.generation || input.expectedLifecycleRevision!==watch.lifecycleRevision ||
+        input.expectedLeaseRevision!==watch.leaseRevision || input.challenge!==(watch.collector?.restore?.challenge??watch.reauthorization?.challenge))
+        return json({error:"conflict"},409);
+      if(!watch.reauthorization){
+        watch.reauthorization={requestId:`restore:${watch.id}`,challenge:input.challenge,status:"pending",attempts:1,deadlineAt:Date.now()+60000};
+        // Simulated lost response after clearing; the UI must recover the same request.
+        watch.collector={state:"watching"};
+        return json({error:"fixture_lost_confirmation"},409);
+      }
+      watch.reauthorization.status="confirmed";watch.status="watching";
+      return json({available:true,result:watch.reauthorization});
+    }
     if (operation === "/renew") {
       if (input.expectedGeneration !== watch.generation || input.expectedLeaseRevision !== (watch.leaseRevision ?? 0)) return json({error:"conflict"},409);
       if (!watch.renewal) {
@@ -213,6 +233,7 @@ const server = Bun.serve({
       if (watch.controlRevision !== input.expectedRevision)
         return json({ error: "conflict" }, 409);
       watch.controlRevision++;
+      if(input.status === "active") watch.lifecycleRevision=watch.controlRevision;
       watch.status = input.status === "active" ? "watching" : input.status;
       watch.release =
         input.status === "active"

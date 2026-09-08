@@ -207,6 +207,7 @@ export function DatabaseArtifact({ artifactId, client: supplied, authentication,
   const readGeneration = useRef(0), activeQuery = useRef<number | undefined>(undefined);
   const [signal, setSignal] = useState(abort.current.signal);
   const [presentation, setPresentation] = useState<DatabasePresentation>();
+  const [editorVersion, setEditorVersion] = useState(0);
   const saveView = useDatabaseViewSave(client, signal);
   const refreshSources = useDatabaseRefresh(client, signal);
   const reload = useCallback(async (requestSignal = abort.current.signal, discardDraft = false) => {
@@ -224,7 +225,10 @@ export function DatabaseArtifact({ artifactId, client: supplied, authentication,
         }
       }
       if (!requestSignal.aborted && generation === readGeneration.current) {
-        if (discardDraft) dirty.current.clear();
+        if (discardDraft && dirty.current.size) {
+          dirty.current.clear();
+          setEditorVersion(version => version + 1);
+        }
         if (!dirty.current.size) { setData(next); page.current = resolvedQuery ?? next.view.query; setError(""); }
         else { setData(previous => previous ? { ...previous, result: { ...previous.result, capabilities: next.result.capabilities } } : previous); setError(""); }
       }
@@ -280,7 +284,7 @@ export function DatabaseArtifact({ artifactId, client: supplied, authentication,
     {error && <><p className="db-error" role="alert">{error}</p><button onClick={() => void reload()}>Retry refresh</button></>}{!data && !error && <p className="db-empty" role="status">Loading your table…</p>}
     {data && !spec && <p role="alert" className="db-error">This view format is unavailable.</p>}
     {!inline && data && spec && data.artifact.dataMode === "live" && <DatabaseRefreshControls selection={data.result.capabilities?.refresh} state={refreshSources} reload={reload} allowed={!error && data.result.capabilities?.write === true} />}
-    {data && spec && <View.Provider value={{ data, client, inline, reload, run, query, signal, saveView, presentation: presentation ?? { layout: data.view.layout, ...(data.view.titleField ? { titleField: data.view.titleField } : {}), ...(data.view.groupField ? { groupField: data.view.groupField } : {}), ...(data.view.dateField ? { dateField: data.view.dateField } : {}), ...(data.view.valueField ? { valueField: data.view.valueField } : {}) }, changePresentation: setPresentation, currentQuery: page.current ?? data.view.query, openArtifact: setOpenedArtifact, setDirty: (value, key = "record") => { if (value) dirty.current.add(key); else if (key === "record") dirty.current.clear(); else dirty.current.delete(key); } }}><JSONUIProvider registry={registry} initialState={{}} handlers={{}}><Renderer spec={spec} registry={registry} /></JSONUIProvider></View.Provider>}
+    {data && spec && <View.Provider key={editorVersion} value={{ data, client, inline, reload, run, query, signal, saveView, presentation: presentation ?? { layout: data.view.layout, ...(data.view.titleField ? { titleField: data.view.titleField } : {}), ...(data.view.groupField ? { groupField: data.view.groupField } : {}), ...(data.view.dateField ? { dateField: data.view.dateField } : {}), ...(data.view.valueField ? { valueField: data.view.valueField } : {}) }, changePresentation: setPresentation, currentQuery: page.current ?? data.view.query, openArtifact: setOpenedArtifact, setDirty: (value, key = "record") => { if (value) dirty.current.add(key); else if (key === "record") dirty.current.clear(); else dirty.current.delete(key); } }}><JSONUIProvider registry={registry} initialState={{}} handlers={{}}><Renderer spec={spec} registry={registry} /></JSONUIProvider></View.Provider>}
     {openedArtifact && <MiniAppScreen title={openedArtifact === artifactId ? data?.artifact.title ?? "Database" : "Saved view"} close={() => setOpenedArtifact(undefined)}><DatabaseArtifact artifactId={openedArtifact} client={client} inline={false} /></MiniAppScreen>}
   </article>;
 }

@@ -1105,7 +1105,7 @@ async function watchTransport(sandbox:CodegraffSandbox) {
         return JSON.stringify(sealReplay({error:"browser_replay_unavailable"},key));
       const preservePause=prior?.state==="paused"&&revision===(prior.lifecycleRevision??0);
       const status={producer:g.producer,generation:g.generation,lifecycleRevision:revision,leaseRevision,
-        state:preservePause?"paused" as const:"watching" as const,reason:preservePause?"paused":"recording",expiresAt:g.expiresAt,...(preservePause?{pausedThrough:prior.pausedThrough}:{})};
+        state:preservePause?"paused" as const:"watching" as const,reason:preservePause?"paused":"recording",expiresAt:g.expiresAt,...(g.deliveryEpoch?{deliveryEpoch:g.deliveryEpoch}:{}),...(preservePause?{pausedThrough:prior.pausedThrough}:{})};
       states.set(g.producer,status);output=status;
     }else if(value.operation==="watch-pause"){
       const prior=states.get(value.producer)!;
@@ -1118,6 +1118,12 @@ async function watchTransport(sandbox:CodegraffSandbox) {
       if(!prior||prior.generation!==value.generation||!prior.coverageGap||prior.coverageGap.missed!==value.missed)
         return JSON.stringify(sealReplay({error:"browser_replay_unavailable"},key));
       output={...prior,coverageGap:{...prior.coverageGap,acknowledged:value.missed}};
+      states.set(value.producer,output as typeof prior);
+    }else if(value.operation==="watch-restore-proof")output=undefined;
+    else if(value.operation==="watch-reauthorize"){
+      const prior=states.get(value.producer)!;
+      const {restore:_,...clean}=prior;
+      output={...clean,state:"watching",reason:"recording",deliveryEpoch:value.request.deliveryEpoch,acknowledged:value.request.hostThrough};
       states.set(value.producer,output as typeof prior);
     }else if(value.operation==="watch-status")output=[...states.values()].map(s=>paused?{...s,state:"paused",reason:"connection_revoked",pausedThrough:s.acknowledged??0}:s);
     else throw Error("Unexpected private operation");
@@ -1216,7 +1222,7 @@ test("watch controls use encrypted operations and durable idle fences survive ho
       expect(f.calls.filter(c=>c.path.endsWith("/stop"))).toHaveLength(1);
     }finally{remote.restore();}
   }finally{transport.restore();db.close();rmSync(directory,{recursive:true,force:true});}
-});
+},30000);
 
 test("lost watch configure and pause replies hold only the retained deadline, confirmed pause releases it",async()=>{
   const f=fixture();await f.sandbox.ensure();
@@ -1246,7 +1252,7 @@ test("lost watch configure and pause replies hold only the retained deadline, co
     await expect(f.sandbox.watchConfigure({...lease,grant:{...lease.grant,owner:"another-owner"}})).rejects.toThrow("lease invalid");
     await expect(f.sandbox.watchConfigure({...lease,grant:{...lease.grant,expiresAt:Date.now()+86_401_000}})).rejects.toThrow("lease invalid");
   }finally{transport.restore();}
-});
+},30000);
 
 test("configure arriving during idle stop prevents physical VM stop and then installs its lease",async()=>{
   const f=fixture();await f.sandbox.ensure();
@@ -1776,4 +1782,146 @@ test("restore holds do not bypass exact producer generation or lifecycle confirm
     expect((await f.sandbox.watchConfigure(lease)).restore).toEqual(restore);
     expect(remote.requests.every(value=>["watch-configure"].includes(value.operation))).toBe(true);
   }finally{remote.restore();}
+},30000);
+
+function restoreProofFor(lease:ReturnType<typeof watchLease>):import('../src/browser-watch-restore.ts').BrowserWatchRestoreProof {
+  const g=lease.grant;
+  return {owner:g.owner,producer:g.producer,profile:g.profile,epoch:g.epoch,generation:g.generation,connectionId:g.connectionId,
+    connectionRevision:g.connectionRevision,lifecycleRevision:lease.lifecycleRevision??0,leaseRevision:lease.leaseRevision??0,
+    ...(g.deliveryEpoch?{deliveryEpoch:g.deliveryEpoch}:{}),expiresAt:g.expiresAt,challenge:crypto.randomUUID(),at:Date.now(),
+    queue:{head:8,acknowledged:3,offered:6},hostThrough:5,prefixDigest:`sha256:${'a'.repeat(64)}`};
+}
+function restoreRequestFor(proof:ReturnType<typeof restoreProofFor>):import('../src/browser-watch-restore.ts').BrowserWatchReauthorizeRequest {
+  const {deliveryEpoch,...scope}=proof;return {...scope,previousDeliveryEpoch:deliveryEpoch??null,deliveryEpoch:crypto.randomUUID()};
+}
+
+test('restore proof is an exact passive encrypted read with no source identity drift or private extras',async()=>{
+  const f=fixture();await f.sandbox.ensure();const remote=await watchTransport(f.sandbox),lease=watchLease();
+  try{
+    await f.sandbox.watchConfigure(lease);const proof=restoreProofFor(lease);
+    const before=JSON.stringify(await f.state.get('codegraff:browser-watch-configurations'));
+    remote.reply((output,request)=>request.operation==='watch-restore-proof'?proof:output);
+    expect(await f.sandbox.watchRestoreProof(proof.producer,proof.challenge,proof.hostThrough)).toEqual(proof);
+    expect(JSON.stringify(await f.state.get('codegraff:browser-watch-configurations'))).toBe(before);
+    for(const patch of [{owner:'foreign'},{profile:'foreign'},{epoch:'foreign'},{producer:'foreign'},{generation:2},
+      {connectionId:'foreign'},{connectionRevision:'foreign'},{lifecycleRevision:1},{leaseRevision:1},{deliveryEpoch:'other'},
+      {expiresAt:proof.expiresAt+1},{challenge:crypto.randomUUID()},{hostThrough:4},{privatePayload:'PRIVATE_RESTORE'},
+      {queue:{head:8,acknowledged:7,offered:6}},{prefixDigest:'bad'},{at:0}]){
+      remote.reply((output,request)=>request.operation==='watch-restore-proof'?{...proof,...patch}:output);
+      await expect(f.sandbox.watchRestoreProof(proof.producer,proof.challenge,proof.hostThrough)).rejects.toThrow('Browser watch restore proof');
+    }
+    const count=remote.requests.length;
+    await expect(f.sandbox.watchRestoreProof(proof.producer,'invalid',5)).rejects.toThrow('request invalid');
+    await expect(f.sandbox.watchRestoreProof(proof.producer,proof.challenge,-1)).rejects.toThrow('request invalid');
+    expect(remote.requests).toHaveLength(count);
+    await f.options.gateway.request('/v1/sandboxes/vm-fixture/stop',{});const calls=f.calls.length;
+    await expect(f.sandbox.watchRestoreProof(proof.producer,proof.challenge,5)).rejects.toThrow('runner unavailable');
+    expect(remote.requests).toHaveLength(count);
+    expect(f.calls.slice(calls).every(call=>call.path==='/v1/sandboxes/vm-fixture'&&call.body===undefined)).toBe(true);
+    expect(remote.uploads.join()+remote.commands.join()).not.toContain(proof.challenge);
+  }finally{remote.restore();}
+},30000);
+
+test('restore reauthorization retains exact request across lost acknowledgement and reconstruction, fencing stale delivery epoch',async()=>{
+  const f=fixture();await f.sandbox.ensure();const remote=await watchTransport(f.sandbox),lease=watchLease();
+  try{
+    await f.sandbox.watchConfigure(lease);const proof=restoreProofFor(lease),request=restoreRequestFor(proof);
+    remote.states.set(proof.producer,{...remote.states.get(proof.producer)!,state:'needs-attention',reason:'restore-authorization-required',
+      restore:{challenge:proof.challenge,at:proof.at,queue:proof.queue}});
+    remote.fail('watch-reauthorize');
+    await expect(f.sandbox.watchReauthorize(proof.producer,request)).rejects.toThrow('lost_reply');
+    const pending=await f.state.get<any[]>('codegraff:browser-watch-configurations');
+    expect(pending![0].deliveryEpoch).toBeUndefined();
+    expect(pending![0].restorePending.deliveryEpoch).toBe(request.deliveryEpoch);
+    expect(JSON.stringify(pending)).not.toContain(lease.grant.secret);
+    expect(JSON.stringify(pending)).not.toContain(proof.challenge);
+    const rebuilt=new CodegraffSandbox(f.options),restored=await watchTransport(rebuilt);
+    restored.states.set(proof.producer,remote.states.get(proof.producer)!);
+    try{
+      await expect(rebuilt.watchConfigure(lease)).rejects.toThrow('restore unresolved');
+      await expect(rebuilt.watchReauthorize(proof.producer,{...request,deliveryEpoch:crypto.randomUUID()})).rejects.toThrow('request conflict');
+      await expect(rebuilt.watchReauthorize(proof.producer,{...request,prefixDigest:`sha256:${'b'.repeat(64)}`})).rejects.toThrow('request conflict');
+      expect(restored.requests).toHaveLength(0);
+      expect((await rebuilt.watchReauthorize(proof.producer,request)).deliveryEpoch).toBe(request.deliveryEpoch);
+      expect((await f.state.get<any[]>('codegraff:browser-watch-configurations'))![0]).toMatchObject({deliveryEpoch:request.deliveryEpoch});
+      await expect(rebuilt.watchConfigure(lease)).rejects.toThrow('delivery epoch stale');
+      const updated={...lease,grant:{...lease.grant,deliveryEpoch:request.deliveryEpoch}};
+      expect((await rebuilt.watchConfigure(updated)).deliveryEpoch).toBe(request.deliveryEpoch);
+      const renewed=renewedWatchLease(updated);
+      expect((await rebuilt.watchConfigure(renewed)).leaseRevision).toBe(1);
+      expect((await rebuilt.watchPause(proof.producer,undefined,0)).state).toBe('paused');
+      expect(restored.requests.filter(r=>r.operation==='watch-reauthorize')).toHaveLength(1);
+      expect(restored.uploads.join()+restored.commands.join()).not.toContain(request.deliveryEpoch);
+    }finally{restored.restore();}
+  }finally{remote.restore();}
+},30000);
+
+test('restore control rejects mismatched scopes and malformed replies without promoting authority',async()=>{
+  const f=fixture();await f.sandbox.ensure();const remote=await watchTransport(f.sandbox),lease=watchLease();
+  try{
+    await f.sandbox.watchConfigure(lease);const proof=restoreProofFor(lease),request=restoreRequestFor(proof);
+    for(const patch of [{owner:'foreign'},{profile:'foreign'},{epoch:'foreign'},{generation:2},{connectionId:'foreign'},
+      {connectionRevision:'foreign'},{lifecycleRevision:1},{leaseRevision:1},{expiresAt:proof.expiresAt+1},
+      {previousDeliveryEpoch:'foreign'},{deliveryEpoch:''},{deliveryEpoch:null},{previousDeliveryEpoch:undefined},
+      {prefixDigest:'bad'},{queue:{head:1,acknowledged:0,offered:2}},{payload:'PRIVATE_RESTORE'}]){
+      await expect(f.sandbox.watchReauthorize(proof.producer,{...request,...patch} as typeof request)).rejects.toThrow('Browser watch restore');
+    }
+    expect(remote.requests.map(r=>r.operation)).toEqual(['watch-configure']);
+    for(const patch of [{generation:2},{lifecycleRevision:1},{leaseRevision:1},{deliveryEpoch:'wrong'},
+      {expiresAt:proof.expiresAt+1},{acknowledged:4},{acknowledged:-1},{acknowledged:undefined},
+      {state:'needs-attention',reason:'restore-authorization-required',restore:{challenge:proof.challenge,at:proof.at,queue:proof.queue}}]){
+      remote.reply((output,req)=>req.operation==='watch-reauthorize'?{...output,...patch}:output);
+      await expect(f.sandbox.watchReauthorize(proof.producer,request)).rejects.toThrow('reauthorization unconfirmed');
+      expect((await f.state.get<any[]>('codegraff:browser-watch-configurations'))![0].deliveryEpoch).toBeUndefined();
+    }
+    remote.reply((output,req)=>req.operation==='watch-reauthorize'?{...output,acknowledged:8}:output);
+    expect((await f.sandbox.watchReauthorize(proof.producer,request)).acknowledged).toBe(8);
+    expect((await f.sandbox.watchReauthorize(proof.producer,request)).deliveryEpoch).toBe(request.deliveryEpoch);
+    const count=remote.requests.length;
+    await expect(f.sandbox.watchReauthorize(proof.producer,{...request,challenge:crypto.randomUUID()})).rejects.toThrow('request conflict');
+    expect(remote.requests).toHaveLength(count);
+  }finally{remote.restore();}
+},30000);
+
+for(const restartFails of [false,true])test(`explicit VM restore reopens held runner without republishing when startup ${restartFails?'fails':'succeeds'}`,async()=>{
+  const {replayKeys,unwrapReplay,sealReplay}=await import('../src/codegraff.ts');
+  const f=fixture();await f.sandbox.ensure();const keys=replayKeys(),commands:string[]=[],uploads:string[]=[],requests:any[]=[];
+  const lease=watchLease(),proof=restoreProofFor(lease);let running=true,published=0,restoreHealth=0;
+  const held={producer:proof.producer,generation:1,lifecycleRevision:0,leaseRevision:0,expiresAt:lease.grant.expiresAt,
+    state:'needs-attention',reason:'restore-authorization-required',restore:{challenge:proof.challenge,at:proof.at,queue:proof.queue}};
+  const upload=spyOn(f.sandbox,'upload').mockImplementation(async(_id,_path,text)=>{uploads.push(text);});
+  const exec=spyOn(f.sandbox,'exec').mockImplementation(async(id,command)=>{
+    expect(id).toBe('vm-fixture');commands.push(command);
+    if(command.endsWith(' close')){running=false;return '{"closed":true}';}
+    if(command.includes(' runner.js restore ')){expect(running).toBe(false);published++;return '{"restored":true}';}
+    if(command.endsWith(' health')){
+      if(published){restoreHealth++;if(restartFails)throw Error('controlled startup failure');}
+      running=true;return JSON.stringify({replayPublicKey:keys.publicKey});
+    }
+    if(command.endsWith(' peek-health')){if(!running)throw Error('runner unavailable');return JSON.stringify({replayPublicKey:keys.publicKey});}
+    const {key,value}=unwrapReplay(JSON.parse(uploads.at(-1)!),keys.privateKey);requests.push(value);
+    if(value.operation==='backup')return JSON.stringify(sealReplay({output:{verified:true,paused:true,written:true}},key));
+    if(value.operation==='watch-status')return JSON.stringify(sealReplay({output:[held]},key));
+    throw Error('unexpected fixture operation');
+  });
+  try{
+    const provider=f.calls.length;
+    expect(await f.sandbox.restore(async sink=>{
+      expect(f.sandbox.busy).toBe(true);
+      await sink.write('owner.json',0,new Uint8Array([1]));
+      await sink.commit({version:1,owner:lease.grant.owner,files:[]} as Parameters<typeof sink.commit>[0]);
+      return {restored:true};
+    },[])).toEqual({restored:true});
+    expect(published).toBe(1);expect(restoreHealth).toBe(1);expect(f.sandbox.busy).toBe(false);
+    const calls=commands.length;
+    if(restartFails){
+      await expect(f.sandbox.watchStatus()).rejects.toThrow('runner unavailable');
+      expect(await f.state.get('codegraff:browser-watch-maintenance')).toMatchObject({state:'needs-attention',reason:'watch-unavailable'});
+    }else expect(await f.sandbox.watchStatus()).toEqual([held]);
+    expect(commands.slice(calls).some(c=>c.endsWith(' health'))).toBe(false);
+    expect(restoreHealth).toBe(1);expect(published).toBe(1);
+    expect(f.calls.slice(provider).every(call=>call.path==='/v1/sandboxes/vm-fixture'&&call.body===undefined)).toBe(true);
+    expect(requests.every(request=>['backup','watch-status'].includes(request.operation))).toBe(true);
+    expect(uploads.join()+commands.join()).not.toContain(proof.challenge);
+  }finally{upload.mockRestore();exec.mockRestore();}
 },30000);

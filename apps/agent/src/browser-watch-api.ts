@@ -6,7 +6,7 @@ import type { createBrowserWatches } from "./browser-watches.ts";
 
 const operations: Record<string, string> = {
   configure: "browser_watch_configure", control: "browser_watch_control",
-  renew: "browser_watch_renew",
+  reauthorize: "browser_watch_reauthorize", renew: "browser_watch_renew",
   sample: "browser_watch_sample", reconcile: "browser_watch_reconcile",
   "acknowledge-gap": "browser_watch_acknowledge_gap",
 };

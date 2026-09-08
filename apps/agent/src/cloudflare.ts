@@ -2522,6 +2522,9 @@ export default {
           accounts,
         });
       }
+      // Promise consent is owner-only, including before account lookup/admission.
+      if (principal.operator && /^\/(?:api|v1)\/promises(?:\/|$)/.test(url.pathname))
+        return json({ error: "forbidden" }, 403);
       let owner = url.pathname.startsWith("/api/control/")
         ? (url.searchParams.get("account") ?? principal.owner)
         : principal.owner;

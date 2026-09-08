@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Event } from "tardie/core/event";
 import { browserWatchRestorePrefixDigest } from "./browser-watch-restore.ts";
-import { browserEventKey } from "./browser-events.ts";
+import { browserEventKey, browserDeliveryEpoch } from "./browser-events.ts";
 import { harnessDigest } from "./harness-library.ts";
 import type { WiringJournal } from "./channel-wiring.ts";
 import type { BrowserWatchConfig, BrowserWatchLease } from "./browser-watches.ts";
@@ -15,7 +15,7 @@ export interface BrowserWatchRestoreInput {
 export interface BrowserWatchRestorePermit {
   owner: string; requestId: string; watchId: string; generation: number; producer: string; epoch: string; sourceGeneration: number;
   connectionId: string; connectionRevision: string; lifecycleRevision: number; leaseRevision: number;
-  previousDeliveryEpoch: string | null; deliveryEpoch: string; challenge: string; hostThrough: number; prefixDigest: `sha256:${string}`;
+  previousDeliveryEpoch: string | null; deliveryEpoch: string; challenge: string; hostThrough: number; prefixDigest: string;
   queueHead: number; queueAcknowledged: number; queueOffered: number; expiresAt: number; profile: string; restoreAt: number;
 }
 export interface BrowserWatchRestorePorts {
@@ -31,7 +31,7 @@ const permitOf = (rows: readonly Event[], id: string) => rows.find(e => e.type =
 const checksOf = (rows: readonly Event[], id: string) => rows.filter(e => e.type === types[2] && e.requestId === id);
 export const browserWatchRestoreAdmissionRequired = (events: readonly Event[]) => events.some(e => types.includes(e.type));
 export const browserWatchRestoreEpoch = (rows: readonly Event[], owner: string, producer: string, epoch: string, generation: number) =>
-  rows.findLast(e => e.type === types[1] && e.owner === owner && e.producer === producer && e.epoch === epoch && e.sourceGeneration === generation)?.deliveryEpoch as string | undefined;
+  browserDeliveryEpoch(rows, {owner, producer, epoch, generation});
 export const browserWatchRestoreHeld = (rows: readonly Event[], owner: string, watchId: string) => {
   const request = rows.findLast(e => e.type === types[0] && e.owner === owner && e.watchId === watchId);
   return !!request && !rows.some(e => e.type === types[1] && e.owner === owner && e.id === request.id);
@@ -168,7 +168,7 @@ export function createBrowserWatchReauthorization(binding: BrowserWatchRestorePo
       try {
         await binding.authorize(s.config, signal);
         let status: any = await call(bounded => binding.status(String(request.producer), bounded), signal, Date.now() + 10_000);
-        if (permit && statusMatches(status, request) && !status.restore && status.deliveryEpoch === permit.deliveryEpoch) confirmed = true;
+        if (permit && statusMatches(status, request) && !status.restore && status.deliveryEpoch === permit.deliveryEpoch && Number.isSafeInteger(status.acknowledged) && status.acknowledged >= Number(permit.hostThrough)) confirmed = true;
         if (!confirmed && canApply && scoped(rows, request)) {
           if (!permit) {
             if (!statusMatches(status, request) || status.restore?.challenge !== request.challenge || !status.restore?.queue) throw Error("watch_restore_hold_unavailable");
@@ -189,7 +189,7 @@ export function createBrowserWatchReauthorization(binding: BrowserWatchRestorePo
           await binding.authorize(s.config, signal);
           await call(bounded => binding.reauthorizeLease!(permit as unknown as BrowserWatchRestorePermit, bounded), signal, Number(request.deadlineAt));
           status = await call(bounded => binding.status(String(request.producer), bounded), signal, Date.now() + 10_000);
-          confirmed = statusMatches(status, request) && !status.restore && status.deliveryEpoch === permit.deliveryEpoch;
+          confirmed = statusMatches(status, request) && !status.restore && status.deliveryEpoch === permit.deliveryEpoch && Number.isSafeInteger(status.acknowledged) && status.acknowledged >= Number(permit.hostThrough);
         }
       } catch { /* The exact request/permit remains held; status reads never clear it. */ }
       rows = own(await journal.read(), owner); if (checksOf(rows, requestId).length !== attempt || checksOf(rows, requestId).some(e => e.status === "confirmed") || attempt > 4 || !confirmed && attempt >= 4) return;

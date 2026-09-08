@@ -7,6 +7,7 @@ import { AgentBrowserClient } from "@unbrowse/browser-harness/client";
 import { browserDriverFactory, type BrowserDriver } from "../src/browser-driver.ts";
 import type { BrowserWatchLease } from "../src/browser-watch-runner.ts";
 import { browserBatchSignature } from "../src/browser-events.ts";
+import { holdRestoredBrowserWatches } from "../src/browser-watch-restore.ts";
 
 test("private driver forwards matching network observations without a browser tool and retains profile across restart", async () => {
   const directory=mkdtempSync(join(tmpdir(),"aiko-watch-driver-")), exchanges: {url:string;body:any;signature:string|null}[]=[];
@@ -121,5 +122,21 @@ test("private driver forwards matching network observations without a browser to
     expect(observerTargets.size).toBe(1);
     await driver.watchPause!("background");
     expect(observerTargets.size).toBe(0);
+    await driver.close();
+    holdRestoredBrowserWatches(db,"alice");
+    const preparationsAtRestore=preparation.mock.calls.length;
+    driver=await create();
+    const held=(await driver.watchStatus!()).find(status=>status.producer==="producer")!;
+    expect(held).toMatchObject({state:"paused",pausedThrough:1});expect(held.restore).toBeDefined();
+    let proof=await driver.watchRestoreProof!("producer",held.restore!.challenge,1);
+    expect(proof).toMatchObject({owner:"alice",producer:"producer",profile:context.profile,epoch:"epoch",generation:1,lifecycleRevision:2,queue:{head:1,acknowledged:1,offered:1}});
+    const request=()=>{const {deliveryEpoch,...scope}=proof;return {...scope,previousDeliveryEpoch:deliveryEpoch??null,deliveryEpoch:"explicit-restored-epoch"};};
+    await expect(driver.watchReauthorize!("producer",request())).rejects.toThrow("authority_unavailable");
+    expect(await driver.watchConfigure!({...lease,lifecycleRevision:3,resumeFrom:{lifecycleRevision:2,pausedThrough:1}})).toMatchObject({state:"needs-attention",reason:"restore-authorization-required"});
+    expect(preparation.mock.calls).toHaveLength(preparationsAtRestore);
+    proof=await driver.watchRestoreProof!("producer",held.restore!.challenge,1);
+    const confirmed=await driver.watchReauthorize!("producer",request());
+    expect(confirmed.restore).toBeUndefined();expect(confirmed).toMatchObject({deliveryEpoch:"explicit-restored-epoch",acknowledged:1});
+    expect(exchanges).toHaveLength(1);
   } finally {releaseStartup?.();await driver?.close();db?.close();for(const mock of mocks)mock.mockRestore();await server.stop(true);rmSync(directory,{recursive:true,force:true});}
 },15000);

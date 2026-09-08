@@ -2,7 +2,11 @@ import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
+import { createHash } from "node:crypto";
+import { createCloudflareAccountHost } from "../src/cloudflare-host.ts";
+import { memoryRestoreAdmission } from "../src/memory-restore-authority.ts";
+import { nativeMemoryImportPublication } from "../src/memory-import-publication.ts";
 import { Self } from "tardie/core/runtime";
 import { cloudflareStorage, type Memory } from "entity-learn/cloudflare";
 import { openMemoryAuthorityRegistry } from "../src/memory-authority-node.ts";
@@ -14,12 +18,14 @@ import { memoryTestAuthority } from "./memory-authority-fixture.ts";
 
 const write = (key: string) => ({ key, producer: { kind: "agent" as const, reference: "synthetic-native-write" } });
 const fact = (subject: string) => ({ subject, title: subject, type: "fact", payload: `synthetic-${subject}` });
-function storage(db: Database) {
-  return cloudflareStorage({ sql: { exec(query, ...args) {
+function accountStorage(db: Database) {
+  return { sql: { exec(query: string, ...args: (string | number | null | ArrayBuffer)[]) {
     const rows = !args.length && query.trimStart().startsWith("CREATE") ? (db.exec(query), []) : db.query(query).all(...args as never[]);
     return { toArray: () => rows as never, [Symbol.iterator]: () => (rows as Record<string, never>[])[Symbol.iterator]() };
-  } }, transactionSync: run => db.transaction(run)() });
+  } }, transactionSync: <T>(run: () => T) => db.transaction(run)(), sync: async () => {},
+    getAlarm: async () => null, setAlarm: async () => { throw Error("fixture cannot schedule"); }, deleteAlarm: async () => {} };
 }
+const storage = (db: Database) => cloudflareStorage(accountStorage(db));
 async function fixture() {
   const dir = await mkdtemp("/tmp/memory-write-authority-");
   const registry = await openMemoryAuthorityRegistry(join(dir, "independent/authority.sqlite"), 1);
@@ -145,6 +151,45 @@ test("actual native tools use all-write admission and explicit native erasure cu
     expect((await f.registry.read("123"))?.pending).toBeUndefined();
     expect(() => f.memory.remember(fact("direct-unadmitted"), write("direct-unadmitted"))).toThrow("admission");
   } finally { await copies.close(); await f.close(); }
+});
+
+test("native import receipt verification fences its still-running executor before releasing restore authority", async () => {
+  const f = await fixture(), sourceDb = new Database(":memory:");
+  const hostOptions = { actorName: "aiko", actorInstance: "write-import", ownsThread: (t: string) => t === "user-123", actorFor: () => undefined, layersFor: () => Layer.empty };
+  const sourceHost = await createCloudflareAccountHost({ ...hostOptions, storage: accountStorage(sourceDb) });
+  const host = await createCloudflareAccountHost({ ...hostOptions, storage: accountStorage(f.db) });
+  const source = openGuardedMemory({ storage: storage(sourceDb), scope: "aiko:123" });
+  const zero = (await f.registry.read("123"))!.fence;
+  const memory = openGuardedMemory({ storage: f.native, scope: "aiko:123", restoreAuthority: () => zero, writeAuthority: f.controller.guard });
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  let running: Promise<Error | undefined> | undefined;
+  try {
+    const original = source.remember(fact("imported"), write("imported"));
+    await sourceHost.seed("user-123", [{ type: "Archived", id: "source", at: 1 }]);
+    const archive = source.exportArchive(), histories = sourceHost.exportHistory(), importId = "joined-import";
+    const sha = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+    const fingerprint = f.authority.fingerprint(["native-import", "123", importId, sha([histories, sha(archive)])]);
+    let lease: Awaited<ReturnType<typeof memoryRestoreAdmission>>;
+    const publication = nativeMemoryImportPublication({ owner: "123", memory, storage: f.native, importId, operationId: `restore:${importId}`, fingerprint,
+      archive, histories, history: host.exportHistory, withExecutionFence: verify => f.controller.fencePublication(lease.claim, verify) });
+    lease = await memoryRestoreAdmission({ owner: "123", writer: 1, authority: f.authority, operationId: importId, fingerprint, publication });
+    await lease.prepare(); expect(await lease.reconcile()).toEqual({ status: "pending" });
+    let imports = 0;
+    running = f.controller.exclusive(lease.claim, async () => {
+      await host.importHistory(importId, histories, { fingerprint: sha(archive), import: () => { imports++; memory.importArchive(archive); } });
+      entered.resolve(); await release.promise;
+      memory.remember(fact("late-import-write"), write("late-import-write"));
+    }).then(() => undefined, error => error as Error);
+    await entered.promise;
+    const before = memory.exportArchive();
+    expect(await lease.reconcile()).toEqual({ status: "published" });
+    expect((await f.registry.read("123"))?.pending).toBeUndefined();
+    release.resolve(); expect(String(await running)).toContain("closed or fenced");
+    expect(memory.exportArchive()).toEqual(before); expect(host.exportHistory()).toEqual(histories);
+    expect(memory.get(original.id)?.observation.payload).toBe("synthetic-imported"); expect(imports).toBe(1);
+  } finally {
+    release.resolve(); await running; memory.close(); source.close(); await host.close(); await sourceHost.close(); sourceDb.close(); await f.close();
+  }
 });
 
 test("verified erasure abort installs a durable native fence before releasing the claim", async () => {

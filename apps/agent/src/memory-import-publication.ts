@@ -3,11 +3,12 @@ import type { Memory, MemoryStorage } from "entity-learn/cloudflare";
 import { sameMemoryAuthorityValue as same } from "./memory-authority.ts";
 import type { MemoryPublicationReader } from "./memory-restore-authority.ts";
 
-/** Read-only publication witness for /control/import's native threads + memory
- * transaction ONLY. This cannot attest account KV, remote VM/browser state, a
- * cancelled import, or bytes outside the verified native account snapshot.
- * Supply the same native SQLite connection as the account host/memory journal,
- * and hold its owner gate. No write, import or lifecycle execution occurs here. */
+/** Publication witness for /control/import's native threads + memory ONLY.
+ * This cannot attest account KV, remote VM/browser state, a cancelled import,
+ * or bytes outside the verified native account snapshot. Supply the same native
+ * SQLite connection as the account host/memory journal and hold its owner gate.
+ * No import or remote lifecycle execution occurs here. The optional local fence
+ * closes only executor-control metadata after verifying the original import. */
 export function nativeMemoryImportPublication(options: {
   memory: Memory;
   storage: MemoryStorage;
