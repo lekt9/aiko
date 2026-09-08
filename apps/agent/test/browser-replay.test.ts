@@ -112,6 +112,30 @@ test("fixed CDP replay targets one current owned page and returns response only 
 });
 
 const endpoint = process.env.AIKO_REPLAY_TEST_CDP;
+test("fixed inherited DOM and accessibility reads bind one origin, exclude input values and reject private forms",async()=>{
+ const calls:any[]=[];let privateForm=false,ambiguous=false;
+ const server=Bun.serve({port:0,fetch(req,server){if(server.upgrade(req))return;return new Response(null,{status:400});},websocket:{message(ws,raw){
+  const call=JSON.parse(String(raw));calls.push(call);
+  const page={type:"page",targetId:"owned",url:"https://example.com/page"};
+  const result=call.method==="Target.getTargets"?{targetInfos:[page,{...page,targetId:"foreign",url:ambiguous?"https://example.com/other":"https://other.com/"}]}:
+    call.method==="Target.attachToTarget"?{sessionId:"owned-session"}:
+    call.method==="Accessibility.getFullAXTree"?{nodes:[{role:{value:"heading"},name:{value:"Public heading"}},{role:{value:"textbox"},name:{value:"Input"},value:{value:"PRIVATE_INPUT_VALUE"}},{role:{value:"link"},name:{value:"Projects"}}]}:
+    privateForm?{exceptionDetails:{text:"Sign-in context unavailable"}}:
+    {result:{value:{url:page.url,title:"Public page",text:"Visible public text",links:["https://example.com/project","https://other.com/foreign"],count:2}}};
+  ws.send(JSON.stringify({id:call.id,result}));
+ }}});
+ try {
+  const endpoint=`ws://127.0.0.1:${server.port}/devtools/browser/fixture`;
+  const result=await readBrowserConnectionPage(endpoint,"https://example.com",0,undefined,true);
+  expect(result).toMatchObject({title:"Public page",links:["https://example.com/project"],snapshot:"heading: Public heading\nlink: Projects"});
+  expect(JSON.stringify(result)).not.toContain("PRIVATE_INPUT_VALUE");
+  expect(calls.find(call=>call.method==="Accessibility.getFullAXTree").sessionId).toBe("owned-session");
+  expect(calls.some(call=>call.method==="Page.navigate")).toBe(false);
+  expect(calls.find(call=>call.method==="Runtime.evaluate").params.expression).toContain('input[type="password"]');
+  privateForm=true;await expect(readBrowserConnectionPage(endpoint,"https://example.com",0,undefined,true)).rejects.toThrow("unavailable");
+  privateForm=false;ambiguous=true;await expect(readBrowserConnectionPage(endpoint,"https://example.com",0,undefined,true)).rejects.toThrow("Ambiguous");
+ }finally{server.stop(true);}
+});
 (endpoint ? test : test.skip)("real Chrome reads navigation links in one DOM batch and excludes sign-out",async()=>{
  const page=await readBrowserConnectionPage(endpoint!,"https://replay-fixture.aiko.ai");
  expect(page.links).toEqual(["https://replay-fixture.aiko.ai/projects","https://replay-fixture.aiko.ai/projects?id=12"]);

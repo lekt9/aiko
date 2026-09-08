@@ -502,3 +502,109 @@ test("hundreds of native log episodes preserve a complete semantic root and rema
     context.close();
   }
 });
+
+test("learning recovers original native commit evidence after commit-before-return and unrelated SQLite writes", async () => {
+  const binding = await fixture();
+  const refresh = Memory.prototype.refresh;
+  const crash = spyOn(Memory.prototype, "refresh").mockImplementation(async function (
+    this: Memory, ...args: Parameters<Memory["refresh"]>
+  ) {
+    await refresh.apply(this, args);
+    throw Error("lost native return after SQLite commit");
+  });
+  try {
+    await expect(indexLearning(binding, input, redactor())).rejects.toThrow("lost native return");
+  } finally { crash.mockRestore(); }
+  const memory = openMemory(binding);
+  let original: ReturnType<Memory["journal"]["events"]>[number];
+  let originalVersion: number;
+  try {
+    const rows = memory.journal.events(memory.scope);
+    original = rows.find(r => r.event.operation === "refresh")!;
+    originalVersion = rows.indexOf(original) + 1;
+    expect(original.event.observations).toHaveLength(1);
+    memory.remember({ subject: "unrelated/after-commit", title: "Unrelated corpus write", type: "note", payload: { value: 42 } },
+      { key: "unrelated-write", producer: { kind: "agent", reference: "fixture" } });
+    expect(memory.journal.scopeVersion(memory.scope)).toBeGreaterThan(originalVersion);
+  } finally { memory.close(); }
+  const recovered = await indexLearning(binding, input, redactor());
+  expect(recovered.observation).toBe(original!.event.observations[0]!.id);
+  expect(recovered.ingestion).toMatchObject({
+    version: 1, owner: binding.owner, scope: `aiko:${binding.owner}`,
+    readKey: original!.event.key,
+    sourceId: original!.event.observations[0]!.producer.sourceId,
+    sourceRevision: original!.event.observations[0]!.producer.sourceRevision,
+    inputHashPolicyVersion: "aiko-learning-input/v1",
+    commit: { key: original!.event.key, sequence: original!.seq, digest: original!.digest,
+      requestDigest: original!.event.requestDigest, recordedAt: original!.event.recordedAt, scopeVersion: originalVersion! },
+  });
+  const snapshot = memorySnapshot(binding);
+  expect(snapshot.scopeVersion).toBeGreaterThan(recovered.ingestion.commit.scopeVersion);
+  expect(snapshot.endScopeVersion).toBe(snapshot.scopeVersion);
+  expect(snapshot.complete).toBe(true);
+  expect(snapshot.leaves).toHaveLength(2);
+  expect(await indexLearning(binding, input, redactor())).toEqual(recovered);
+  const reopened = openMemory(binding);
+  try {
+    expect(reopened.journal.events(reopened.scope).filter(r => r.event.operation === "refresh")).toHaveLength(1);
+  } finally { reopened.close(); }
+  for (const changed of [{ ...input, payload: { status: "forged" } }, { ...input, subject: "foreign/subject" }])
+    await expect(indexLearning(binding, changed, redactor())).rejects.toMatchObject({ code: "idempotency_conflict" });
+  const foreign = await indexLearning({ ...binding, owner: "456" }, input, redactor());
+  expect(foreign.ingestion.scope).not.toBe(recovered.ingestion.scope);
+  expect(foreign.ingestion.commit.digest).not.toBe(recovered.ingestion.commit.digest);
+});
+
+test("snapshot corpus version advances independently of the unchanged semantic hash policy and ingestion", async () => {
+  const binding = await fixture();
+  const result = await indexLearning(binding, input, redactor());
+  const before = memorySnapshot(binding);
+  const memory = openMemory(binding);
+  try {
+    const source = memory.sources()[0]!;
+    // A real native administrative write changes the corpus revision, not its semantic leaves.
+    memory.approveSource(source.id, source.revision, true, "unrelated-approval");
+  } finally { memory.close(); }
+  const after = memorySnapshot(binding);
+  expect(after.scope).toBe(`aiko:${binding.owner}`);
+  expect(after.hashPolicyVersion).toBe("aiko-memory-semantic/v1");
+  expect(after.root).toBe(before.root);
+  expect(after.leaves).toEqual(before.leaves);
+  expect(after.scopeVersion).toBe(before.scopeVersion + 1);
+  expect(after.endScopeVersion).toBe(after.scopeVersion);
+  expect(await indexLearning(binding, input, redactor())).toEqual(result);
+  expect(result.ingestion.commit.scopeVersion).toBeLessThan(after.scopeVersion);
+});
+
+test("a retained SQLite refresh cannot fabricate ingestion success when commit evidence lookup is unavailable", async () => {
+  const binding = await fixture();
+  // Capture exactly the result a caller could lose before recording its native receipt.
+  const lost = await indexLearning(binding, input, redactor());
+  const memory = openMemory(binding);
+  const prototype = Object.getPrototypeOf(memory.journal) as Memory["journal"];
+  const receipt = prototype.receipt;
+  try {
+    memory.remember({ subject: "unrelated/lost-receipt", title: "Later write", type: "note", payload: { count: 1 } },
+      { key: "later-than-lost-receipt", producer: { kind: "agent", reference: "fixture" } });
+  } finally { memory.close(); }
+  // Fault only the public receipt query: the actual SQLite refresh and its indexed
+  // prior remain retained. This is not a simulation of deleting/corrupting the DB.
+  const unavailable = spyOn(prototype, "receipt").mockImplementation(function (this: Memory["journal"], scope: string, key: string) {
+    return key === lost.ingestion.readKey ? undefined : receipt.call(this, scope, key);
+  });
+  try {
+    await expect(indexLearning(binding, input, redactor())).rejects.toMatchObject({ code: "evidence_unavailable" });
+  } finally { unavailable.mockRestore(); }
+  const noCorpusHydration = spyOn(prototype, "events").mockImplementation(() => {
+    throw Error("Ingestion must not hydrate the whole scope journal");
+  });
+  try {
+    expect(await indexLearning(binding, input, redactor())).toEqual(lost);
+  } finally { noCorpusHydration.mockRestore(); }
+  const reopened = openMemory(binding);
+  try {
+    expect(reopened.journal.events(reopened.scope).filter(row => row.event.key === lost.ingestion.readKey)).toHaveLength(1);
+    expect(reopened.history(lost.subject)).toHaveLength(1);
+    expect(reopened.journal.scopeVersion(reopened.scope)).toBeGreaterThan(lost.ingestion.commit.scopeVersion);
+  } finally { reopened.close(); }
+});

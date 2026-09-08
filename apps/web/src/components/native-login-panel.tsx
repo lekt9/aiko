@@ -6,16 +6,8 @@ import {
   type PasswordManager,
 } from "../lib/connectors";
 
-type View = {
-  status: string;
-  domain: string;
-  fields?: string[];
-  currentHost?: string;
-  requiresOrigin?: string;
-  screenshot?: string;
-  width?: number;
-  height?: number;
-};
+import { NativeLoginChallengeError, nativeOtpSubmission, type NativeLoginPanelView as View } from "../lib/native-login-input";
+
 export function NativeLoginPanel({
   connectionId,
   request,
@@ -31,7 +23,6 @@ export function NativeLoginPanel({
   username?: string;
 }) {
   const [view, setView] = useState<View>();
-  const [websiteView, setWebsiteView] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -132,14 +123,21 @@ export function NativeLoginPanel({
         }
         if (!ready?.fields?.length || ready.requiresOrigin) {
           setView(ready);
-          setWebsiteView(true);
-          if (!ready?.requiresOrigin) setView(await read("view"));
-          setError(
-            "Continue on the website below. Your login has not been sent.",
+          if (!ready?.requiresOrigin) setError(
+            "Aiko couldn’t find supported sign-in fields. Your login has not been sent. Try again, or complete any verification on your phone and check sign-in status.",
           );
           return;
         }
+        if(ready.fields.includes("code") && !("code" in fields && fields.code)) {
+          form.current?.reset();setView(ready);setError("Enter your verification code to finish connecting.");return;
+        }
+        let otpBinding: ReturnType<typeof nativeOtpSubmission> | undefined;
+        if("code" in fields && fields.code) {
+          try {otpBinding=nativeOtpSubmission(view,ready);}
+          catch(failure) {form.current?.reset();setView(ready);throw failure;}
+        }
         const automatic =
+          !otpBinding &&
           "username" in fields &&
           "password" in fields &&
           !!fields.username &&
@@ -164,7 +162,7 @@ export function NativeLoginPanel({
         // Submit once. Polling below never resends credentials, including after uncertain responses.
         const result = await request<View>(
           "/native",
-          { connectionId, action: automatic ? "login" : action, ...input },
+          { connectionId, action: automatic ? "login" : action, ...input, ...otpBinding },
           abort.signal,
         );
         fields = {};
@@ -175,7 +173,6 @@ export function NativeLoginPanel({
           return;
         }
         if (result.requiresOrigin) {
-          setWebsiteView(true);
           return;
         }
         if (result.fields?.includes("code")) {
@@ -202,7 +199,6 @@ export function NativeLoginPanel({
         if (!active.current || abort.signal.aborted) return;
         setView(next);
         if (next.requiresOrigin) {
-          setWebsiteView(true);
           return;
         }
         if (next.status === "connected") {
@@ -228,13 +224,14 @@ export function NativeLoginPanel({
     } catch (failure) {
       if (active.current && !abort.signal.aborted)
         setError(
-          failure instanceof MiniAppAuthenticationError
+          failure instanceof MiniAppAuthenticationError || failure instanceof NativeLoginChallengeError
             ? failure.message
             : sent || submitted
               ? "Could not confirm sign-in. Check its status before trying again; your credentials won’t be resent."
               : "Could not open this app’s sign-in page. Your login was not sent. Please try Connect again.",
         );
     } finally {
+      fields = {};
       if (controller.current === abort) controller.current = undefined;
       if (active.current && !abort.signal.aborted) setBusy(false);
       if (active.current && !abort.signal.aborted) setPreparing(false);
@@ -344,7 +341,6 @@ export function NativeLoginPanel({
         if (!active.current || abort.signal.aborted) return;
         setView(formView);
         if (formView.requiresOrigin) {
-          setWebsiteView(true);
           return;
         }
         if (formView.status === "connected") {
@@ -352,7 +348,6 @@ export function NativeLoginPanel({
           return;
         }
         if (formView.fields?.length) {
-          setWebsiteView(false);
           setError(
             formView.fields.includes("code")
               ? "Enter your verification code to finish connecting."
@@ -379,42 +374,35 @@ export function NativeLoginPanel({
       }
     }
   }
-  async function control(action: string, fields: object = {}) {
-    if (busy || controller.current || cancelling.current) return;
+  async function approveOrigin() {
+    if (busy || controller.current || cancelling.current || !view?.requiresOrigin) return;
     const abort = new AbortController();
     controller.current = abort;
     setBusy(true);
     setError("");
-    setWebsiteView(true);
     try {
-      const next = await request<View>(
+      const approved = await request<View>(
         "/native",
-        { connectionId, action, ...fields },
+        { connectionId, action: "allow_origin", url: view.requiresOrigin },
         abort.signal,
       );
+      if (!active.current || abort.signal.aborted) return;
+      const next = approved.status === "connected" || approved.requiresOrigin
+        ? approved
+        : await request<View>("/native", { connectionId, action: "form" }, abort.signal);
       if (!active.current || abort.signal.aborted) return;
       if (next.status === "connected") {
         onClose();
         return;
       }
       setView(next);
-      if (!next.screenshot && !next.requiresOrigin && action !== "finish")
-        setView(
-          await request<View>(
-            "/native",
-            { connectionId, action: "view" },
-            abort.signal,
-          ),
-        );
+      if (!next.requiresOrigin && !next.fields?.length)
+        setError("Aiko couldn’t find supported sign-in fields. Complete any verification on your phone, then check sign-in status.");
     } catch (failure) {
-      if (!abort.signal.aborted)
-        setError(
-          failure instanceof MiniAppAuthenticationError
-            ? failure.message
-            : action === "finish"
-              ? "Sign-in is not confirmed yet. Finish signing in and return to the app’s website, then check again."
-              : "This step could not be confirmed. Refresh the website before repeating it.",
-        );
+      if (active.current && !abort.signal.aborted)
+        setError(failure instanceof MiniAppAuthenticationError
+          ? failure.message
+          : "Could not confirm the sign-in provider. Check sign-in status before trying again.");
     } finally {
       if (controller.current === abort) controller.current = undefined;
       if (active.current && !abort.signal.aborted) setBusy(false);
@@ -506,7 +494,7 @@ export function NativeLoginPanel({
             </ol>
           </details>
         )}
-        {!websiteView && (
+        {!view?.requiresOrigin && (
           <form
             ref={form}
             autoComplete="on"
@@ -519,6 +507,8 @@ export function NativeLoginPanel({
                 if (typeof value === "string" && value)
                   credentials[name] = value;
               }
+              // Clear OTP before asynchronous form validation; only this submission closure retains it.
+              if(credentials.code) event.currentTarget.reset();
               void act("credentials", credentials);
             }}
           >
@@ -608,7 +598,7 @@ export function NativeLoginPanel({
             )}
           </form>
         )}
-        {!!sortedEntries.length && !websiteView && (
+        {!!sortedEntries.length && !view?.requiresOrigin && (
           <details
             className="manager-fill"
             onToggle={(event) => {
@@ -643,7 +633,7 @@ export function NativeLoginPanel({
                   ))}
                 </select>
               </div>
-              <div className="credential-field">
+              {pickedEntry?.kind !== "zoho-vault" && <div className="credential-field">
                 <label htmlFor="manager-username">Email or username</label>
                 <input
                   id="manager-username"
@@ -656,7 +646,7 @@ export function NativeLoginPanel({
                   onChange={(event) => setManagerUsername(event.target.value)}
                   disabled={busy}
                 />
-              </div>
+              </div>}
             </div>
             {managerError && (
               <p className="credential-error" role="alert">
@@ -677,166 +667,33 @@ export function NativeLoginPanel({
             </p>
           </details>
         )}
-        {websiteView && (
-          <div className="native-login-browser">
-            <p className="aiko-fineprint">{view?.currentHost ?? website}</p>
-            {view?.requiresOrigin ? (
-              <div role="status">
-                <p>
-                  This website opened {view.requiresOrigin} to sign in. Continue
-                  only if you recognize this sign-in provider.
-                </p>
-                <button
-                  className="button primary"
-                  disabled={busy}
-                  onClick={() =>
-                    void control("allow_origin", { url: view.requiresOrigin })
-                  }
-                >
-                  Continue to {view.currentHost}
-                </button>
-              </div>
-            ) : view?.screenshot ? (
-              <img
-                src={view.screenshot}
-                alt="Private sign-in website. Tap a field or button to interact."
-                draggable={false}
-                onClick={(event) => {
-                  if (busy) return;
-                  const box = event.currentTarget.getBoundingClientRect();
-                  void control("click", {
-                    x: Math.round(
-                      ((event.clientX - box.left) / box.width) *
-                        (view.width ?? 390),
-                    ),
-                    y: Math.round(
-                      ((event.clientY - box.top) / box.height) *
-                        (view.height ?? 640),
-                    ),
-                  });
-                }}
-              />
-            ) : (
-              <p>Open or refresh the website to continue.</p>
-            )}
-            {!view?.requiresOrigin && (
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  const input = new FormData(event.currentTarget).get("text");
-                  if (typeof input === "string" && input && !busy) {
-                    event.currentTarget.reset();
-                    void control("type", { text: input });
-                  }
-                }}
-              >
-                <label htmlFor="private-website-text">
-                  Tap a field above, then enter its value
-                </label>
-                <input
-                  id="private-website-text"
-                  name="text"
-                  type="password"
-                  autoComplete="off"
-                  maxLength={2048}
-                  disabled={busy}
-                />
-                <button className="button" disabled={busy}>
-                  Enter in selected field
-                </button>
-              </form>
-            )}
-            <div className="native-login-browser-tools">
-              <button
-                className="button"
-                disabled={busy}
-                onClick={() => void control("view")}
-              >
-                Refresh
-              </button>
-              <button
-                className="button"
-                disabled={busy || !!view?.requiresOrigin}
-                onClick={() => void control("key", { key: "Tab" })}
-              >
-                Next field
-              </button>
-              <button
-                className="button"
-                disabled={busy || !!view?.requiresOrigin}
-                onClick={() => void control("key", { key: "Enter" })}
-              >
-                Submit
-              </button>
-              <button
-                className="button"
-                disabled={busy || !!view?.requiresOrigin}
-                onClick={() => void control("scroll", { delta: -480 })}
-              >
-                Scroll up
-              </button>
-              <button
-                className="button"
-                disabled={busy || !!view?.requiresOrigin}
-                onClick={() => void control("scroll", { delta: 480 })}
-              >
-                Scroll down
-              </button>
-            </div>
-            <details>
-              <summary>Use a different sign-in address</summary>
-              <form
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  const url = new FormData(event.currentTarget).get("url");
-                  if (typeof url === "string")
-                    void control("navigate", { url });
-                }}
-              >
-                <label htmlFor="private-login-url">HTTPS sign-in address</label>
-                <input
-                  id="private-login-url"
-                  name="url"
-                  type="url"
-                  placeholder={`https://${website}/login`}
-                  required
-                  disabled={busy}
-                />
-                <button className="button" disabled={busy}>
-                  Open address
-                </button>
-              </form>
-            </details>
+        {view?.requiresOrigin && (
+          <div className="native-login-provider" role="status">
+            <p>
+              {website} uses {view.requiresOrigin} to sign in. Continue only if
+              you recognize this sign-in provider.
+            </p>
             <button
+              type="button"
               className="button primary"
               disabled={busy}
-              onClick={() => void control("finish")}
+              onClick={() => void approveOrigin()}
             >
-              I’m signed in
+              Continue to {view.currentHost ?? "sign-in provider"}
             </button>
           </div>
         )}
-        <div className="connector-actions">
-          <button
-            className="button"
-            disabled={busy}
-            onClick={() =>
-              websiteView
-                ? (setWebsiteView(false), void act("form"))
-                : void control("view")
-            }
-          >
-            {websiteView ? "Use login fields" : "Sign in on website"}
-          </button>
-          {!!error && !busy && submitted && (
+        {(view || error) && !busy && (
+          <div className="connector-actions">
             <button
+              type="button"
               className="button"
               onClick={() => void act(submitted ? "check" : "form")}
             >
               Check sign-in status
             </button>
-          )}
-        </div>
+          </div>
+        )}
         <p className="credential-privacy">
           <LockKeyhole size={14} aria-hidden="true" />
           Private sign-in. Never shared in chat.

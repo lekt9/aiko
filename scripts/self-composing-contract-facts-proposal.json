@@ -1,0 +1,139 @@
+{
+  "status": "registered-fresh-whole-child-proof",
+  "entry": "scripts/verify-self-composing-contract-facts.ts",
+  "entrySha256": "cef315e44aa5fc3602227ee6ab798e2b43cc72a3e924ede9622c10c4950e7fa6",
+  "wholeChildren": {
+    "S14.C05": "Passing children plus failing cross-node invariant leaves parent unsatisfied; immutable graph attempts and append fences reject forged Checked facts",
+    "S18.C01": "Native logs rebuild contract, witness, experiment, lineage, evaluation, promotion and frontier projections from retained facts with zero verifier/model/effect reruns"
+  },
+  "evidence": "/tmp/contract-facts-freeze-current/full-gate.json",
+  "sourceObservations": "/tmp/independent-contract-facts-final/source-observations.json",
+  "scope": {
+    "checks": 187,
+    "parents": 25,
+    "previousVerifiers": 11,
+    "manifestSha256": "fda29c286af4510bebb58cc21bba3df638a4677f1c6fb5a9a590808d3df4329b",
+    "gateSha256": "02e980c162630b4c49b58b506986af57af0ae73ba844e0ac39531424f5bcfc4f",
+    "manifestGatePinsUnchanged": true,
+    "registered": false,
+    "fullGoalComplete": false
+  },
+  "assertions": {
+    "graph": {
+      "passingChildren": 2,
+      "parentFailed": true,
+      "wrongContractIgnored": true,
+      "staleCheckedAppendDenied": true,
+      "externalCheckedDenied": true,
+      "immutableGraph": true,
+      "repeatedOperationNoWork": true,
+      "changedInputDenied": true
+    },
+    "graphReplay": {
+      "jobs": 0,
+      "verifier": 0,
+      "worker": 0,
+      "graphCheck": 0,
+      "fetch": 0
+    },
+    "facts": {
+      "witnesses": 21,
+      "trials": 12,
+      "lineage": 1,
+      "frontierFromWitnesses": true,
+      "policyPinned": true,
+      "foreignOwnerEmpty": true
+    },
+    "factReplay": {
+      "model": 0,
+      "build": 0,
+      "fetch": 0,
+      "subscribe": 0,
+      "send": 0,
+      "code": 0,
+      "sandbox": 0,
+      "verifier": 0,
+      "prepare": 0,
+      "proposal": 0
+    },
+    "sourceStableDuringRun": true
+  },
+  "notClaimed": [
+    "S14.P",
+    "S18.P",
+    "S14.C01/C02/C03/C04/C06",
+    "S18.C02/C03/C04"
+  ],
+  "gaps": [
+    {
+      "criterion": "S14.C01",
+      "kind": "source-scope-gap",
+      "source": "apps/agent/src/harness-library.ts:34,297",
+      "finding": "HarnessContract and registerContract bind outcome/schema/effect/applicability/verifier/evaluator/cases, but no explicit task-to-contract validation, preconditions, invariants or recovery-policy acceptance seam is implemented here. Generic guard is not evidence of task validation. Proposed record syntax is illustrative; missing behavior, not exact field spelling, blocks whole proof."
+    },
+    {
+      "criterion": "S14.C04",
+      "kind": "evidence-gap",
+      "source": "apps/agent/src/harness-library.ts:390",
+      "finding": "Fixed deterministic checker is isolated from candidate VM output custody. This proof does not exercise permitted external readback, remote postconditions or pinned subjective rubric/calibration. No whole credit."
+    },
+    {
+      "criterion": "S14.C06",
+      "kind": "evidence-gap",
+      "finding": "Missing private output is unavailable and historical witness remains intact with zero reruns. No uncertain external mutation or verifier-timeout-to-scoped-doc derivation is exercised by this graph, so whole child remains unregistered."
+    },
+    {
+      "criterion": "S18.C03",
+      "kind": "source-review-gap",
+      "source": "apps/agent/src/log-memory.ts:39",
+      "finding": "Artifact entity indexing includes candidate/promotion/retirement/skill/proposal references; ordinary Checked events are excluded from indexToolArtifact and nested witness fields are not projected by toolLogProjection. Raw native history remains authoritative. Whole owner-scoped witness indexing/heldout retrieval not proven."
+    },
+    {
+      "criterion": "S18.C04",
+      "kind": "evidence-gap",
+      "source": "apps/agent/src/harness-sources.ts:243",
+      "finding": "Source-bound execution checks current source dependency eligibility. Whole schema-change invalidation and actual scoped derived-doc measurement proof is not covered in this joined run."
+    }
+  ],
+  "preservedFailures": [
+    "/tmp/independent-fact-replay-current/prepare.stderr",
+    "/tmp/independent-fact-replay-reviewed/prepare.stderr",
+    "/tmp/independent-contract-facts-protected/graph/prepare.stderr"
+  ],
+  "failureClassification": "Fixture assembly corrections: owner thread, typed echo envelope, trial case identity mapping, comparison case shape, native address nonce. No runtime assertion was weakened.",
+  "frozenRegistration": {
+    "checks": 187,
+    "parents": 25,
+    "oldVerifiers": 11,
+    "newVerifiers": 12,
+    "newAssignments": [
+      "S14.C05",
+      "S18.C01"
+    ],
+    "oldAssertionsCommandsTimeoutsPreserved": true,
+    "checkTextKindsConditionsPreserved": true,
+    "allDocsMetadataPreserved": true,
+    "gateByteIdentical": true,
+    "beforeManifestSha256": "11e4c5ac1f191d6f1846bbe290e0c68805af9fe1709efad35cfd2eb141d44bef",
+    "afterManifestSha256": "f119102da83bb2a98f39631fed15125ed5755db0861231fda4b659e67cf2c5f5",
+    "runtimeBeforeSha256": "e8d42dd80fb7cde95709490071ebbcd9d46873b1cdcd6bd2aa46c3f4a1623bd6",
+    "planSha256": "fd7f5a4bd47d6b93fbbaa167d424a9f26c077bc77d0f9e44028524672637c2db",
+    "fullGoalComplete": false,
+    "satisfied": 20,
+    "blocked": 167,
+    "parentsOpen": 24,
+    "fullGateExit": 1,
+    "fullCompletion": false,
+    "evidenceRoot": "/tmp/unlock-self-composing-evidence-DS508o",
+    "allRegisteredFilePinsMatchAfterGate": true,
+    "outsideGraphDrift": [
+      {
+        "path": "apps/agent/src/actor.ts",
+        "before": "d59fbf74f61e6977682fd56667edbbb789463a0b34450ceb1cdf42f46cec041f",
+        "after": "43bba0483681ba782e06f6f6384f621edfdefaae9a65974ee4b5f2241c2b55a4",
+        "inRegisteredGraphs": false
+      }
+    ],
+    "freezeCanBeReleased": true
+  }
+}

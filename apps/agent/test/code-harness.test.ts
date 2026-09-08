@@ -14,6 +14,9 @@ import { createWorkflowStore } from "../src/workflow-host.ts";
 import { sqliteWorkflowKV } from "../src/workflow-store.ts";
 import { BrowserController } from "../src/browser.ts";
 import { cancellationRequested } from "tardie/core/method/cancellation";
+import { harnessDigest } from "../src/harness-library.ts";
+import { createAikoActor } from "../src/actor.ts";
+import { createVoice } from "../src/voice.ts";
 
 const dbs: Database[]=[];
 afterEach(()=>{for(const db of dbs.splice(0))db.close();});
@@ -22,6 +25,79 @@ function storage(): AccountStorage {
   return {sql:{exec:(q,...args)=>{const rows=db.query(q).all(...args as any);return {toArray:()=>rows as never};}},transactionSync:fn=>db.transaction(fn)(),sync:async()=>{},getAlarm:async()=>alarm,setAlarm:async at=>{alarm=at;},deleteAlarm:async()=>{alarm=null;}};
 }
 const redact=(s:string)=>s;
+
+test.each([false,true])("code-mode commentary reaches Telegram before execution (batch: %s)", async batch => {
+  const safe = (text:string) => text.replaceAll("private-progress-key","[redacted]");
+  const sent:string[]=[];
+  const harness=new CodeHarness("123","user-123",runCodeSegment,safe);
+  let reads=0;
+  const native={spec:{name:"fixture_read",description:"Read evidence",inputSchema:{type:"object",properties:{}}},
+    run:()=>Effect.sync(()=>{expect(sent).toEqual(["I’m checking the result. [redacted]"]);reads++;return {status:"read"};})};
+  const definition=createAikoActor({owner:"123",live:true,voice:createVoice({enabled:false,persona:"fixture"}),
+    send:async(_owner,text)=>{sent.push(text);return {status:"delivered"};},codeHarness:harness,extraTools:[native],
+    memory:{owner:"123",thread:"user-123",stateDir:"/unused",redact:safe,readPage:async()=>[],
+      openMemory:()=>new Memory({storage:nodeStorage(":memory:"),scope:"aiko:123"})}});
+  const call=(id:string)=>({callId:id,name:"execute",arguments:{code:"return await tools.call({name:'fixture_read',arguments:{}});"}});
+  const model=Layer.succeed(Infer,{resolve:()=>({model:{provider:"fixture",model_id:"progress"}}),react:request=>Effect.succeed(
+    request.trajectory.some(e=>e.type==="ToolReturned") ? {kind:"complete" as const,output:"Checked the result."}
+      : batch ? {kind:"calls" as const,calls:[call("one"),call("two")],text:"I’m checking the result. private-progress-key"}
+      : {kind:"call" as const,...call("one"),text:"I’m checking the result. private-progress-key"})});
+  const host=await createCloudflareAccountHost({storage:storage(),actorName:"aiko",actorInstance:"demo",ownsThread:t=>t==="user-123",actorFor:()=>definition,layersFor:()=>harness.inference(model)});
+  try {
+    await host.commitRoot(host.self("user-123"),{type:"MessageReceived",id:"progress",text:"Check",source:"telegram",chat:"123",sender:"123",at:1});
+    await host.drive();
+    expect(reads).toBe(batch?2:1);
+    expect(sent).toEqual(["I’m checking the result. [redacted]","Checked the result."]);
+    expect(JSON.stringify(await host.read("user-123"))).not.toContain("private-progress-key");
+  } finally {await host.close();}
+});
+
+test("the production actor exposes code discovery without duplicate tool schemas and budgets execute", async () => {
+  const harness = new CodeHarness("123", "user-123", runCodeSegment, redact);
+  let reads = 0, attempts = 0;
+  const native = {spec:{name:"fixture_read",description:"Read evidence",inputSchema:{type:"object",properties:{},additionalProperties:false}},
+    run:()=>Effect.sync(()=>{reads++;return {status:"read",text:"Observed fixture"};})};
+  const definition = createAikoActor({owner:"123",live:true,voice:createVoice({enabled:false,persona:"fixture"}),
+    codeHarness:harness,toolCallLimit:1,extraTools:[native],memory:{owner:"123",thread:"user-123",stateDir:"/unused",redact,
+      readPage:async()=>[],openMemory:()=>new Memory({storage:nodeStorage(":memory:"),scope:"aiko:123"})}});
+  const model = Layer.succeed(Infer,{resolve:()=>({model:{provider:"fixture",model_id:"composition"}}),react:request=>{
+    attempts++;
+    expect(request.tools.some(t=>t.name==="fixture_read" || t.name==="memory_recall")).toBe(false);
+    if (attempts<=2) {
+      expect(request.tools.map(t=>t.name).sort()).toEqual(["execute","respond"]);
+      return Effect.succeed({kind:"call" as const,name:"execute",callId:`read-${attempts}`,arguments:{code:"return await tools.call({name:'fixture_read',arguments:{}});"}});
+    }
+    expect(request.tools.some(t=>t.name==="execute")).toBe(false);
+    return Effect.succeed({kind:"complete" as const,output:"Observed the result within the configured budget."});
+  }});
+  const host = await createCloudflareAccountHost({storage:storage(),actorName:"aiko",actorInstance:"demo",ownsThread:t=>t==="user-123",actorFor:()=>definition,layersFor:()=>harness.inference(model)});
+  await host.commitRoot(host.self("user-123"),{type:"MessageReceived",id:"budget",text:"Read evidence",at:1});
+  await host.drive();
+  const events = await host.read("user-123");
+  expect(reads).toBe(1);
+  expect(events.filter(e=>e.type==="ToolCalled").map(e=>e.name)).toEqual(["execute","execute"]);
+  expect(events.some(e=>e.type==="BudgetExhausted")).toBe(true);
+  expect(events.some(e=>e.type==="TurnCompleted")).toBe(true);
+  await host.close();
+});
+test("experiment lineage enters scoped entity-learn as structural facts without private feedback", () => {
+  const event = { type: "AikoHarnessExperimentProposalSettled", owner: "123", experimentId: "bounded", harnessDigest: harnessDigest("candidate"), parentDigest: harnessDigest("baseline"), contractDigest: harnessDigest("contract"), sourceDiffRef: harnessDigest("sealed-diff"), feedbackRef: harnessDigest("sealed-feedback"), status: "candidate", costUsd: null, tokens: 12, feedback: "PRIVATE_FIXTURE_INPUT", output: "PRIVATE_OUTPUT" };
+  const projected = toolLogProjection(event);
+  expect(projected).toMatchObject({ experimentId: "bounded", parentDigest: event.parentDigest, costUsd: null, tokens: 12 });
+  expect(JSON.stringify(projected)).not.toContain("PRIVATE_");
+  const memory = new Memory({ storage: nodeStorage(":memory:"), scope: "experiment-lineage" });
+  try {
+    indexToolArtifact(memory, event, "456", redact);
+    expect(memory.recall({ type: "tool-artifact", limit: 10 }).items).toHaveLength(0);
+    indexToolArtifact(memory, event, "123", redact);
+    const receipt = memory.recall({ type: "tool-artifact", limit: 10 }).items[0]!.observation;
+    expect(receipt.dependsOn).toHaveLength(3);
+    expect(JSON.stringify(receipt)).not.toContain("PRIVATE_");
+    const before = memory.exportArchive();
+    indexToolArtifact(memory, event, "123", redact);
+    expect(memory.exportArchive()).toEqual(before);
+  } finally { memory.close(); }
+});
 test("native code mode discovers, validates and executes owner tools without journaling private results",async()=>{
   const harness=new CodeHarness("123","user-123",runCodeSegment,redact);
   let calls=0, modelCalls=0;

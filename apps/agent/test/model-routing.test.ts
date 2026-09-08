@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { Infer, type InferRequest } from "tardie";
+import { Database } from "bun:sqlite";
 import { ModelBudget } from "../src/model-budget.ts";
+import { ModelBudgetDenied, type ModelBudgetDenial } from "../src/model-budget-denial.ts";
 import { createModelRouting, parseModelRouting, orderedToolMessages, MODEL_PROVIDERS, type ModelRole } from "../src/model-routing.ts";
 import type { HttpFetch } from "../src/security.ts";
 const cleanup: Array<() => Promise<void>> = [];
@@ -46,6 +48,59 @@ test("queued user messages cannot split tool calls from their recorded replies",
  expect(wire.messages[call + 1].content).toContain("Interrupted; do not replay");
  expect(wire.messages[call + 2]).toMatchObject({ role: "user", content: "hi" });
  expect(request).toEqual(original);
+});
+
+test("native Infer retains a real daily denial before normalizing its transport error", async () => {
+ let physical = 0;
+ const f = await fixture(async () => { physical++; return streamReply(); }, {}, { globalPerDay: 5, accountPerDay: 1, maxConcurrent: 2 });
+ const denials: Readonly<ModelBudgetDenial>[] = [];
+ const router = createModelRouting({ owner: "123", env: f.vars, config: parseModelRouting(f.vars), budget: f.budget,
+   fetch: async () => { physical++; return streamReply(); }, throttleRetryDelaysMs: [],
+   onBudgetDenied: async denial => { denials.push(denial); } });
+ const results = await Promise.all([react(router, "conversation"), react(router, "rag")]);
+ expect(results.map(r => r.kind).sort()).toEqual(["complete", "fail"]);
+ expect(physical).toBe(1);
+ expect(denials).toEqual([{ version: 1, owner: "123", day: new Date().toISOString().slice(0,10), scope: "account", limit: 1 }]);
+ expect(f.budget.status("123").accountCalls).toBe(1);
+});
+
+test("global ledger denial is scoped to the caller without exposing another account's usage", async () => {
+ let physical = 0;
+ const f = await fixture(async () => { physical++; return streamReply(); }, {}, { globalPerDay: 1, accountPerDay: 5, maxConcurrent: 2 });
+ await (await f.budget.transport("456", async () => { physical++; return streamReply(); })(endpointFor("conversation"), requestFor("conversation"))).text();
+ const denials: Readonly<ModelBudgetDenial>[] = [];
+ const router = createModelRouting({ owner: "123", env: f.vars, config: parseModelRouting(f.vars), budget: f.budget,
+   fetch: async () => { physical++; return streamReply(); }, throttleRetryDelaysMs: [], onBudgetDenied: async denial => { denials.push(denial); } });
+ expect((await react(router, "conversation")).kind).toBe("fail");
+ expect(denials).toEqual([{ version: 1, owner: "123", day: new Date().toISOString().slice(0,10), scope: "global", limit: 1 }]);
+ expect(JSON.stringify(denials)).not.toContain("456");
+ expect(f.budget.status("123").accountCalls).toBe(0);
+ expect(physical).toBe(1);
+});
+
+test("provider errors, corrupt ledger data and cancellation cannot become a daily denial receipt", async () => {
+ for (const kind of ["same-message", "same-type", "http", "corrupt", "cancel"] as const) {
+  let physical = 0, denied = 0;
+  const f = await fixture(async () => streamReply());
+  if (kind === "corrupt") {
+   const db = new Database(join(f.directory, "model-budget.sqlite"));
+   db.query("INSERT INTO model_usage(day,owner,calls) VALUES(?,?,?)").run(new Date().toISOString().slice(0,10), "456", "invalid");
+   db.close();
+  }
+  const router = createModelRouting({ owner: "123", env: f.vars, config: parseModelRouting(f.vars), budget: f.budget,
+   throttleRetryDelaysMs: [], onBudgetDenied: async () => { denied++; }, fetch: async () => {
+    physical++;
+    if (kind === "same-type") throw new ModelBudgetDenied({ version: 1, owner: "123", day: new Date().toISOString().slice(0,10), scope: "account", limit: 1 });
+    if (kind === "same-message") throw Error("Daily inference allowance exhausted");
+    return new Response("Daily inference allowance exhausted", { status: 503 });
+   } });
+  if (kind === "cancel") await expect(router.transport("conversation")(endpointFor("conversation"), {
+   ...requestFor("conversation"), signal: AbortSignal.abort(),
+  })).rejects.toThrow();
+  else expect((await react(router, "conversation")).kind).toBe("fail");
+  expect(denied).toBe(0);
+  expect(physical).toBe(["cancel", "corrupt"].includes(kind) ? 0 : 1);
+ }
 });
 
 test("parallel tool blocks retain every real receipt and reject unmatched history", () => {
@@ -185,7 +240,7 @@ test("redirects/provider failures are charged once, not retried and never sent t
 test("budget exhaustion is shared across roles and no extra outbound call occurs", async () => {
  let calls = 0; const { router, budget } = await fixture(async () => { calls++; return streamReply(); }, {}, { globalPerDay: 2, accountPerDay: 1, maxConcurrent: 1 });
  await (await router.transport("conversation")(endpointFor("conversation"), requestFor("conversation"))).text();
- await expect(router.transport("rag")(endpointFor("rag"), requestFor("rag"))).rejects.toThrow("transport_or_budget_unavailable");
+ await expect(router.transport("rag")(endpointFor("rag"), requestFor("rag"))).rejects.toThrow("daily_budget_exhausted");
  expect(calls).toBe(1); expect(budget.status("123").accountCalls).toBe(1);
 });
 

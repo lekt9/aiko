@@ -79,7 +79,7 @@ test("owner cancellation aborts active inference and produces one truthful termi
       result.messages.filter((m: { role: string }) => m.role === "assistant"),
     ).toHaveLength(1);
     expect(result.messages.at(-1).text).toBe(
-      "Cancelled. No app changes were made.",
+      "Cancelled this request. Actions already submitted may still complete; check their status before retrying.",
     );
     expect(result.pending).toHaveLength(0);
     expect((await request("cancel", { id: "local:cancel_0001" })).status).toBe(

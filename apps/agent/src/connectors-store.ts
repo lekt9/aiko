@@ -7,9 +7,9 @@ import { db, connectorRecords } from "./db.ts";
 import type { ConnectorStore } from "./connectors.ts";
 
 const CONNECTOR_KEY =
-  /^connectors:[a-f0-9]{64}:(?:connection|capability|manager):[a-f0-9-]+$/;
+  /^connectors:[a-f0-9]{64}:(?:connection|capability|manager|login-progress):[a-f0-9-]+$/;
 const CONNECTOR_PREFIX =
-  /^connectors:[a-f0-9]{64}:(?:connection|capability|manager):$/;
+  /^connectors:[a-f0-9]{64}:(?:connection|capability|manager|login-progress):$/;
 
 /** Host-private durable records. Never put this directory under a static web root or share it with untrusted processes. */
 export class FileConnectorStore implements ConnectorStore {

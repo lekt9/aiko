@@ -174,3 +174,20 @@ test("verified cleanup returns the recovered result without redispatching begin 
   expect(result).toEqual(connected);expect(actions).toEqual(["finish"]);
  }
 });
+
+test("bound attempt missing-page recovery preserves receipt order and invalidates the old OTP",async()=>{
+ const attemptId=crypto.randomUUID(),challengeId=crypto.randomUUID();
+ let state:NativeLoginState={connectionId:id,domain:"service.net",attemptId,targetId:"gone",status:"pending",revision:2,expiresAt:Date.now()+60000,loginSequence:2,loginReceipts:[],challenge:{id:challengeId,revision:1,expiresAt:Date.now()+60000}};
+ let inputs=0;
+ const deps={read:()=>state,save:(next:NativeLoginState)=>{state=structuredClone(next);},cdp:{close(){},async send(method:string,params:any):Promise<any>{
+  if(method==="Target.attachToTarget"){if(params.targetId==="gone")throw Error("gone");return {sessionId:"session"};}
+  if(method==="Target.getTargets")return {targetInfos:[]};
+  if(method==="Target.createTarget")return {targetId:"new"};
+  if(method==="Input.insertText")inputs++;
+  if(method==="Runtime.evaluate")return {result:{value:params.expression==="location.hostname"?"service.net":params.expression==="location.origin"?"https://service.net":params.expression.includes("Object.keys(f)")?["code"]:true}};
+  return {};
+ }}};
+ const view=await nativeLogin({connectionId:id,domain:"service.net",attemptId,action:"form"},deps);
+ expect(view.attemptId).toBe(attemptId);expect(view.challenge!.id).not.toBe(challengeId);expect(view.loginReceipts!.map(e=>e.sequence)).toEqual([3,4]);
+ await expect(nativeLogin({connectionId:id,domain:"service.net",attemptId,action:"credentials",challengeId,expectedRevision:1,submissionId:crypto.randomUUID(),code:"PRIVATE_OLD_CODE"},deps)).rejects.toThrow("Stale");expect(inputs).toBe(0);
+});

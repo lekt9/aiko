@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { Infer, type InferRequest } from "tardie";
-import { privateEnv } from "../src/config.ts";
+import { cloudflareSecrets } from "../../../scripts/cloudflare-paths.ts";
 import { createModelRouting, parseModelRouting } from "../src/model-routing.ts";
 import {
   WorkflowController,
@@ -9,7 +9,7 @@ import {
 
 // Explicit live probe: one small inference, no tools or user data.
 const env = {
-  ...(await privateEnv("/home/deck/.config/unbrowse/aiko.env")),
+  ...(await cloudflareSecrets()),
   AIKO_ALLOW_PAID_INFERENCE: "true",
   AIKO_RAG_PROVIDER: "cerebras",
 };

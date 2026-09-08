@@ -1,3 +1,4 @@
+import {loginObservationEvent} from "./native-login-observation.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
   boundedText,
@@ -64,7 +65,7 @@ export type Connection = {
 };
 export type ConnectionEvent = {
   type:
-    "AikoConnectionChanged" | "AikoLoginSubmitted" | "AikoLoginAttemptFailed" | "AikoLoginProgress";
+    "AikoPrivateLoginObserved" | "AikoConnectionChanged" | "AikoLoginSubmitted" | "AikoLoginAttemptFailed" | "AikoLoginProgress";
   stage?: string;
   message?: string;
   id: string;
@@ -82,6 +83,8 @@ type StoredConnection = Connection & {
   toolName?: string;
   authorizationDomains?: string[];
   browserVerification?: SecureBrowserVerification;
+  /** Private source binding. Read afresh during renewal; never a password snapshot. */
+  credentialReference?: { managerId: string; reference: string };
   eventSequence?: number;
   pendingEvents?: ConnectionEvent[];
 };
@@ -118,6 +121,7 @@ export type ConnectorOptions = {
     url: string,
   ) => Promise<{ url: string; text: string; truncated: boolean }>;
   secureBrowser?: SecureBrowserAdapter;
+  loginOperationGuard?: (id:string,input:Partial<import("./native-login.ts").NativeLoginInput>)=>Promise<void>;
   /** Host-provided password manager bindings; absent on hosts without the sealing key. */
   managers?: ManagerHost;
   onEvent?: (event: ConnectionEvent) => Promise<void>;
@@ -406,6 +410,44 @@ export class ConnectorEngine {
     const since = progress?.[0]?.at ?? Date.now();
     return { progress: [...(progress ?? []), ...setup.filter(e => e.at >= since)].sort((a,b) => a.at-b.at).slice(-24) };
   }
+  private async recordLoginObservations(row:StoredConnection,view:import("./native-login.ts").NativeLoginView) {
+    if(!view.attemptId || !view.loginReceipts?.length)return;
+    const observations=view.loginReceipts.map(receipt=>{
+      if(receipt.connectionId!==row.id || receipt.attemptId!==view.attemptId)throw Error("Login observation binding mismatch");
+      return {...loginObservationEvent(this.options.owner,receipt),provider:row.provider,status:row.status} as ConnectionEvent;
+    });
+    row.pendingEvents=[...(row.pendingEvents??[]),...observations.filter(event=>!row.pendingEvents?.some(prior=>prior.id===event.id))];
+    await this.options.store.set(`${this.prefix}connection:${row.id}`,row);
+    await this.publishEvents(row);
+  }
+  async loginOperationContext(id:string) {
+    const row=await this.load(id);
+    if(row.provider!=="browser"||!this.options.secureBrowser?.control)throw Error("Owned private login unavailable");
+    return {domain:this.browserBinding(row).domain,revision:row.browserVerification?.revision??0,status:row.status};
+  }
+  /** Host-only mount for loginOperationComponent.control. No credential actions.
+   * The native session and connector custody must both verify before continuation. */
+  loginOperationControl(input: Pick<import("./native-login.ts").NativeLoginInput,"connectionId"|"domain"|"attemptId"|"action">, signal: AbortSignal) {
+    if(!input.attemptId || !["begin","form","finish","status","disconnect"].includes(input.action) || Object.keys(input).some(key=>!["connectionId","domain","attemptId","action"].includes(key))) throw Error("Invalid login operation control");
+    return this.serial(async()=>{
+      signal.throwIfAborted();
+      const row=await this.load(input.connectionId);
+      await this.options.loginOperationGuard?.(input.connectionId,input);
+      if(row.provider!=="browser" || this.browserBinding(row).domain!==input.domain || !this.options.secureBrowser?.control) throw Error("Owned private login unavailable");
+      const view=await this.options.secureBrowser.control(this.browserBinding(row),{action:input.action,attemptId:input.attemptId},signal);
+      if(view.attemptId!==input.attemptId)throw Error("Login attempt changed");
+      if(view.status==="connected") {
+        const committed=await this.completeBrowser(row);
+        if(committed.status!=="connected" || row.browserVerification?.revision!==view.revision)throw Error("Login custody not committed");
+      }
+      if(view.status==="disconnected") {
+        row.status="disconnected";delete row.browserVerification;delete row.authorizationUrl;
+        await this.save(row);
+      }
+      await this.recordLoginObservations(row,view);
+      return view;
+    });
+  }
   nativeControl(
     id: string,
     input: Omit<
@@ -418,6 +460,7 @@ export class ConnectorEngine {
     return this.serial(async () => {
       deadline.throwIfAborted();
       const row = await this.load(id);
+      await this.options.loginOperationGuard?.(id,input);
       // A saved session may finish renewing while the owner has this panel open.
       // Read-only retries should return its verified result, not reject success.
       if (row.provider === "browser" && row.status === "connected" &&
@@ -463,6 +506,10 @@ export class ConnectorEngine {
       deadline.throwIfAborted();
       if (["credentials", "login"].includes(input.action))
         await this.recordEvent(row, "AikoLoginSubmitted");
+      if (input.password) {
+        delete row.credentialReference;
+        await this.save(row);
+      }
       let result;
       try {
         result = await this.options.secureBrowser.control(
@@ -471,12 +518,20 @@ export class ConnectorEngine {
           deadline,
         );
       } catch (error) {
+        // Reconcile metadata after a lost private acknowledgement; never resend input.
+        if(input.attemptId) {
+          try {
+            const observed=await this.options.secureBrowser.control(this.browserBinding(row),{action:"status",attemptId:input.attemptId},AbortSignal.timeout(5000));
+            await this.recordLoginObservations(row,observed);
+          } catch { /* Busy/lost VM leaves its durable outbox pending for inspection. */ }
+        }
         await report("failed", deadline.aborted ? "Sign-in timed out. Check its status before submitting again." : "This sign-in step could not be completed. Check its status or continue on the website.");
         if (["credentials", "login"].includes(input.action))
           await this.recordEvent(row, "AikoLoginAttemptFailed");
         throw error;
       }
       if (result.status === "connected") await this.completeBrowser(row);
+      await this.recordLoginObservations(row,result);
       await report("complete", result.status === "connected" ? "Connected successfully." : result.requiresOrigin ? "The website needs your permission to continue." : result.fields?.includes("code") ? "Enter the website’s verification code." : result.fields?.length ? "The sign-in form is ready." : "Waiting for the website to finish loading…");
       return result;
     });
@@ -521,6 +576,17 @@ export class ConnectorEngine {
       return { ok: true as const };
     });
   }
+  managerVault(id: string, action: "parameters" | "unlock" | "browse" | "select", value?: unknown) {
+    return this.serial(async () => {
+      const host = this.options.managers;
+      if (!host) throw new Error("Password managers are not available on this host");
+      if (action === "parameters" && host.unlockParameters) return host.unlockParameters(id);
+      if (action === "unlock" && host.unlock) return host.unlock(id, value as string);
+      if (action === "browse" && host.browse) return host.browse(id, value as number);
+      if (action === "select" && host.select) return host.select(id, value as string[]);
+      throw new Error("This password manager does not support vault selection");
+    });
+  }
   /** Resolves the saved reference server-side and submits it into the owner's
    * private sign-in page. The password never reaches the mini app or the model. */
   fillFromManager(input: {
@@ -545,15 +611,19 @@ export class ConnectorEngine {
       if (!reference || reference.length > 500 || /\p{C}/u.test(reference))
         throw new Error("Pick a saved login to fill");
       const binding = this.browserBinding(row);
-      const username =
+      let username =
         (typeof input.username === "string" ? input.username.trim() : "") ||
         row.importedUsername ||
         "";
-      if (!username || username.length > 2048 || /\p{C}/u.test(username))
+      if (username.length > 2048 || /\p{C}/u.test(username))
         throw new Error("Add the username for this sign-in once");
       let password: string;
       try {
-        password = await this.options.managers.resolvePassword(
+        if (this.options.managers.resolveCredentials) {
+          const resolved = await this.options.managers.resolveCredentials(input.managerId, reference, binding.domain, signal);
+          password = resolved.password;
+          username = resolved.username ?? username;
+        } else password = await this.options.managers.resolvePassword(
           input.managerId,
           reference,
           binding.domain,
@@ -564,8 +634,10 @@ export class ConnectorEngine {
           ? error
           : new Error("Could not use the saved password manager");
       }
+      if (!username) throw new Error("Add the username for this sign-in once");
       if (!password || password.length > 2048)
         throw new Error("The saved login did not resolve to a usable password");
+      signal?.throwIfAborted();
       await this.recordEvent(row, "AikoLoginSubmitted");
       let result;
       try {
@@ -581,6 +653,8 @@ export class ConnectorEngine {
           "The saved login could not be submitted. Finish by typing your credentials instead.",
         );
       }
+      row.credentialReference = { managerId: input.managerId, reference };
+      await this.save(row);
       if (result.status === "connected") await this.completeBrowser(row);
       return result;
     });
@@ -972,7 +1046,7 @@ export class ConnectorEngine {
     if (!adapter?.status)
       throw new Error("Secure browser completion is not configured");
     const binding = this.browserBinding(row);
-    const result = validateBrowserStatus(
+    let result = validateBrowserStatus(
       binding,
       await browserOperation((signal) =>
         adapter.status!({ ...binding }, signal),
@@ -980,6 +1054,19 @@ export class ConnectorEngine {
     );
     if (result.status === "unknown")
       throw new Error("Secure browser status could not be confirmed");
+    if (renewing && result.status === "pending" && row.credentialReference && adapter.control && this.options.managers?.resolveCredentials) {
+      // status() has opened the renewal form. Resolve only this still-authorized
+      // connection's selected source, and give MFA/challenges back to the owner.
+      try {
+        await browserOperation(async signal => {
+          const ref = row.credentialReference!;
+          const credentials = await this.options.managers!.resolveCredentials!(ref.managerId, ref.reference, binding.domain, signal);
+          if (!credentials.username) return;
+          await adapter.control!(binding, { action: "login", ...credentials, credentialReference: ref }, signal);
+          result = validateBrowserStatus(binding, await adapter.status!(binding, signal));
+        });
+      } catch { /* Leave the pending sign-in for the owner; never use stale passwords. */ }
+    }
     // A provider check can consume the last seconds of a pending flow. Never complete after its deadline.
     if (row.status === "pending" && row.expiresAt <= Date.now()) {
       row.status = "failed";
@@ -1014,6 +1101,7 @@ export class ConnectorEngine {
     delete row.authorizationUrl;
     delete row.authId;
     delete row.browserVerification;
+    delete row.credentialReference;
     const adapter = this.options.secureBrowser;
     if (row.provider === "browser" && !alreadySettled)
       row.relayDisconnectStatus = adapter?.disconnect

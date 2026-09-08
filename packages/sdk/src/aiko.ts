@@ -1,4 +1,7 @@
+import type { DatabaseArtifactResult, DatabaseCatalog, DatabaseCommandInput, DatabaseOperationResult, DatabaseQuery, DatabaseQueryResult, DatabaseReplyArtifact } from "@unlock/protocol";
+export type { DatabaseArtifactResult, DatabaseCatalog, DatabaseCommandInput, DatabaseOperationResult, DatabaseQuery, DatabaseQueryResult } from "@unlock/protocol";
 export type AikoRequestOptions = { signal?: AbortSignal };
+export type AikoReplyArtifact = DatabaseReplyArtifact;
 export type AikoAdmission = { status: "accepted" | "duplicate"; id: string };
 export type AikoLearningHook = {
   id: string;
@@ -15,6 +18,7 @@ export type AikoMessage = {
   at: number;
   turn?: string;
   source?: "model" | "template" | "thinkfeel";
+  artifacts?: AikoReplyArtifact[];
 };
 export type AikoMessages = {
   messages: AikoMessage[];
@@ -163,6 +167,14 @@ export function createAikoClient(options: {
         request<AikoMessages>("v1/messages", "GET", undefined, opts),
       cancel: (id: string, opts?: AikoRequestOptions) =>
         request<{ status: "cancelling" }>("v1/cancel", "POST", { id }, opts),
+    },
+    databases: {
+      catalog: (opts?: AikoRequestOptions) => request<DatabaseCatalog>("v1/databases", "GET", undefined, opts),
+      query: (query: DatabaseQuery, opts?: AikoRequestOptions) => request<DatabaseQueryResult>("v1/databases/query", "POST", { query }, opts),
+      command: (input: DatabaseCommandInput, opts?: AikoRequestOptions) => request<DatabaseOperationResult>("v1/databases/commands", "POST", input, opts),
+      operation: (operationId: string, opts?: AikoRequestOptions) => request<DatabaseOperationResult>(`v1/databases/operations/${encodeURIComponent(operationId)}`, "GET", undefined, opts),
+      cancel: (operationId: string, opts?: AikoRequestOptions) => request<{ operationId: string; status: string }>("v1/databases/cancel", "POST", { operationId }, opts),
+      artifact: (artifactId: string, opts?: AikoRequestOptions) => request<DatabaseArtifactResult>(`v1/databases/artifacts/${encodeURIComponent(artifactId)}`, "GET", undefined, opts),
     },
     hooks: {
       /** Stable producer event ID; account identity comes exclusively from this client's credential. */

@@ -25,6 +25,7 @@ export class Journal {
         seq INTEGER PRIMARY KEY, scope TEXT NOT NULL, request_key TEXT NOT NULL,
         request_digest TEXT NOT NULL, previous TEXT NOT NULL, digest TEXT NOT NULL, body TEXT NOT NULL,
         UNIQUE(scope, request_key));
+      CREATE INDEX IF NOT EXISTS journal_scope_seq ON journal(scope, seq);
       CREATE TABLE IF NOT EXISTS artifacts (digest TEXT PRIMARY KEY, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS observations (
         id TEXT PRIMARY KEY, scope TEXT NOT NULL, subject TEXT NOT NULL, type TEXT NOT NULL,
@@ -57,6 +58,21 @@ export class Journal {
     if (!row) return undefined;
     if (row.request_digest !== fingerprint) return fail("idempotency_conflict", "This request key was already used with different input");
     return this.hydrate(JSON.parse(String(row.body)) as StoredMemoryEvent);
+  }
+  /** Exact retained commit plus its original scope ordinal. The key lookup uses
+   * UNIQUE(scope, request_key); ordinal counting scans the covering (scope, seq)
+   * index through this commit, not O(1). Only this event's artifacts are hydrated.
+   * Like prior(), this is a host journal API, not an authorization boundary. */
+  receipt(scope: string, key: string): (StoredEvent & { scopeVersion: number }) | undefined {
+    return this.read(() => {
+      const row = this.db.prepare("SELECT * FROM journal WHERE scope=? AND request_key=?").get(scope, key) as Row | undefined;
+      if (!row) return undefined;
+      const scopeVersion = Number(this.db.prepare("SELECT COUNT(*) AS n FROM journal WHERE scope=? AND seq<=?").get(scope, Number(row.seq))!.n);
+      const event = this.hydrate(JSON.parse(String(row.body)) as StoredMemoryEvent);
+      if (event.scope !== scope || event.key !== key || event.requestDigest !== row.request_digest)
+        return fail("corrupt_store", "Journal receipt identity mismatch");
+      return { seq: Number(row.seq), previous: String(row.previous), digest: String(row.digest), event, scopeVersion };
+    });
   }
   private artifact(hash: string): Observation["payload"] {
     const row = this.db.prepare("SELECT body FROM artifacts WHERE digest=?").get(hash) as Row | undefined;

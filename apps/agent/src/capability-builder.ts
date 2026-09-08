@@ -13,6 +13,8 @@ export interface CapabilityBuilderBinding {
   owner: string;
   thread: string;
   redact: (text: string) => string;
+  /** Trusted current owner journal for retained learned-result authorization. */
+  readEvents?: () => Promise<readonly Event[]>;
   /** True only after a complete Arcade catalog search confirms provider absence. Missing or failed check denies build/execute. */
   checkArcade?: (domain: string) => Promise<boolean>;
   /** Host transport must preserve pinned public DNS, bounded responses, no ambient auth. */

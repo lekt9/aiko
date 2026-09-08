@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -14,7 +16,7 @@ if (mode === "--browser-runtime" || mode === "--browser-fresh" || mode === "--co
   await Bun.write("apps/agent/assets/runner.txt", build.outputs[0]!);
 }
 const config = await loadConfig();
-const directory = "/home/deck/.local/share/unbrowse/aiko/cloudflare-probe" +
+const directory = (process.env.AIKO_PROBE_DIR ?? join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local/share"), "unbrowse/aiko/cloudflare-probe")) +
   (mode === "--browser-fresh" ? `/fresh-${crypto.randomUUID()}` : "");
 mkdirSync(directory, { recursive: true, mode: 0o700 });
 const db = new Database(`${directory}/probe.sqlite`);
@@ -105,8 +107,15 @@ try {
       const installed = await sandbox.status();
       assert("id" in installed && installed.id, "allocation recorded");
       const id = (installed as { id: string }).id;
+      const health = JSON.parse(await sandbox.exec(id, "cd /home/daytona/aiko && /home/daytona/.bun/bin/bun runner.js health", signal));
+      assert(health.browser === "cloakbrowser" && health.browserVersion === "146.0.7680.177.5", "CloakBrowser is the default in a newly allocated VM");
+      report.browser = health.browser;
+      report.browserVersion = health.browserVersion;
       await driver.execute({ action: "navigate", url: "https://example.com" }, signal);
       assert(JSON.stringify(await driver.execute({ action: "title" }, signal)).includes("Example Domain"), "public browsing after automatic installation");
+      const processes = await sandbox.exec(id, "python3 -c 'import glob,os; print(any(\"/native/cloakbrowser-\" in os.readlink(p) for p in glob.glob(\"/proc/[0-9]*/exe\") if os.path.exists(p)))'", signal);
+      assert(processes.trim() === "True", "new VM actually launches the CloakBrowser executable");
+      report.cloakProcessVerified = true;
       const screenshot = await sandbox.captureScreenshot(signal);
       assert(screenshot.mimeType === "image/png" && screenshot.bytes.length > 1000, "fresh browser screenshot");
       assert(events.some(e => e.type === "BrowserToolResultObserved" && e.success === true), "browser trace delivered");

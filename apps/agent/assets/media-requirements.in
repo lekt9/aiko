@@ -1,0 +1,9 @@
+# Runtime resolver input; resolved wheel closure must also be pinned and verified.
+# Primary source: https://pypi.org/project/faster-whisper/1.2.0/
+faster-whisper==1.2.0
+# faster-whisper 1.2.0 utils.py imports requests although its metadata omits it.
+# https://raw.githubusercontent.com/SYSTRAN/faster-whisper/v1.2.0/faster_whisper/utils.py
+requests==2.32.5
+# Explicit compatibility baseline; latest 1.29.0 crashed in isolated VAD execution.
+# https://github.com/microsoft/onnxruntime/releases/tag/v1.22.1
+onnxruntime==1.22.1

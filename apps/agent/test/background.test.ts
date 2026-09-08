@@ -17,6 +17,8 @@ import { credentialDigest } from "../src/plane-auth.ts";
 import { openMemory } from "../src/memory.ts";
 import type { AikoEvent } from "../src/actor.ts";
 import { controlApi } from "../src/control-api.ts";
+import { harnessDigest } from "../src/harness-library.ts";
+import { defaultProactivePreferences, type ProactivePreferences } from "../src/proactive-policy.ts";
 
 // Positive live-delivery fixtures only: run the real composer against a deterministic local response.
 const positiveVoiceFetch = async (_url: unknown, init?: RequestInit) => Response.json({
@@ -140,6 +142,158 @@ const learning = (id: string, revision = 1) => ({
 
 const ofType = (events: readonly AikoEvent[], type: string) =>
   events.filter((event) => event.type === type);
+
+async function setProactive(f: Awaited<ReturnType<typeof fixture>>, patch: Partial<ProactivePreferences>, operationId: string) {
+  const current = await (await f.request("/api/control/proactive")).json();
+  const response = await f.request("/api/control/proactive", { account: "123", expectedRevision: current.revision, operationId, preferences: { ...current.preferences, ...patch } });
+  expect(response.status).toBe(202);
+  return response.json();
+}
+
+test("proactive preferences use authenticated owner CAS, retain idempotency and survive restart", async () => {
+  const f = await fixture();
+  await f.request("/v1/hooks", learning("proactive-preferences-seed"));
+  await f.service.host.drive();
+  const read = await (await f.request("/api/control/proactive", undefined, reader)).json();
+  expect(read).toMatchObject({ account: "123", revision: "default", writable: false });
+  const body = { account: "123", expectedRevision: "default", operationId: "prefs-a", preferences: { ...defaultProactivePreferences, dailyLimit: 2 } };
+  expect((await f.request("/api/control/proactive", body, reader)).status).toBe(403);
+  expect((await f.request("/api/control/proactive", { ...body, account: "456" })).status).toBe(403);
+  const results = await Promise.all([f.request("/api/control/proactive", body), f.request("/api/control/proactive", { ...body, operationId: "prefs-b" })]);
+  expect(results.map(r => r.status).sort()).toEqual([202, 409]);
+  const winner = results[0]!.status === 202 ? body : { ...body, operationId: "prefs-b" };
+  const latest = await (await f.request("/api/control/proactive")).json();
+  expect(latest.preferences.dailyLimit).toBe(2);
+  expect((await f.request("/api/control/proactive", winner)).status).toBe(200);
+  expect((await f.request("/api/control/proactive", { ...winner, preferences: { ...winner.preferences, dailyLimit: 3 } })).status).toBe(409);
+  expect(ofType(await f.events("user-123"), "AikoProactivePreferencesSet")).toHaveLength(1);
+  await f.restart();
+  expect(await (await f.request("/api/control/proactive")).json()).toEqual(latest);
+});
+
+test("native batch deadline retains the first window and delivers only the latest topic after restart", async () => {
+  const model = reflectionModel(changed => ({ decision: "notify", reason: "A release changed", text: "Your Aurorapanda release schedule has changed.", supports: changed.map(c => c.observation).slice(0, 1) }));
+  const f = await fixture({ mode: "live", voiceKey: "thinkfeel-background-fixture" }, { model: model.layer, voiceFetch: positiveVoiceFetch });
+  await f.telegram(301); await f.service.host.drive();
+  await setProactive(f, { batchWindowMs: 1200 }, "batch-enable");
+  const before = f.deliveries.length;
+  await f.request("/v1/hooks", learning("batch-first", 1)); await f.service.host.drive();
+  const first = ofType(await f.events("user-123"), "AikoProactiveDeferred").at(-1)!;
+  expect(first).toBeDefined();
+  await f.request("/v1/hooks", learning("batch-second", 2)); await f.service.host.drive();
+  const pending = ofType(await f.events("user-123"), "AikoProactiveDeferred");
+  expect(pending.length).toBeGreaterThanOrEqual(2);
+  expect((pending.at(-1)!.call as any).deadlineAt).toBe((first.call as any).deadlineAt);
+  expect(f.deliveries).toHaveLength(before);
+  const calls = model.calls;
+  await f.restart();
+  await Bun.sleep(Math.max(1, Number((first.call as any).deadlineAt) - Date.now() + 30));
+  await f.service.host.drive();
+  const log = await f.events("user-123");
+  expect(f.deliveries).toHaveLength(before + 1);
+  expect(ofType(log, "AikoProactiveAccepted")).toHaveLength(1);
+  expect(ofType(log, "AikoProactiveDispatchAuthorized")).toHaveLength(1);
+  expect(ofType(log, "AikoProactiveSuppressed")).toHaveLength(1);
+  await f.restart();
+  expect(f.deliveries).toHaveLength(before + 1);
+  expect(model.calls).toBe(calls);
+});
+
+test("a preference change wakes a deferred native decision and prevents an obsolete alarm from delivering", async () => {
+  const model = reflectionModel(changed => ({ decision: "notify", reason: "A release changed", text: "Your Aurorapanda release schedule has changed.", supports: changed.map(c => c.observation).slice(0, 1) }));
+  const f = await fixture({ mode: "live", voiceKey: "thinkfeel-background-fixture" }, { model: model.layer, voiceFetch: positiveVoiceFetch });
+  await f.telegram(302); await f.service.host.drive();
+  await setProactive(f, { batchWindowMs: 60_000 }, "long-window");
+  const before = f.deliveries.length;
+  await f.request("/v1/hooks", learning("deferred-disable", 2)); await f.service.host.drive();
+  expect(ofType(await f.events("user-123"), "AikoProactiveDeferred")).toHaveLength(1);
+  await setProactive(f, { enabled: false }, "disable-proactive"); await f.service.host.drive();
+  expect(ofType(await f.events("user-123"), "AikoProactiveSuppressed").at(-1)?.reason).toBe("notifications-disabled");
+  await f.restart();
+  expect(f.deliveries).toHaveLength(before);
+  expect(ofType(await f.events("user-123"), "AikoProactiveAccepted")).toHaveLength(0);
+});
+
+test("batch replacement preserves an older multi-topic update when the newer decision covers only one topic", async () => {
+  const model = reflectionModel(() => ({ decision: "silent", reason: "Fixture seed", text: "", supports: [] }));
+  const f = await fixture({}, { model: model.layer });
+  await f.request("/v1/hooks", learning("multi-topic-seed")); await f.service.host.drive();
+  await setProactive(f, { batchWindowMs: 250 }, "multi-topic-window");
+  const memory = openMemory({ stateDir: accountDirectory(f.config.stateDir, "123"), owner: "123" });
+  let supports: string[];
+  try {
+    supports = ["a", "b"].map(name => memory.remember({ subject: `batch:${name}`, title: `Update ${name}`, type: "fact", payload: { changed: true } },
+      { key: `multi-topic-${name}`, producer: { kind: "agent", reference: "batch-fixture" } }).id);
+  } finally { memory.close(); }
+  const at = Date.now(), sourceThread = backgroundThread("123", "reflection");
+  // Trusted fixture boundary: distinct reflected decisions cite current real observations.
+  for (const row of [
+    { id: "batch-two-topics", text: "Both A and B changed.", supports },
+    { id: "batch-only-a", text: "A changed.", supports: supports.slice(0, 1) },
+  ]) await f.service.host.commitRoot(f.service.host.self("user-123"), { type: "AikoProactiveDecision", owner: "123", sourceThread, root: "fixture-root", at, ...row });
+  await f.service.host.drive();
+  const deferred = ofType(await f.events("user-123"), "AikoProactiveDeferred").at(-1)!;
+  expect(deferred).toBeDefined();
+  await Bun.sleep(Math.max(1, Number((deferred.call as any).deadlineAt) - Date.now() + 20));
+  await f.service.host.drive();
+  const events = await f.events("user-123");
+  expect(ofType(events, "AikoProactiveAccepted").map(e => e.id).sort()).toEqual(["batch-only-a", "batch-two-topics"]);
+  expect(ofType(events, "AikoProactiveSuppressed").filter(e => e.reason === "batch-superseded")).toHaveLength(0);
+});
+
+test("forgetting cited evidence while voice is pending prevents both a visible prepared update and a send", async () => {
+  const model = reflectionModel(changed => ({ decision: "notify", reason: "A release changed", text: "Your Aurorapanda release schedule has changed.", supports: changed.map(c => c.observation).slice(0, 1) }));
+  let active: Awaited<ReturnType<typeof fixture>> | undefined, invalidated = false;
+  const f = await fixture({ mode: "live", voiceKey: "thinkfeel-background-fixture" }, { model: model.layer,
+    voiceFetch: async (url, init) => {
+      if (active && JSON.parse(String(init?.body)).raw.includes("Your Aurorapanda release schedule has changed")) {
+        const memory = openMemory({ stateDir: accountDirectory(active.config.stateDir, "123"), owner: "123" });
+        try {
+          const accepted = ofType(await active.events("user-123"), "AikoProactiveAccepted").at(-1)!;
+          const hit = memory.get(String((accepted.supports as string[])[0]))!;
+          memory.forget(hit.observation.subject, hit.observation.id, "forget-during-voice");
+          invalidated = true;
+        } finally { memory.close(); }
+      }
+      return positiveVoiceFetch(url, init);
+    } });
+  active = f;
+  await f.telegram(303); await f.service.host.drive();
+  const before = f.deliveries.length;
+  await f.request("/v1/hooks", learning("voice-citation-revoked", 2)); await f.service.host.drive();
+  const log = await f.events("user-123");
+  expect(invalidated).toBe(true);
+  expect(f.deliveries).toHaveLength(before);
+  expect(ofType(log, "AikoReplySuppressed")).toHaveLength(1);
+  expect(ofType(log, "AikoReplyPrepared").filter(e => String(e.turn).startsWith("proactive:"))).toHaveLength(0);
+  expect(ofType(log, "AikoDeliverySettled").filter(e => String(e.turn).startsWith("proactive:"))).toMatchObject([{ result: { status: "rejected" } }]);
+  await f.restart();
+  expect(f.deliveries).toHaveLength(before);
+});
+
+test("generation-less fabricated promotion cannot enter Merkle learning or leak private execution data", async () => {
+  const model = reflectionModel(() => ({ decision: "silent", reason: "Routine capability availability", text: "", supports: [] }));
+  const f = await fixture({}, { model: model.layer });
+  await f.request("/v1/hooks", learning("seed_harness_001"));
+  await f.service.host.drive();
+  const indexer = backgroundThread("123", "indexer");
+  const before = ofType(await f.events(indexer), "AikoKnowledgeChanged").length;
+  const event = { type: "AikoHarnessPromoted", id: harnessDigest("promotion-fixture"), owner: "123", name: "audio.transcribe", harnessDigest: harnessDigest("media-code"), contractDigest: harnessDigest("media-contract"), contextDigest: harnessDigest("owner-context"), generation: 1, at: Date.now(), input: "private attachment never indexed" };
+  await f.service.host.commitRoot(f.service.host.self("user-123"), event);
+  await f.service.host.drive();
+  const events = await f.events(indexer);
+  expect(ofType(events, "AikoKnowledgeChanged").length).toBe(before);
+  const hook = ofType(events, "AikoHookReceived").find(e => String(e.id).includes(event.id));
+  expect(hook).toBeUndefined();
+  expect(ofType(await f.events("user-123"), "AikoHarnessPromoted")).toHaveLength(0);
+  expect(JSON.stringify(events)).not.toContain(event.input);
+  await f.restart();
+  await f.service.host.commitRoot(f.service.host.self("user-123"), event);
+  await f.service.host.commitRoot(f.service.host.self("user-123"), { ...event, id: harnessDigest("foreign"), owner: "456" });
+  await f.service.host.drive();
+  expect(ofType(await f.events(indexer), "AikoKnowledgeChanged").length).toBe(before);
+  expect(f.deliveries).toHaveLength(0);
+});
 
 test("verified connections trigger one native context index and reflection, never on pending or foreign grants", async()=>{
  let reads=0;
@@ -358,6 +512,38 @@ function reflectionModel(
     }),
   };
 }
+
+test("a user-saved note changes real memory while routine indexing stays silent before inference and after restart", async () => {
+  const model = reflectionModel(changed => ({
+    decision: "notify", reason: "Notify even for a saved note", text: "Unrequested note alert",
+    supports: changed.map(item => item.observation),
+  }));
+  const f = await fixture({}, { backgroundModel: model.layer });
+  await f.telegram(411); await f.service.host.drive();
+  const deliveries = f.deliveries.length;
+  await f.telegram(412, 123, "remember: Aurorapanda release review is on Thursday");
+  await f.service.host.drive();
+  const foreground = await f.events("user-123");
+  expect(foreground.some(e => e.type === "ToolCalled" && e.name === "memory_remember")).toBe(true);
+  const indexer = await f.events(backgroundThread("123", "indexer"));
+  const change = ofType(indexer, "AikoKnowledgeChanged").at(-1)!;
+  expect(change).toBeDefined();
+  const reflection = await f.events(backgroundThread("123", "reflection"));
+  expect(ofType(reflection, "AikoDecisionRecorded").some(e => e.decision === "silent"
+    && e.reason === "Routine indexing and user-saved content do not require an interruption"
+    && e.policyVersion === "aiko-proactive-relevance/v1")).toBe(true);
+  const memory = openMemory({ stateDir: accountDirectory(f.config.stateDir, "123"), owner: "123" });
+  try {
+    expect(JSON.stringify(memory.recall({ search: "Aurorapanda" }))).toContain("Aurorapanda release review is on Thursday");
+  } finally { memory.close(); }
+  expect(model.calls).toBe(0);
+  expect(ofType(foreground, "AikoProactiveAccepted")).toHaveLength(0);
+  expect(f.deliveries).toHaveLength(deliveries + 1); // The requested foreground reply only.
+  await f.restart();
+  expect(model.calls).toBe(0);
+  expect(f.deliveries).toHaveLength(deliveries + 1);
+  expect(ofType(await f.events("user-123"), "AikoProactiveAccepted")).toHaveLength(0);
+});
 
 test("thread bindings retain one foreground and place each owner's hidden logs in separate private databases", async () => {
   const f = await fixture();

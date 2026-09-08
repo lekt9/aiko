@@ -13,6 +13,7 @@ import type { ModelBudget } from "./model-budget.ts";
 export const controlCommand = (text: string) => {
   const value = text.trim();
   if (value.length > 240) return;
+  if (/^(?:what needs me|what are we waiting (?:on|for))[?!.]*$/i.test(value)) return "secretary";
   // Exact status-only questions bypass admission to the busy conversation turn.
   if (/^(?:what(?:'|’)?s happening|what is happening|what are you doing|any updates|status update|are you still working)[?!.]*$/i.test(value)) return "status";
   return (
@@ -43,11 +44,12 @@ export function workStatus(log: readonly AikoEvent[], now = Date.now()): string 
 /** A separate native lane: no inference or browser tools can block control replies. */
 export function createControlActor(options: {
   owner: string; voice: Voice; send?: Sender; live: boolean;
+  verboseFallbacks?: boolean; verboseFallbacksSince?: number;
   redact: (text: string) => string;
   publish: (events: readonly AikoEvent[]) => Promise<void>;
 }) {
   return actor({ name: "aiko", methods: {}, components: [
-    voiceAndOutbox(options.owner, options.voice, options.send, { live: options.live, redact: options.redact, requireThinkFeel: options.live }),
+    voiceAndOutbox(options.owner, options.voice, options.send, { live: options.live, redact: options.redact, requireThinkFeel: options.live, verboseFallbacks: options.verboseFallbacks, verboseFallbacksSince: options.verboseFallbacksSince }),
     component({
       name: "aiko.control-history",
       initial: () => [] as AikoEvent[],

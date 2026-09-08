@@ -1,4 +1,5 @@
 import { GRAPH_MARKUP, GRAPH_SCRIPT, GRAPH_STYLE } from "./control-graph.ts";
+import { REQUEST_LAB_MARKUP, REQUEST_LAB_SCRIPT, REQUEST_LAB_STYLE } from "./control-request-lab.ts";
 
 /** Operator/account inspection surface. Credentials live only in this tab's memory. */
 export const CONTROL_HTML = `<!doctype html>
@@ -18,6 +19,7 @@ export const CONTROL_HTML = `<!doctype html>
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 .event-text:focus-visible{outline:3px solid var(--blue);outline-offset:3px}
 ${GRAPH_STYLE}
+${REQUEST_LAB_STYLE}
 </style>
 </head>
 <body>
@@ -50,7 +52,7 @@ ${GRAPH_STYLE}
         <div class="hook-control"><div class="hook-top"><strong>Proactive hooks</strong><span id="hooks-status" class="status">Unknown</span></div><p id="hooks-description" class="hint">Waiting for the account’s hook state.</p><button id="toggle-hooks" type="button" hidden>Pause proactive hooks</button></div>
       </aside>
       <section class="inspector" aria-label="Thread inspector">
-        <div class="tabs" role="tablist" aria-label="Inspect account"><button id="events-tab" type="button" role="tab" aria-selected="true" aria-controls="events-panel" tabindex="0">Event timeline</button><button id="memory-tab" type="button" role="tab" aria-selected="false" aria-controls="memory-panel" tabindex="-1">Entity memory</button><button id="graph-tab" type="button" role="tab" aria-selected="false" aria-controls="graph-panel" tabindex="-1">Node graph</button></div>
+        <div class="tabs" role="tablist" aria-label="Inspect account"><button id="events-tab" type="button" role="tab" aria-selected="true" aria-controls="events-panel" tabindex="0">Event timeline</button><button id="memory-tab" type="button" role="tab" aria-selected="false" aria-controls="memory-panel" tabindex="-1">Entity memory</button><button id="graph-tab" type="button" role="tab" aria-selected="false" aria-controls="graph-panel" tabindex="-1">Node graph</button><button id="request-lab-tab" type="button" role="tab" aria-selected="false" aria-controls="request-lab-panel" tabindex="-1">Request lab</button></div>
         <div id="events-panel" role="tabpanel" aria-labelledby="events-tab">
           <div class="panel-head"><div class="panel-title"><div><h2 id="thread-title">Select a thread</h2><code id="thread-id"></code></div><span id="thread-status" class="status" hidden></span></div><div id="thread-root" class="thread-root" hidden></div><div class="pipeline" aria-label="Event sequence"><span>Hook</span><b aria-hidden="true">→</b><span>Index</span><b aria-hidden="true">→</b><span>Reflect</span><b aria-hidden="true">→</b><span>Decide</span><b aria-hidden="true">→</b><span>Telegram</span></div></div>
           <div class="filters"><div class="filter-field"><label for="event-search">Search loaded events, IDs, or causes</label><input id="event-search" type="search" placeholder="Event, cause, root, text…" autocomplete="off"></div><div class="filter-field"><label for="event-kind">Event category</label><select id="event-kind"><option value="all">All events</option><option value="decision">Decisions</option><option value="delivery">Telegram &amp; media</option><option value="runtime">Sandbox &amp; browser</option><option value="memory">Learning &amp; changes</option><option value="failure">Failures &amp; unknowns</option></select></div></div>
@@ -63,6 +65,7 @@ ${GRAPH_STYLE}
           <details id="memory-sources" class="source-details"><summary id="sources-title">Source state</summary><pre id="sources-data"></pre></details>
         </div>
         ${GRAPH_MARKUP}
+        ${REQUEST_LAB_MARKUP}
       </section>
     </div>
   </section>
@@ -92,6 +95,7 @@ ${GRAPH_STYLE}
   const badge = status => { const allowed = ['idle','running','failed','blocked','delivered','rejected','unknown']; return element('span','status ' + (allowed.includes(status) ? status : ''), status || 'unknown'); };
   const empty = (title, body) => {const node = element('div','empty'); node.append(element('strong','',title),element('span','',body)); return node;};
 ${GRAPH_SCRIPT}
+${REQUEST_LAB_SCRIPT}
   function invalidate() { state.epoch++; clearTimeout(timer); for(const controller of requests) controller.abort(); requests.clear(); refreshJob = null; refreshAgain = false; moreAgain = false; }
   async function api(path, body) {
     const controller = new AbortController(); requests.add(controller);
@@ -105,7 +109,7 @@ ${GRAPH_SCRIPT}
   }
   function connection(text, status = '') { $('connection').textContent = text; $('connection').className = 'status ' + status; }
   function resetViews() {
-    eventCache.clear(); memoryCache.clear(); graphView.reset(); actorVersion = ''; eventVersion = ''; memoryVersion = '';
+    eventCache.clear(); memoryCache.clear(); graphView.reset(); requestLabView.reset(); actorVersion = ''; eventVersion = ''; memoryVersion = '';
     state.threads = []; state.selected = ''; state.foreground = ''; state.paused = null; state.hasThreadData = false;
     $('foreground').replaceChildren(); $('background').replaceChildren(); $('events').replaceChildren(); $('memory-list').replaceChildren(); $('sources-data').textContent = '';
     $('event-search').value = ''; $('event-kind').value = 'all'; $('memory-search').value = '';
@@ -163,7 +167,7 @@ ${GRAPH_SCRIPT}
     $('hooks-status').className = 'status ' + (state.paused === null ? '' : state.paused ? 'blocked' : 'running');
     $('hooks-description').textContent = state.paused === null ? 'Waiting for the account’s hook state.' : state.paused ? 'New proactive work is paused. Already-running work may still finish.' : 'Incoming hooks can start background learning and reflection.';
     $('toggle-hooks').textContent = state.paused ? 'Resume proactive hooks' : 'Pause proactive hooks'; $('toggle-hooks').disabled = actionBusy || state.paused === null;
-    $('account').disabled = actionBusy; $('events-tab').disabled = actionBusy; $('memory-tab').disabled = actionBusy; $('graph-tab').disabled = actionBusy; $('memory-search').disabled = actionBusy;
+    $('account').disabled = actionBusy; $('events-tab').disabled = actionBusy; $('memory-tab').disabled = actionBusy; $('graph-tab').disabled = actionBusy; $('request-lab-tab').disabled = actionBusy; $('memory-search').disabled = actionBusy;
     if(focused) { const button = [...document.querySelectorAll('[data-thread]')].find(node => node.dataset.thread === focused); if(button) button.focus({preventScroll:true}); }
   }
   function eventStatus(event) {return event.result && typeof event.result === 'object' ? event.result.status : event.status;}
@@ -242,8 +246,9 @@ ${GRAPH_SCRIPT}
   }
   function setTab(tab, shouldRefresh = true) {
     state.tab = tab;
-    for(const name of ['events','memory','graph']) {const active = tab === name;$(name+'-tab').setAttribute('aria-selected',String(active));$(name+'-tab').tabIndex = active ? 0 : -1;$(name+'-panel').hidden = !active;}
-    if(shouldRefresh) {invalidate();renderMemory();graphView.render();refresh();}
+    for(const name of ['events','memory','graph','request-lab']) {const active = tab === name;$(name+'-tab').setAttribute('aria-selected',String(active));$(name+'-tab').tabIndex = active ? 0 : -1;$(name+'-panel').hidden = !active;}
+    $('workspace-wrap').classList.toggle('request-lab-active',tab === 'request-lab');
+    if(shouldRefresh) {invalidate();renderMemory();graphView.render();requestLabView.render();refresh();}
   }
   function schedule() {clearTimeout(timer); if(state.token && $('auto').checked && !document.hidden && !actionBusy) timer = setTimeout(refresh,5000);}
   async function refresh(loadMore = false) {
@@ -259,7 +264,8 @@ ${GRAPH_SCRIPT}
         job.account ? api('threads?account=' + encodeURIComponent(job.account)) : Promise.resolve(null),
         readEvents ? api('events?thread=' + encodeURIComponent(job.selected) + '&after=' + (oldEvents ? oldEvents.after : 0) + '&limit=100') : Promise.resolve(null),
         readMemory ? api('memory?account=' + encodeURIComponent(job.account) + '&search=' + encodeURIComponent(job.memoryQuery)) : Promise.resolve(null),
-        state.tab === 'graph' && job.account ? graphView.load(job.account,job.epoch) : Promise.resolve(null)
+        state.tab === 'graph' && job.account ? graphView.load(job.account,job.epoch) : Promise.resolve(null),
+        state.tab === 'request-lab' && job.account ? requestLabView.load(job.account,job.epoch) : Promise.resolve(null)
       ]);
       if(job.epoch !== state.epoch) return;
       for(const result of results) if(result.status === 'rejected' && [401,403].includes(result.reason.status)) throw result.reason;
@@ -282,7 +288,7 @@ ${GRAPH_SCRIPT}
         else $('memory-error').textContent = 'Memory could not be loaded. ' + (memory.reason.status === 404 ? 'This server does not expose the memory inspector.' : 'Check the account’s memory source state and refresh.');
       }
       $('scope').textContent = accessLabel(); $('toggle-hooks').hidden = !canManageHooks();
-      renderThreads(); renderEvents(); renderMemory(); state.lastRefresh = Date.now(); $('last-refresh').textContent = 'Last refreshed ' + formatTime(state.lastRefresh) + ' · times shown in your browser’s timezone'; connection($('auto').checked ? 'Watching' : 'Manual refresh', 'running');
+      renderThreads(); renderEvents(); renderMemory(); requestLabView.render(); state.lastRefresh = Date.now(); $('last-refresh').textContent = 'Last refreshed ' + formatTime(state.lastRefresh) + ' · times shown in your browser’s timezone'; connection($('auto').checked ? 'Watching' : 'Manual refresh', 'running');
       message(readMemory && results[3].status === 'rejected' ? 'Threads refreshed. Memory is currently unavailable.' : '');
     } catch(error) {
       if(job.epoch !== state.epoch) return;
@@ -306,8 +312,8 @@ ${GRAPH_SCRIPT}
   $('load-more').addEventListener('click',() => refresh(true));
   $('event-search').addEventListener('input',renderEvents); $('event-kind').addEventListener('change',renderEvents);
   $('memory-search').addEventListener('input',() => {invalidate();$('memory-error').hidden = true;renderMemory();timer = setTimeout(refresh,300);});
-  const tabs = ['events','memory','graph'];
-  for(const name of tabs) {$(name+'-tab').addEventListener('click',()=>setTab(name));$(name+'-tab').addEventListener('keydown',event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){event.preventDefault();const next=event.key==='Home'?tabs[0]:event.key==='End'?tabs.at(-1):tabs[(tabs.indexOf(state.tab)+(event.key==='ArrowLeft'?2:1))%3];setTab(next);$(next+'-tab').focus();}});}
+  const tabs = ['events','memory','graph','request-lab'];
+  for(const name of tabs) {$(name+'-tab').addEventListener('click',()=>setTab(name));$(name+'-tab').addEventListener('keydown',event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)){event.preventDefault();const next=event.key==='Home'?tabs[0]:event.key==='End'?tabs.at(-1):tabs[(tabs.indexOf(state.tab)+(event.key==='ArrowLeft'?tabs.length-1:1))%tabs.length];setTab(next);$(next+'-tab').focus();}});}
   $('toggle-hooks').addEventListener('click',async () => {
     if(!canManageHooks() || state.paused === null || actionBusy) return;
     invalidate(); const epoch = state.epoch, account = state.account, paused = !state.paused; let failure = ''; actionBusy = true; renderThreads();

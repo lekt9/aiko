@@ -16,6 +16,8 @@ import {
 } from "./password-manager-mcp.ts";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { connectorDomain } from "./connectors.ts";
+import { ZohoVault } from "./zoho-vault.ts";
+import type { ZohoUnlockParameters } from "@unlock/protocol";
 
 /** Sealing key for password manager OAuth grants: base64 that decodes to exactly 32 bytes. */
 export function parseManagerKey(value?: string) {
@@ -29,6 +31,7 @@ export function parseManagerKey(value?: string) {
 }
 
 export const managerKinds = [
+  "zoho-vault",
   "bitwarden",
   "remote-mcp",
   "onepassword",
@@ -51,7 +54,7 @@ export type ManagerView = {
   entries: ManagerEntry[];
   createdAt: number;
   providerId?: string;
-  status: "connected" | "authorization_required";
+  status: "connected" | "authorization_required" | "unlock_required";
 };
 export type SealedToken = { v: 1; iv: string; data: string; tag: string };
 
@@ -93,7 +96,7 @@ export function parseManagerAdd(input: unknown): {
   const name = text(body.name, 60);
   if (
     !Array.isArray(body.entries) ||
-    body.entries.length < 1 ||
+    (body.entries.length < 1 && kind !== "zoho-vault") ||
     body.entries.length > 50
   )
     throw new Error("Add at least one saved login reference");
@@ -110,6 +113,8 @@ export function parseManagerAdd(input: unknown): {
     const website = connectorDomain(String(entry.website));
     return { reference, label, website };
   });
+  if (kind === "zoho-vault" && entries.length)
+    throw new Error("Choose saved logins after unlocking Zoho Vault");
   const seen = new Set(entries.map((entry) => entry.reference));
   if (seen.size !== entries.length)
     throw new Error("Each reference can be saved once per manager");
@@ -170,6 +175,19 @@ export function openManagerToken(
 }
 
 export interface ManagerHost {
+  unlockParameters?(id: string): Promise<ZohoUnlockParameters>;
+  unlock?(id: string, key: string): Promise<ManagerView>;
+  browse?(
+    id: string,
+    page: number,
+  ): Promise<{ entries: ManagerEntry[]; nextPage?: number }>;
+  select?(id: string, references: string[]): Promise<ManagerView>;
+  resolveCredentials?(
+    managerId: string,
+    reference: string,
+    website?: string,
+    signal?: AbortSignal,
+  ): Promise<{ password: string; username?: string }>;
   add(input: unknown): Promise<ManagerView & { authorizationUrl?: string }>;
   providers(): { id: string; name: string; kind: string }[];
   authorize(id: string): Promise<{ authorizationUrl?: string }>;
@@ -197,7 +215,7 @@ type ManagerRecord = {
   providerId?: string;
   /** Bind authorization to exact operator configuration, including tool and endpoints. */
   providerFingerprint?: string;
-  status?: "connected" | "authorization_required";
+  status?: ManagerView["status"];
   sealed?: SealedToken;
   createdAt: number;
   removedAt?: number;
@@ -340,7 +358,10 @@ export class FilePasswordManagerHost implements ManagerHost {
     grant.expiresAt = Date.now() + 10 * 60_000;
     record.status = "authorization_required";
     try {
-      const result = await managerMcp(provider, grant, {}, this.options.fetch);
+      const result =
+        provider.kind === "zoho-vault"
+          ? new ZohoVault(provider, grant, this.options.fetch).authorize()
+          : await managerMcp(provider, grant, {}, this.options.fetch);
       if (!result.authorizationUrl) record.status = "connected";
       return result;
     } finally {
@@ -370,8 +391,13 @@ export class FilePasswordManagerHost implements ManagerHost {
     delete grant.expiresAt;
     await this.save(record, grant);
     try {
-      await managerMcp(provider, grant, { code }, this.options.fetch);
-      record.status = "connected";
+      if (provider.kind === "zoho-vault") {
+        await new ZohoVault(provider, grant, this.options.fetch).exchange(code);
+        record.status = "unlock_required";
+      } else {
+        await managerMcp(provider, grant, { code }, this.options.fetch);
+        record.status = "connected";
+      }
       return this.view(record);
     } finally {
       delete grant.verifier;
@@ -387,6 +413,73 @@ export class FilePasswordManagerHost implements ManagerHost {
     }
     return views.sort((a, b) => a.createdAt - b.createdAt);
   }
+  private async withZoho<T>(
+    id: string,
+    run: (vault: ZohoVault, record: ManagerRecord) => Promise<T>,
+  ) {
+    const record = await this.load(id);
+    const provider = this.provider(record);
+    if (
+      provider.kind !== "zoho-vault" ||
+      record.status === "authorization_required"
+    )
+      throw new Error("Authorize Zoho Vault first");
+    const grant = this.grant(record);
+    try {
+      const result = await run(
+        new ZohoVault(provider, grant, this.options.fetch),
+        record,
+      );
+      await this.load(id);
+      return result;
+    } finally {
+      await this.save(record, grant);
+    }
+  }
+  unlockParameters(id: string) {
+    return this.withZoho(id, (vault) => vault.parameters());
+  }
+  unlock(id: string, key: string) {
+    return this.withZoho(id, async (vault, record) => {
+      await vault.unlock(key);
+      record.status = "connected";
+      return this.view(record);
+    });
+  }
+  browse(id: string, page: number) {
+    return this.withZoho(id, (vault) => vault.entries(page));
+  }
+  select(id: string, references: string[]) {
+    if (
+      !Array.isArray(references) ||
+      references.length > 50 ||
+      new Set(references).size !== references.length ||
+      references.some(
+        (ref) =>
+          typeof ref !== "string" ||
+          !/^zohovault:\/\/[0-9]{1,40}\/password$/.test(ref),
+      )
+    )
+      throw new Error("Choose up to 50 saved logins");
+    return this.withZoho(id, async (vault, record) => {
+      const entries: ManagerEntry[] = [];
+      for (let offset = 0; offset < references.length; offset += 5) {
+        const batch = await Promise.allSettled(
+          references
+            .slice(offset, offset + 5)
+            .map((reference) => vault.select(reference)),
+        );
+        if (batch.some((result) => result.status === "rejected"))
+          throw new Error(
+            "Could not verify selected logins in Zoho Vault. Refresh and try again.",
+          );
+        for (const result of batch)
+          if (result.status === "fulfilled") entries.push(result.value);
+      }
+      record.entries = entries;
+      return this.view(record);
+    });
+  }
   async remove(id: string) {
     const record = await this.load(id);
     record.removedAt = Date.now();
@@ -398,7 +491,17 @@ export class FilePasswordManagerHost implements ManagerHost {
     reference: string,
     website?: string,
     signal?: AbortSignal,
-  ) {
+  ): Promise<string> {
+    return (
+      await this.resolveCredentials(managerId, reference, website, signal)
+    ).password;
+  }
+  async resolveCredentials(
+    managerId: string,
+    reference: string,
+    website?: string,
+    signal?: AbortSignal,
+  ): Promise<{ password: string; username?: string }> {
     const record = await this.load(managerId);
     const entry = record.entries.find((entry) => entry.reference === reference);
     if (!entry)
@@ -413,6 +516,16 @@ export class FilePasswordManagerHost implements ManagerHost {
     const provider = this.provider(record);
     const grant = this.grant(record);
     try {
+      if (provider.kind === "zoho-vault") {
+        const result = await new ZohoVault(
+          provider,
+          grant,
+          this.options.fetch,
+          signal,
+        ).resolve(reference, website && connectorDomain(website));
+        await this.load(managerId);
+        return result;
+      }
       const result = await managerMcp(
         provider,
         grant,
@@ -422,7 +535,7 @@ export class FilePasswordManagerHost implements ManagerHost {
       await this.load(managerId);
       if (!result.password)
         throw new Error("Password manager did not resolve this reference");
-      return result.password;
+      return { password: result.password };
     } finally {
       await this.save(record, grant);
     }

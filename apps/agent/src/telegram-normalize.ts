@@ -17,6 +17,8 @@ export type TelegramInbound = {
   kind?: "message" | "callback" | "reaction" | "generation_stopped";
   media?: TelegramMediaDescriptor[];
   caption?: string;
+  /** Provider locale is a routing hint, never model installation authority. */
+  language?: string;
   mediaGroupId?: string;
   replyTo?: {
     messageId: number;
@@ -201,6 +203,7 @@ export function normalizeTelegramUpdate(
     text,
     at,
     kind: "message",
+    ...(typeof message.from?.language_code==="string"&&/^[a-z]{2,3}(?:-[A-Za-z]{2,8})?$/.test(message.from.language_code)?{language:message.from.language_code.split("-")[0]}:{}),
     messageId: message.message_id,
     ...(positive(message.message_thread_id) ? { messageThreadId: message.message_thread_id } : {}),
     sentAt: message.date * 1000,
@@ -233,7 +236,7 @@ export function normalizeTelegramUpdate(
 /** Durable polling keeps only verified normalized fields, never the original provider body. */
 export function serializeTelegramInbound(inbound: TelegramInbound): string {
   if (inbound.secretary) return JSON.stringify({ update_id: inbound.update, ...secretaryPayload(inbound.secretary) });
-  const from = { id: Number(inbound.user), is_bot: false },
+  const from = { id: Number(inbound.user), is_bot: false,...(inbound.language?{language_code:inbound.language}:{}) },
     chat = { id: Number(inbound.user), type: "private" };
   if (inbound.stoppedDraftId !== undefined) return JSON.stringify({ update_id: inbound.update,
     stopped_message_generation: { chat, draft_id: inbound.stoppedDraftId, message_thread_id: inbound.messageThreadId } });

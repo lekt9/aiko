@@ -136,6 +136,23 @@ async function fixture(records: PrivateSessionRecord[] = []) {
   };
 }
 
+test("inspection authority follows actual private session install, expiry, release and revocation",async()=>{
+  const f=await fixture();
+  try {
+    expect(f.sessions.hasPrivateSession()).toBe(false);
+    expect(f.sessions.hasPrivateHistory(domain)).toBe(false);
+    expect(f.sessions.inspectionAuthorized(domain)).toBe(true);
+    const input=material();await f.sessions.install(input);
+    expect(f.sessions.hasPrivateSession()).toBe(true);expect(f.sessions.inspectionAuthorized(domain)).toBe(true);
+    await f.sessions.clear({...input,reason:"release"});
+    expect(f.sessions.hasPrivateSession()).toBe(false);expect(f.sessions.inspectionAuthorized(domain)).toBe(false);
+    expect(f.sessions.hasPrivateHistory(domain)).toBe(true);
+    await f.sessions.install(input);expect(f.sessions.inspectionAuthorized(domain)).toBe(true);
+    f.advance();expect(f.sessions.inspectionAuthorized(domain)).toBe(false);
+    await f.sessions.clear({...input,reason:"revoke"});expect(f.sessions.inspectionAuthorized(domain)).toBe(false);
+  }finally{await f.sessions.close();}
+});
+
 test("actual SDK CDP adapter installs privately, replaces deletions and partitions, and preserves unrelated domains", async () => {
   const f = await fixture();
   try {

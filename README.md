@@ -2,7 +2,19 @@
 
 **Aiko by Unbrowse**: a live Telegram assistant with real model answers, cited per-account memory, public-page reading and a portable SDK. Built with **TanStack Start, React, TypeScript, native Tardie and entity-learn**.
 
-**Production builds no longer expose the sample vault or fixture API.** They direct users to [Aiko in Telegram](https://t.me/aikospillstea_bot). The separate encrypted-custody backend in `apps/server` is not yet connected: private app access, identity bridging and arbitrary-code VMs remain disabled. See [live operation and the remaining production gates](docs/aiko-production.md).
+**Production builds no longer expose the sample vault or fixture API.** They direct users to [Aiko in Telegram](https://t.me/aikospillstea_bot). The separate encrypted-custody backend in `apps/server` remains optional; the hosted assistant has its own connector and remote-browser paths. See [live operation and the remaining production gates](docs/aiko-production.md).
+
+## Hosted Aiko
+
+Use the [hosted setup and recovery guide](docs/aiko-hosted.md) for production. Aiko's Worker owns account state in Durable Objects, with remote browser VMs and encrypted R2 backups. The build includes its browser library and needs no sibling checkout or local Aiko configuration.
+
+```sh
+pnpm install --frozen-lockfile
+pnpm aiko:cloud:build
+pnpm aiko:cloud:verify
+```
+
+The sections below also describe the historical local development and separate vault-service paths.
 
 ## Aiko local agent
 
@@ -14,7 +26,7 @@ pnpm aiko:dev
 # Native local console: http://127.0.0.1:4242
 ```
 
-This installation is configured for **live GLM 5.3 Flash inference**, with durable allowances of 200 requests/day globally and 40/account/day. Fresh installations still require explicit paid-mode consent. Tardie 0.22 owns execution/recovery; actual `entity-learn@0.2.0` owns private per-account memory. Telegram is an adapter to the channel-independent `@unlock/sdk/aiko` plane. Public URL reading is enabled without cookies or JavaScript. Private app access and VM provisioning remain unmounted.
+Tardie 0.22 owns execution and recovery; `entity-learn@0.2.0` owns private per-account memory. Telegram is an adapter to the channel-independent `@unlock/sdk/aiko` plane. Hosted model routes are configured in `apps/agent/wrangler.jsonc`; local-mode configuration is separate.
 
 - [Agent setup and security boundaries](apps/agent/README.md)
 - [Self-learning harness loop: mine agent logs, graff fixer agent, PR](docs/harness-self-learning.md)

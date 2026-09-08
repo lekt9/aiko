@@ -72,3 +72,30 @@ const domain=process.env.AIKO_NATIVE_LOGIN_TEST_DOMAIN;
   await expect(driver.requestTransport!.send({...request,url:"https://example.com/"})).rejects.toThrow("Reconnect");
  } finally {await driver.close();await rm(directory,{recursive:true,force:true});}
 },180000);
+
+(chrome&&domain?test:test.skip)("public browsing cleans an expired private sign-in but preserves an active lock",async()=>{
+ if(domain!=="unlock-login-canary.lewis-6d8.workers.dev")throw Error("Use only the synthetic public canary");
+ const directory=await mkdtemp("/tmp/unlock-public-expiry-");
+ const open=()=>browserDriverFactory(chrome!,{persistentDirectory:directory,nativeAssetDirectory:process.env.AIKO_NATIVE_ASSET_DIRECTORY,browserBackend:process.env.AIKO_NATIVE_BROWSER_BACKEND === "cloakbrowser" ? "cloakbrowser" : "chromium"})({owner:"public_expiry_fixture",domains:["*"],emit:async()=>{}});
+ let driver=await open();
+ const input={connectionId:crypto.randomUUID(),domain:domain!,action:"form" as const};
+ try {
+  expect((await driver.nativeAuth!(input)).status).toBe("pending");
+  await expect(driver.execute({action:"url"})).rejects.toMatchObject({code:"private_sign_in_pending"});
+  await driver.close();
+  const db=new Database(`${directory}/request-evidence.sqlite`);
+  try {
+   const row=db.query("SELECT state FROM native_login WHERE id=?").get(input.connectionId) as {state:string};
+   db.query("UPDATE native_login SET state=? WHERE id=?").run(JSON.stringify({...JSON.parse(row.state),expiresAt:1}),input.connectionId);
+  } finally {db.close();}
+  driver=await open();
+  await driver.execute({action:"navigate",url:`https://${domain}/`});
+  const current=await driver.execute({action:"url"}) as {url:string};
+  expect(new URL(current.url).hostname).toBe(domain!);
+  const read=new Database(`${directory}/request-evidence.sqlite`,{readonly:true});
+  try {
+   const row=read.query("SELECT state FROM native_login WHERE id=?").get(input.connectionId) as {state:string};
+   expect(JSON.parse(row.state)).toMatchObject({status:"disconnected",expired:true});
+  } finally {read.close();}
+ } finally {await driver.close();await rm(directory,{recursive:true,force:true});}
+},90000);

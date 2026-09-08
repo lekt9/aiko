@@ -11,6 +11,11 @@ export interface CodeSegment {
   packages: Record<string, string[]>;
   values: Record<string, unknown>;
   ambient: { at: number; seed: string };
+  /** Existing executions retain their original immediate batch replay semantics. */
+  scheduling?: "batch";
+  /** Every dispatched call in invocation order, including calls still running. */
+  issued?: CodeCall[];
+  /** Results in delivery order, which can differ from invocation order. */
   history: { call: CodeCall; result: unknown }[];
 }
 export interface CodeSegmentResult {

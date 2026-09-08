@@ -1,0 +1,67 @@
+/** Independent native network-read + structural transformation experiment.
+ * Controlled loopback service and fixed oracle; no application test imports. */
+import assert from 'node:assert/strict';
+import {component} from '../../apps/agent/node_modules/tardie/src/core/component/index.ts';
+import {effect} from '../../apps/agent/node_modules/tardie/src/core/effect.ts';
+import {EventLog} from '../../apps/agent/node_modules/tardie/src/core/log/index.ts';
+import {HarnessExperimentTrials,harnessExperimentTrialIsChild,harnessExperimentTrialEventKey} from '../../apps/agent/src/harness-experiment-trials.ts';
+import {readFileSync,writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+import {Database} from 'bun:sqlite';
+import {actor} from '../../apps/agent/node_modules/tardie/src/agent/index.ts';
+import {Effect,Layer} from '../../apps/agent/node_modules/effect/dist/index.js';
+import {createCloudflareAccountHost,type AccountStorage} from '../../apps/agent/src/cloudflare-host.ts';
+import {HarnessLibrary,harnessBlobStore,harnessDigest,harnessLibraryAppendAllowed,harnessLibraryComponent,harnessLibraryEventKey,type HarnessContract,type HarnessArtifact} from '../../apps/agent/src/harness-library.ts';
+import {HarnessExperiment,harnessExperimentState} from '../../apps/agent/src/harness-experiment.ts';
+import {createHarnessSandboxBinding} from '../../apps/agent/src/harness-sandbox.ts';
+import {localHarnessSandbox} from '../../apps/agent/src/harness-sandbox-local.ts';
+import {sandboxEnvironment} from '../../apps/agent/src/sandbox-job-runner.ts';
+import {sandboxJobJournal} from '../../apps/agent/src/sandbox-job-journal.ts';
+import {sqliteWorkflowKV} from '../../apps/agent/src/workflow-store.ts';
+const [mode,dir,nonce]=process.argv.slice(2),recovering=mode==='recover';assert(dir&&nonce&&['prepare','recover'].includes(mode));
+const scenario=process.argv[5];let allowed=true,injected=false;
+const owner='321',thread='user-321',counts={requests:0,jobs:0,prepare:0,proposal:0,verifier:0};
+const tick=(k:keyof typeof counts)=>{counts[k]++;assert(!recovering,'replay dispatched '+k);};
+const db=new Database(join(dir,'native.sqlite')),privateDb=new Database(join(dir,'private.sqlite'));
+const storage:AccountStorage={sql:{exec:(q,...args)=>{const rows=db.query(q).all(...args as any);return {toArray:()=>rows as never};}},transactionSync:fn=>db.transaction(fn)(),sync:async()=>{},getAlarm:async()=>null,setAlarm:async()=>{},deleteAlarm:async()=>{}};
+let session='session-1',schema='schema-1';const http:any[]=[];
+const server=recovering?undefined:Bun.serve({hostname:'127.0.0.1',port:0,fetch(req){tick('requests');const u=new URL(req.url);http.push({path:u.pathname,query:Object.fromEntries(u.searchParams)});if(u.pathname==='/records'){const n=Number(u.searchParams.get('n'));return Response.json(schema==='schema-1'?{record:{id:n,display:'item-'+n},unwanted:'must-not-propagate'}:{renamed:{id:n,label:'item-'+n}});}assert.equal(u.pathname,'/echo');return Response.json(JSON.parse(u.searchParams.get('projection')!));}});
+const saved=recovering?JSON.parse(readFileSync(join(dir,'prepare.json'),'utf8')):null;
+const origin=server?.url.origin??saved.origin;if(recovering){session=saved.session;schema=saved.schema;}
+const environment=await sandboxEnvironment('independent-network-composition-v1');
+const sandbox=localHarnessSandbox({owner,environmentDigest:environment,journal:await sandboxJobJournal(privateDb,join(dir,'sandbox.key')),send:async(req,signal)=>{assert.equal(new URL(req.url).origin,origin);assert.equal(req.method,'GET');const r=await fetch(req.url,{method:'GET',signal,redirect:'manual'});return {status:r.status,headers:{'content-type':'application/json'},body:await r.json(),classification:'application'};}});
+const sandboxOptions={placement:'local',sandbox:{harnessEnvironment:sandbox.harnessEnvironment,harnessJob:async(job,s)=>{tick('jobs');return sandbox.harnessJob(job,s);}},current:async()=>({owner,active:true,runtimeDigest:environment,contextRef:schema,authorityRef:'controlled-read-only',sessionRevision:session,effects:['read'],origins:[origin],methods:['GET'],budget:{wallMs:5000,requests:4,outputBytes:32768}})};
+const bridge=createHarnessSandboxBinding({owner,thread,...sandboxOptions} as any);
+const verifier={digest:harnessDigest('fixed-independent-projection-oracle-v1'),evaluatorDigest:harnessDigest('fixed-independent-projection-dataset-v1'),cases:[{id:'positive',split:'development',input:{n:7}},{id:'zero',split:'development',input:{n:0}},{id:'negative',split:'held-out',input:{n:-619}}],verify:async({input,output}:any)=>{tick('verifier');const passed=JSON.stringify(output)===JSON.stringify({identifier:input.n,label:'item-'+input.n});return {passed,quality:passed?1:0,evidence:['independent-exact-projection-'+passed]};}};
+const verifiers=new Map([[verifier.digest,verifier]]);
+const binding:any={owner,thread,blobs:harnessBlobStore(sqliteWorkflowKV(privateDb)),verifiers,guard:()=>{},authorizeEvaluation:async()=>true,...bridge};
+let host:Awaited<ReturnType<typeof createCloudflareAccountHost>>;
+const journal={read:()=>host.read(thread),append:async(events:any[])=>{for(const e of events){if(!recovering&&process.argv[5]==='cut-mirror'&&e.type==='AikoHarnessExperimentTrialSettled'){writeFileSync(join(dir,'prepare.json'),JSON.stringify({origin,session,schema,counts,pid:process.pid}));writeFileSync(join(dir,'cut-trace.json'),JSON.stringify(await host.read(thread),null,2));process.exit(0);}await host.commitRoot(host.self(thread),e);}}};
+const library=new HarnessLibrary(binding,journal),signal=AbortSignal.timeout(30000);
+const contract:HarnessContract={version:1,outcome:'Read a record, project identifier and label locally, discard unrelated fields, and return exactly that transformed JSON through the read-only echo fixture',effect:'read',verifierDigest:verifier.digest,evaluatorDigest:verifier.evaluatorDigest,inputSchema:{type:'object',properties:{n:{type:'number'}},required:['n'],additionalProperties:false},outputSchema:{type:'object',properties:{identifier:{type:'number'},label:{type:'string'}},required:['identifier','label'],additionalProperties:false},applicability:{fixture:'independent-record-projection'},timeoutMs:5000};
+const read=(id:string,dependsOn:string[]=[])=>({id,dependsOn,method:'GET',origin,path:'/records',pathParameters:{},query:{n:{kind:'input',name:'n'}},headers:{},expectedStatuses:[200]});
+const transform={id:'transform',dependsOn:['read'],method:'GET',origin,path:'/echo',pathParameters:{},query:{projection:{kind:'object',fields:{identifier:{kind:'response_json',stepId:'read',pointer:'/record/id'},label:{kind:'response_json',stepId:'read',pointer:'/record/display'}}}},headers:{},expectedStatuses:[200]};
+const graph={schemaVersion:2,executorAbi:'site-harness/1',siteId:'independent-records',version:'1',sourceCaptureDigest:harnessDigest('independent-record-fixture'),allowedOrigins:[origin],actions:[{id:'project',inputs:[{name:'n',type:'number',required:true}],steps:[read('redundant'),read('read',['redundant']),transform]}]};
+const optimized=structuredClone(graph);optimized.actions[0].steps=[read('read'),transform];
+const source=JSON.stringify({graph,actionId:'project'}),optimizedSource=JSON.stringify({graph:optimized,actionId:'project'});
+const artifact:HarnessArtifact={version:1,name:'independent.record.project',description:contract.outcome,runtime:'network',entrypoint:'network.json',files:{'network.json':source},dependencies:[],contractDigest:harnessDigest(contract),sources:[{uri:'fixture:independent-records',revision:'v1',digest:harnessDigest(source),license:'fixture'}]};
+const baseline=harnessDigest(artifact),candidate=harnessDigest({...artifact,files:{'network.json':optimizedSource}});
+const regime={reset:'stateless',cache:'uncached',placement:'local',fixtures:'fixed-records-v1'};
+const experimentBinding={library:binding,regime,authorize:async()=>allowed,prepare:async()=>{tick('prepare');return {regimeDigest:harnessDigest(regime),evidence:['controlled-stateless-reset'],costUsd:null,measurements:{networkRequests:0,browserStarts:0,modelCalls:0,tokens:0}};},propose:async(input)=>{tick('proposal');assert(!JSON.stringify(input).includes('-619'));return {hypothesis:'Remove only the redundant record GET; preserve the local projection and echo sink',files:{'network.json':optimizedSource},tokens:0,costUsd:null};}};
+const request={id:'compose',baselineDigest:baseline,mutableFiles:['network.json'],repeats:2,policy:{version:1 as const,objectives:[{metric:'networkRequests' as const,direction:'min' as const,tolerance:0}],qualityTolerance:0},limits:{candidates:1,runs:12,wallMs:30000,proposalTokens:100,costUsd:10}};
+const trials=new HarnessExperimentTrials({binding,journal,sandbox:async()=>sandboxOptions as any,readThread:t=>host.read(t),authorize:async(scope,signal)=>{signal.throwIfAborted();const state=harnessExperimentState(await journal.read(),owner,scope.experimentId),r=state.reservations.get(scope.operationId);return allowed&&!!state.registered&&!state.cancelled&&!state.settled&&r?.kind==='trial'&&r.harnessDigest===scope.harnessDigest&&r.phase===scope.phase&&r.caseRef===harnessDigest(scope.caseId)&&r.repeat===scope.repeat&&state.registered.deadlineAt===scope.deadlineAt;}});
+const experiment=new HarnessExperiment({...experimentBinding,trials},journal);
+const boundaryComponent=component({name:'independent-native-controller-boundary',initial:()=>[] as any[],step:(rows,e)=>[...rows,e],output:rows=>({view:undefined,transitions:rows.some(e=>e.type==='IndependentChildAdvance')&&!rows.some(e=>e.type==='IndependentChildDone')?[effect({key:'independent-child-boundary',input:null,act:()=>Effect.gen(function*(){const log=yield*EventLog;const actual={read:()=>Effect.runPromise(log.read),append:async(batch:any[])=>{const target=scenario==='cancel-mirror'?'AikoHarnessExperimentTrialWitness':'AikoHarnessExperimentTrialSettled';if(!injected&&batch.some(e=>e.type===target)){injected=true;await Effect.runPromise(log.append([{type:'AikoHarnessExperimentCancelled',owner,id:'compose',experimentId:'compose',at:Date.now()}]));}await Effect.runPromise(log.append(batch));}};let result:any;try{result=yield*Effect.promise(()=>new HarnessExperiment({...experimentBinding,trials},actual).advance('compose',signal));}catch(error){result={error:String(error)};}return [{type:'IndependentChildDone',id:'done',at:Date.now(),result}];})})]:[]})});
+const native=actor({name:'aiko',methods:{},components:[harnessLibraryComponent(owner),trials.component(),boundaryComponent]}),child=actor({name:'aiko',methods:{},components:[trials.worker()]});
+host=await createCloudflareAccountHost({storage,actorName:'aiko',actorInstance:'independent-child-'+nonce,ownsThread:t=>t===thread,allowChild:(p,c)=>p===thread&&harnessExperimentTrialIsChild(c),actorFor:t=>t===thread?native:harnessExperimentTrialIsChild(t)?child:undefined,layersFor:()=>Layer.empty,keyOf:e=>harnessExperimentTrialEventKey(e)??harnessLibraryEventKey(e),canAppend:(_t,batch,read)=>harnessLibraryAppendAllowed(batch,read)});
+try{
+ await library.registerContract(contract);await library.record(artifact);await library.evaluate(baseline,'baseline',signal);await library.promote(baseline,'baseline',0,signal);await experiment.start(request,signal);await experiment.advance('compose',signal);await host.recover();
+ const before=await host.read(thread),joined=before.find(e=>e.type==='AikoHarnessTrialJoined')!;assert(joined&&joined.status==='checked');assert.equal(before.filter(e=>e.type==='AikoHarnessExperimentTrialWitness').length,0);const originalCounts={...counts};
+ const childRows=await host.read(String(joined.childThread)),started=childRows.find(e=>e.type==='AikoHarnessRunStarted')!;
+ if(['missing-input','missing-witness'].includes(scenario)){const ref=scenario==='missing-input'?started.inputRef:joined.witnessRef;assert(privateDb.query("DELETE FROM workflow_records WHERE key LIKE '%' || ? || '%'").run(String(ref)).changes>0);}
+ if(scenario==='revoke')allowed=false;
+ let result:any;if(scenario.startsWith('cancel-')){await host.commitRoot(host.self(thread),{type:'IndependentChildAdvance',id:'advance',at:Date.now()});await host.recover();result=(await host.read(thread)).find(e=>e.type==='IndependentChildDone')?.result;assert(injected);}else result=await experiment.advance('compose',signal);
+ const followup=await experiment.advance('compose',signal);await host.recover();const trace=await host.read(thread);assert.deepEqual(counts,originalCounts);assert.equal(trace.filter(e=>e.type==='AikoHarnessPromoted').length,1);assert.equal(trace.filter(e=>e.type==='AikoHarnessExperimentTrialWitness').length,scenario==='cancel-settlement'?1:0);
+ assert.equal(followup.status,scenario.startsWith('missing-')?'unknown':scenario==='revoke'?'blocked':'cancelled');assert.equal(trace.filter(e=>e.type==='AikoHarnessExperimentTrialSettled').length,scenario==='cancel-settlement'?1:0);
+ const out={scenario,result,followup,counts,injected,mirrors:trace.filter(e=>e.type==='AikoHarnessExperimentTrialWitness').length,trialSettlements:trace.filter(e=>e.type==='AikoHarnessExperimentTrialSettled').length};writeFileSync(join(dir,'observed.json'),JSON.stringify(out,null,2));writeFileSync(join(dir,'native-trace.json'),JSON.stringify(trace,null,2));writeFileSync(join(dir,'child-trace.json'),JSON.stringify(childRows,null,2));console.log(JSON.stringify(out));
+}finally{await host.close();await server?.stop(true);db.close();privateDb.close();}

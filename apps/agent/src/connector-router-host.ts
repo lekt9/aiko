@@ -3,13 +3,16 @@ import type { BunHost } from "tardie/bun/host";
 import { createToolRouterActor, routerThread, type RouterMethod, type ToolRouterBinding } from "./tool-router.ts";
 
 /** Reject credential material before native request events are persisted. */
-export function validateRouterInput(value: unknown, depth = 0): void {
+export function validateRouterInput(value: unknown, depth = 0, numericBudgetKeys: readonly string[] = []): void {
   if (depth > 16) throw new Error("Router input nesting limit");
-  if (Array.isArray(value)) { for (const item of value) validateRouterInput(item, depth + 1); return; }
+  if (Array.isArray(value)) { for (const item of value) validateRouterInput(item, depth + 1, numericBudgetKeys); return; }
   if (value && typeof value === "object") {
     for (const [key, item] of Object.entries(value)) {
-      if (/(?:password|passwd|secret|token|cookie|authorization|api[_-]?key|credential|headers|session[_-]?id)/i.test(key)) throw new Error("Credentials do not belong in routing arguments");
-      validateRouterInput(item, depth + 1);
+      // Only a trusted caller may identify a schema's numeric budget quantity.
+      // Token strings, nested objects and ordinary credential keys still fail.
+      const quantity = numericBudgetKeys.includes(key) && typeof item === "number" && Number.isSafeInteger(item) && item >= 0;
+      if (!quantity && /(?:password|passwd|secret|token|cookie|authorization|api[_-]?key|credential|headers|session[_-]?id)/i.test(key)) throw new Error("Credentials do not belong in routing arguments");
+      validateRouterInput(item, depth + 1, numericBudgetKeys);
     }
   } else if (typeof value === "string") {
     if (/(?:password|passwd|secret|token|cookie|authorization|api[_ -]?key)["']?\s*[:=]\s*["']?\S+/i.test(value)) throw new Error("Credential text in routing input");

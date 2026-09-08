@@ -68,6 +68,8 @@ export type VoiceResult = {
   text: string;
   source: "thinkfeel" | "template" | "model" | "service";
   reason?: "disabled" | "limited" | "unavailable" | "invalid_response" | "rejected" | "recovered";
+  /** Attached by the host after composing text; never passed to the persona. */
+  artifacts?: import("./database-artifacts.ts").ReplyArtifact[];
 };
 export type VoiceInput =
   | { kind: "task"; receipt: string }

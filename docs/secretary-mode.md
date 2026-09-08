@@ -12,6 +12,28 @@ Aiko can receive Telegram business/secretary updates and reply on behalf of a co
 
 In the bot chat, `/secretary` explains setup; `/secretary approve CHAT_ID` and `/secretary pause CHAT_ID` manage a contact when exactly one active connection exists. Telegram's `/start bizChatCHAT_ID` management link explains how to approve that contact. Messages from contacts cannot invoke owner commands.
 
+## Track and delegate work
+
+In **Your work**, use **Add work** to track an obligation or collect meeting agenda items. A tracked commitment records the outcome, accountable person, next step, and evidence needed for completion. Leave an unknown deadline blank; the next review is separate and defaults to tomorrow. Already overdue obligations can also be recorded.
+
+For agenda collection, choose an observed contact and specify the request, one reminder, reminder time, escalation time, and deadline. **Prepare for review** creates a decision without sending. **Authorize request and reminder** grants that exact proposal while its dates and contact permissions remain valid. The existing contact reply grant alone does not authorize this workflow.
+
+A qualifying numbered reply becomes a source-linked preparation note. Missing or incomplete items remain outstanding; Aiko prepares an owner decision before the deadline. Source edits or deletion invalidate a completed note when its evidence changes. Unknown delivery remains visible and holds additional sending for owner review.
+
+Use **Pause**, **Resume with Aiko**, **I'll handle this**, or **Withdraw** to control execution. **Adjust this work** supports proposal edits, later review, owner-confirmed completion, and reopening. Editing before execution creates a fresh authorization; once an execution receipt exists, withdraw the old workflow and create new work to change its payload. **Contact handoffs** persists owner handling across later messages until explicit hand-back.
+
+**When Aiko updates you** edits the existing proactive update preference, daily limit, and quiet hours. Decisions remain in **Needs you** even when notifications are deferred or disabled. `/secretary work`, `/secretary brief`, `/secretary waiting`, “what needs me?”, and “what are we waiting on?” report recorded commitments. Briefings are on demand in this release.
+
+The first autonomous workflow supports numbered text agenda items. Calendar booking, media interpretation, automatic obligation extraction from arbitrary correspondence, and cross-channel deduplication remain later work in the [operating model](secretary-operating-model.md).
+
+## How Aiko talks
+
+Aiko acknowledges recorded changes specifically, asks one consequential clarification at a time, and distinguishes preparing, authorization, delivery and completion. Decisions name the required choice, timing and what happens without an answer. Normal waiting stays quiet. “What needs me?” shows the decision queue; “what are we waiting on?” names the outstanding dependencies.
+
+With the owner she speaks as Aiko. With a contact she follows that conversation's established language and tone, using only its own context. Closing acknowledgments can receive no reply; questions still get attention. If directly asked about automation, she must answer truthfully. The owner/contact inference policies are separate, and contact context never receives owner work tools.
+
+The model can resolve “I'll handle Maya” and invoke `commitment_contact_takeover`; this persists owner handling and cannot resume the contact. Ambiguous names require clarification. Fixed work notices are currently English; the inference policy follows the owner's current language. See the [conversation design and example exchange](secretary-operating-model.md#the-language-of-the-relationship).
+
 ## Telegram boundaries
 
 - Account-level replies work in eligible private chats, with `rights.can_reply`, an enabled connection, and an incoming message less than 24 hours old. Groups cannot be enabled through this connection.
@@ -46,8 +68,38 @@ Authenticated endpoints (owner derived from Telegram init data or scoped account
 | `GET /api/secretary`          | Connection rights, contacts, owner example counts and recent delivery statuses |
 | `POST /api/secretary/contact` | `{connectionId, chat, enabled}`; persists or pauses approval                   |
 | `POST /api/secretary/history` | `{connectionId, chat, history}`; validates a single-chat Telegram JSON export  |
+| `GET /api/secretary/work` | Owner commitments, decision lanes, receipts, coverage, contacts and update preferences |
+| `POST /api/secretary/work` | Versioned owner commands: `capture`, `decide`, `change`, `contact`, `attention` |
 
 `/v1/secretary` aliases are available directly on the agent runtime. Reads require read scope; changes require write scope. The web proxy forwards only end-user authentication.
+
+Work mutations require a stable `operationId`. Changes and decisions require `expectedVersion`; decisions also require their current `decisionId` and `planDigest`. Contact and attention changes use their returned revision. Retries with the same operation and payload are idempotent; conflicting payloads or stale versions are rejected. The model tools `commitment_list`, `commitment_capture`, `commitment_change`, and `commitment_contact_takeover` are scoped to the owner thread and cannot approve execution.
+
+## Work coordination verification
+
+Run the local regression checks:
+
+```sh
+bun test apps/agent/test/secretary-language.test.ts apps/agent/test/secretary-work.test.ts apps/agent/test/secretary.test.ts apps/agent/test/background.test.ts apps/agent/test/proactive-outbox-host.test.ts apps/agent/test/cloudflare-host.test.ts
+bun test apps/agent/test/channel-response.test.ts
+pnpm --dir apps/web exec vitest run test/connector-proxy.test.ts --maxWorkers=2
+```
+
+The latest language iteration passes 108 agent tests across these suites; the prior web proxy check passed 10 tests. Eight browser scenarios and the Mini App build pass. Web and protocol TypeScript checks pass. Full agent and Cloudflare checks encounter concurrent errors outside this change in coding-workspace and database code, and the focused host check encounters a background event mutability error. These results are local, with provider transport simulated; they do not attest a deployed account.
+
+For an interactive local witness, start:
+
+```sh
+bun apps/agent/scripts/secretary-work-preview.ts
+```
+
+Open `http://127.0.0.1:4129/`. The preview uses the actual work UI, API, native event log, and coordinator, with one synthetic contact and simulated sending. Its temporary state is isolated from accounts. The browser scenario runs through browser-harness with an isolated CDP endpoint:
+
+```sh
+UNLOCK_ROOT="$PWD" BU_NAME=aiko-secretary-work-qa BU_CDP_URL=http://127.0.0.1:9349 BH_NO_BROWSER_COOKIES=1 BH_RECORD=0 browser-harness < apps/web/test/secretary-work.browser.py
+```
+
+Screenshots, accessibility results and the scenario report are written to `artifacts/secretary-work/browser/`.
 
 ## Verification
 

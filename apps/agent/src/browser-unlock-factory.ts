@@ -48,6 +48,19 @@ export function withUnlockBrowser(
     };
     return {
       ...driver,
+      ...(driver.authorizeInspection ? {authorizeInspection: async (policy: import("./browser-driver.ts").BrowserInspectionPolicy, signal?: AbortSignal) => {
+        if (!currentUrl || new URL(currentUrl).origin !== policy.origin) return false;
+        try {
+          if (!policy.publicOnly) await before(currentUrl,signal);
+          return await driver.authorizeInspection!(policy,signal);
+        } catch {return false;}
+      }} : {}),
+      ...(driver.inspectCurrentPage ? {inspectCurrentPage: async (policy: import("./browser-driver.ts").BrowserInspectionPolicy, signal?: AbortSignal) => {
+        if (!currentUrl || new URL(currentUrl).origin !== policy.origin) throw Error("Current private page scope unavailable");
+        // Public research must never acquire credentials as a side effect of reading.
+        if (!policy.publicOnly) await before(currentUrl,signal);
+        return driver.inspectCurrentPage!(policy,signal);
+      }} : {}),
       execute: async (action, signal) => {
         const url = action.action === "navigate" ? action.url : currentUrl;
         if (!url)

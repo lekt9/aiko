@@ -20,6 +20,8 @@ export type ManagerProvider = {
   /** Explicit operator allowlist for OAuth discovery, registration and token endpoints. */
   authorizationOrigins: string[];
   clientId?: string;
+  /** Only the operator's registered Zoho OAuth application uses a client secret. */
+  clientSecret?: string;
   scope?: string;
   tool: string;
   referenceArgument: string;
@@ -32,6 +34,13 @@ export type ManagerGrant = {
   verifier?: string;
   state?: string;
   expiresAt?: number;
+  zoho?: {
+    tokenExpiresAt?: number;
+    key?: string;
+    orgKey?: string;
+    lastChanged?: string;
+    created?: string;
+  };
 };
 
 function httpsUrl(value: unknown): URL {
@@ -60,6 +69,59 @@ export function parseManagerProviders(raw?: string): ManagerProvider[] {
   return providers.map((p) => {
     if (!p || typeof p !== "object" || Array.isArray(p))
       throw new Error("Invalid password manager provider");
+    if (p.kind === "zoho-vault") {
+      const regions: Record<string, string> = {
+        us: "zoho.com",
+        eu: "zoho.eu",
+        in: "zoho.in",
+        au: "zoho.com.au",
+        ca: "zohocloud.ca",
+        jp: "zoho.jp",
+        sa: "zoho.sa",
+      };
+      if (
+        Object.keys(p).some(
+          (key) =>
+            ![
+              "id",
+              "name",
+              "kind",
+              "region",
+              "redirectUrl",
+              "clientId",
+              "clientSecret",
+            ].includes(key),
+        ) ||
+        typeof p.region !== "string" ||
+        !Object.hasOwn(regions, p.region)
+      )
+        throw new Error("Invalid Zoho Vault provider configuration");
+      for (const key of ["id", "name", "clientId", "clientSecret"])
+        if (
+          typeof p[key] !== "string" ||
+          !p[key] ||
+          p[key].length > (key === "id" || key === "name" ? 100 : 2048) ||
+          /\p{C}/u.test(p[key])
+        )
+          throw new Error("Invalid Zoho Vault OAuth application");
+      if (!/^[\w.:-]+$/.test(p.id) || ids.has(p.id))
+        throw new Error("Duplicate or invalid password manager provider");
+      ids.add(p.id);
+      return {
+        id: p.id,
+        name: p.name,
+        kind: p.kind,
+        url: `https://vault.${regions[p.region]}/`,
+        authorizationOrigins: [`https://accounts.${regions[p.region]}`],
+        redirectUrl: httpsUrl(p.redirectUrl).href,
+        clientId: p.clientId,
+        clientSecret: p.clientSecret,
+        scope: "ZohoVault.secrets.READ",
+        tool: "",
+        referenceArgument: "",
+        valuePath: [],
+      };
+    }
     if (
       Object.keys(p).some(
         (key) =>

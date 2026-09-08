@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { cloudflareState } from "./cloudflare-paths.ts";
 import { resolve } from "node:path";
 import { loadConfig, privateEnv } from "../apps/agent/src/config.ts";
 import { cutoverAikoCloudflare, CutoverError } from "../apps/agent/src/cloudflare-cutover.ts";
@@ -21,7 +22,7 @@ if (import.meta.main) {
       }
       if (!runDir || runDir.startsWith("--")) throw new CutoverError("run-directory-required");
       const config = await loadConfig(process.env, { readonly: true });
-      const cloudflare = await privateEnv("/home/deck/.config/unbrowse/aiko-cloudflare.env");
+      const cloudflare = await cloudflareState();
       const evidence = await cutoverAikoCloudflare({ config, cloudflare, runDir,
         artifactDir: resolve(import.meta.dir, "../artifacts/aiko-cloudflare"), execute });
       console.log(JSON.stringify({ status: evidence.stage, dryRun: evidence.dryRun, verified: evidence.verified,

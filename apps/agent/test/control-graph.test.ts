@@ -84,5 +84,5 @@ test("panel script parses, uses text-only graph nodes, exposes keyboard tabs/lis
   expect(GRAPH_SCRIPT).not.toMatch(/innerHTML|insertAdjacentHTML|localStorage|sessionStorage|\.embed\(|\.hydrate\(/);
   for (const value of ['role="tabpanel" aria-labelledby="graph-tab"', 'id="graph-mode"', 'id="graph-detail"', 'id="graph-next"']) expect(CONTROL_HTML).toContain(value);
   expect(GRAPH_SCRIPT).toContain("if(epoch!==state.epoch)return"); expect(GRAPH_SCRIPT).toContain("data=null;selected='';error=");
-  expect(CONTROL_HTML).toContain("graphView.reset()"); expect(CONTROL_HTML).toContain("['events','memory','graph']");
+  expect(CONTROL_HTML).toContain("graphView.reset()"); expect(CONTROL_HTML).toContain("['events','memory','graph','request-lab']");
 });

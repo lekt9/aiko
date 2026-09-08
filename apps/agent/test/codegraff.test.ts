@@ -803,6 +803,29 @@ test("VM browser replay encrypts uploads and output before gateway journals", as
   }
 });
 
+test("inherited VM inspection carries trusted public policy and transient results through encrypted transport",async()=>{
+ const {replayKeys,unwrapReplay,sealReplay}=await import("../src/codegraff.ts");
+ const keys=replayKeys(),f=fixture(),uploads:string[]=[],commands:string[]=[],seen:any[]=[];
+ const driver=await f.sandbox.browserFactory()({domains:["*"],emit:async()=>{}});
+ const upload=spyOn(f.sandbox,"upload").mockImplementation(async(_id,_path,text)=>{uploads.push(text);});
+ const exec=spyOn(f.sandbox,"exec").mockImplementation(async(_id,cmd)=>{
+  commands.push(cmd);
+  if(cmd.endsWith(" health"))return JSON.stringify({replayPublicKey:keys.publicKey});
+  if(cmd.endsWith(" drain"))return JSON.stringify({events:[]});
+  const {key,value}=unwrapReplay(JSON.parse(uploads.at(-1)!),keys.privateKey);seen.push(value);
+  const output=value.operation==="authorize-inspection"?false:{url:"https://example.com/",title:"PRIVATE_TITLE",text:"PRIVATE_BODY",snapshot:"PRIVATE_SNAPSHOT",links:[],linksTruncated:false};
+  return JSON.stringify(sealReplay({output},key));
+ });
+ try {
+  const policy={origin:"https://example.com",publicOnly:true};
+  expect(await driver.inspectCurrentPage!(policy)).toMatchObject({text:"PRIVATE_BODY"});
+  expect(await driver.authorizeInspection!({...policy,publicOnly:false})).toBe(false);
+  expect(seen).toMatchObject([{operation:"inspect-current-page",policy},{operation:"authorize-inspection",policy:{...policy,publicOnly:false}}]);
+  expect(uploads.join()).not.toMatch(/example.com|PRIVATE_BODY|publicOnly/);
+  expect(commands.join()).not.toMatch(/example.com|PRIVATE_BODY|publicOnly/);
+ }finally{upload.mockRestore();exec.mockRestore();}
+});
+
 test("VM backups use encrypted chunks and exclude concurrent browser operations until close",async()=>{
  const {replayKeys,unwrapReplay,sealReplay}=await import("../src/codegraff.ts");
  const f=fixture(), keys=replayKeys(), uploads:string[]=[], commands:string[]=[];
@@ -983,4 +1006,49 @@ test("actual sandbox exec bounds provider DELETE after cancellation with its own
     expect(deleteSignal).not.toBe(caller.signal);
     expect(durations).toContain(5000);
   } finally { timeout.mockRestore(); }
+});
+
+test("an interrupted upgrade keeps the previous runner until staged assets verify", async () => {
+  const f = fixture();
+  await f.sandbox.ensure();
+  const previous = (await f.state.get<any>("codegraff:sandbox")).runnerVersion;
+  const upgraded = new CodegraffSandbox({ ...f.options, runnerBundle: "updated-runner" });
+  const request = f.options.gateway.request.bind(f.options.gateway);
+  let fail = true;
+  const spy = spyOn(f.options.gateway, "request").mockImplementation(async (path, body: any, ...rest) => {
+    if (fail && body?.command?.endsWith("install/runner.js install")) {
+      throw new Error("interrupted_download");
+    }
+    return request(path, body, ...rest);
+  });
+  try {
+    f.calls.length = 0;
+    await expect(upgraded.ensure()).rejects.toThrow("interrupted_download");
+    expect((await f.state.get<any>("codegraff:sandbox")).runnerVersion).toBe(previous);
+    expect(f.calls.some(c => c.body?.path === "/home/daytona/aiko/runner.js")).toBe(false);
+    expect(f.calls.some(c => c.body?.command?.includes("runner.js close"))).toBe(false);
+    expect(f.calls.some(c => c.body?.command?.startsWith("mv "))).toBe(false);
+    fail = false;
+    f.calls.length = 0;
+    expect(await upgraded.ensure()).toBe("vm-fixture");
+    const commands = f.calls.map(c => c.body?.command).filter(Boolean) as string[];
+    const install = commands.findIndex(c => c.endsWith("install/runner.js install"));
+    const close = commands.findIndex(c => c.includes("runner.js close"));
+    const publish = commands.findIndex(c => c.startsWith("mv "));
+    expect(install).toBeGreaterThan(-1);
+    expect(close).toBeGreaterThan(install);
+    expect(publish).toBeGreaterThan(close);
+    expect((await f.state.get<any>("codegraff:sandbox")).runnerVersion).not.toBe(previous);
+  } finally { spy.mockRestore(); }
+});
+
+for(const reason of ["private_sign_in_pending","private_sign_in_cleanup_failed","unexpected-private-value"])test(`remote pre-dispatch browser blocker propagation: ${reason}`,async()=>{
+ const f=fixture();const driver=await f.sandbox.browserFactory()({domains:["*"],emit:async()=>{}});
+ const upload=spyOn(f.sandbox,"upload").mockResolvedValue(undefined);
+ const exec=spyOn(f.sandbox,"exec").mockResolvedValue(JSON.stringify({status:"blocked",reason,events:[],hasMore:false}));
+ try {
+  let error:unknown;try{await driver.execute({action:"url"});}catch(caught){error=caught;}
+  if(reason.startsWith("private_sign_in_"))expect(error).toMatchObject({code:reason});
+  else {expect(String(error)).toContain("outcome_unknown");expect(String(error)).not.toContain(reason);}
+ }finally{upload.mockRestore();exec.mockRestore();}
 });

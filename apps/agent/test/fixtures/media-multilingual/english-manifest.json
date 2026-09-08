@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "dataset": "LibriSpeech / OpenSLR 12",
+  "authors": [
+    "Vassil Panayotov",
+    "Daniel Povey"
+  ],
+  "license": "CC-BY-4.0",
+  "licenseFile": "LIBRISPEECH-LICENSE.TXT",
+  "licenseSha256": "908b0b565ae9bf61b7b41447cb0b83564f320375723bcc884ec30e5537a0d5dc",
+  "source": "https://www.openslr.org/12/",
+  "selection": "First two audio members in upstream test-clean archive order, frozen before inference. Same reader/chapter; not population representative.",
+  "rubric": {
+    "frozenBeforeInference": true,
+    "maxWordErrorRate": 0.35,
+    "normalization": "Same Unicode token WER as existing English and Spanish fixtures; no tuning after measurement."
+  },
+  "fixtures": [
+    {
+      "id": "6930-75918-0000",
+      "file": "6930-75918-0000.flac",
+      "language": "en",
+      "split": "development",
+      "transcript": "CONCORD RETURNED TO ITS PLACE AMIDST THE TENTS",
+      "bytes": 74138,
+      "sha256": "9ce35224156f071ab58eb7feb8a5ceae600f6f9f353da2a6cbf797b6b1ac8a23",
+      "source": "https://www.openslr.org/resources/12/test-clean.tar.gz",
+      "archiveMember": "LibriSpeech/test-clean/6930/75918/6930-75918-0000.flac",
+      "index": "LibriSpeech/test-clean/6930/75918/6930-75918.trans.txt",
+      "indexSha256": "60bb312db6d076764c9bf93cfe8a6c7a608abb651640f9c2ef164fb9573b9d01"
+    },
+    {
+      "id": "6930-75918-0007",
+      "file": "6930-75918-0007.flac",
+      "language": "en",
+      "split": "held-out",
+      "transcript": "YOU WILL BE FRANK WITH ME I ALWAYS AM",
+      "bytes": 65106,
+      "sha256": "059969de8f6b780e1a4982805e977c3e73e40d3759c8fa8cb0cb8fabd9eb5b27",
+      "source": "https://www.openslr.org/resources/12/test-clean.tar.gz",
+      "archiveMember": "LibriSpeech/test-clean/6930/75918/6930-75918-0007.flac",
+      "index": "LibriSpeech/test-clean/6930/75918/6930-75918.trans.txt",
+      "indexSha256": "60bb312db6d076764c9bf93cfe8a6c7a608abb651640f9c2ef164fb9573b9d01"
+    }
+  ]
+}

@@ -1,12 +1,12 @@
+import { cloudflareState, cloudflareOperatorConfig } from "./cloudflare-paths.ts";
 /** Restart/expiry regression against the dedicated synthetic account only. */
 import { mkdir, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { loadConfig, privateEnv } from "../apps/agent/src/config.ts";
 import { Codegraff } from "../apps/agent/src/codegraff.ts";
 
 process.umask(0o077);
-const env = await privateEnv("/home/deck/.config/unbrowse/aiko-cloudflare.env");
-const config = await loadConfig(process.env, { readonly: true });
+const env = await cloudflareState();
+const config = await cloudflareOperatorConfig();
 const owner = env.AIKO_E2E_OWNER, base = env.AIKO_CLOUDFLARE_URL;
 const domain = "unlock-login-canary.lewis-6d8.workers.dev";
 if (owner !== "acct_cloudflare_e2e02" || base !== "https://aiko-agent.lewis-6d8.workers.dev") throw Error("Invalid synthetic deployment");

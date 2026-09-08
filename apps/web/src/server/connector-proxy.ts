@@ -10,6 +10,10 @@ const actions = new Set([
   "execute",
   "route",
   "password-managers/add",
+  "password-managers/unlock-parameters",
+  "password-managers/unlock",
+  "password-managers/browse",
+  "password-managers/select",
   "password-managers/remove",
   "password-managers/fill",
   "password-managers/authorize",
@@ -23,18 +27,24 @@ export async function handleConnectorRequest(
 ): Promise<Response> {
   const url = new URL(request.url);
   const approvals = url.pathname === "/api/approvals";
+  const databases = url.pathname === "/api/databases" || url.pathname.startsWith("/api/databases/");
+  const observedApproval = url.pathname === "/api/observed-actions/approval";
+  const messages = url.pathname === "/api/messages";
   const secretary =
     url.pathname === "/api/secretary" ||
     url.pathname.startsWith("/api/secretary/");
   const action = url.pathname.slice(
-    (approvals ? "/api/approvals" : secretary ? "/api/secretary" : "/api/connectors").length,
+    (databases ? "/api/databases" : observedApproval ? "/api/observed-actions/approval" : messages ? "/api/messages" : approvals ? "/api/approvals" : secretary ? "/api/secretary" : "/api/connectors").length,
   );
-  const allowed =
+  const allowed = databases ? request.method === "GET" && (action === "" || action === "/changes" || /^\/(?:artifacts|operations|approvals)\/[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,159}$/.test(action)) || request.method === "POST" && ["/query", "/commands", "/cancel"].includes(action)
+    : observedApproval ? request.method === "POST"
+    : messages ? request.method === "GET"
+    :
     request.method === "GET"
-      ? action === "" || (!secretary && ["/connections", "/apps", "/password-managers", "/native/progress"].includes(action))
+      ? action === "" || (secretary && action === "/work") || (!secretary && ["/connections", "/apps", "/password-managers", "/native/progress"].includes(action))
       : request.method === "POST" &&
         (approvals ? action === "" : secretary
-          ? ["/contact", "/history"].includes(action)
+          ? ["/contact", "/history", "/work"].includes(action)
           : actions.has(action.slice(1)));
   const json = (error: string, status: number) =>
     Response.json(
@@ -42,6 +52,7 @@ export async function handleConnectorRequest(
       { status, headers: { "cache-control": "no-store" } },
     );
   if (!allowed) return json("connector_route_unavailable", 404);
+  if (request.headers.has("origin") && request.headers.get("origin") !== url.origin) return json("invalid_origin", 403);
   const auth =
     request.headers.get("authorization") ??
     (request.headers.has("x-telegram-init-data")
@@ -87,7 +98,7 @@ export async function handleConnectorRequest(
           if (chunk.done) break;
           bytes += chunk.value.byteLength;
           if (
-            bytes > (secretary && action === "/history" ? 1_000_000 : 16_384)
+            bytes > (databases ? 1_048_576 : secretary && action === "/history" ? 1_000_000 : 16_384)
           ) {
             await reader.cancel();
             return json("request_too_large", 413);
@@ -103,7 +114,7 @@ export async function handleConnectorRequest(
       headers,
       body,
       redirect: "error",
-      signal: AbortSignal.any([request.signal, AbortSignal.timeout(["/native", "/password-managers/fill"].includes(action) ? 120_000 : 30_000)]),
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(["/native", "/password-managers/fill"].includes(action) ? 120_000 : action.startsWith("/password-managers") ? 35_000 : 30_000)]),
     });
     if (!response.headers.get("content-type")?.includes("application/json"))
       return json("connector_service_unavailable", 502);

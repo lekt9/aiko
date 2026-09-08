@@ -831,7 +831,7 @@ test("long text uses one rich message and provider errors have safe actionable r
   }});
   const text="Read <this> & keep the full answer. ".repeat(160);
   expect(await tg.sendRich("123",{kind:"text",text,replyTo:42,messageThreadId:7},new AbortController().signal)).toMatchObject({status:"delivered",providerId:"99"});
-  expect(calls).toEqual([{method:"sendRichMessage",body:{chat_id:"123",message_thread_id:7,reply_parameters:{message_id:42,allow_sending_without_reply:true},rich_message:{blocks:[{type:"paragraph",text}]}}}]);
+  expect(calls).toEqual([{method:"sendRichMessage",body:{chat_id:"123",message_thread_id:7,reply_parameters:{message_id:42,allow_sending_without_reply:true},rich_message:{html:"Read &lt;this&gt; &amp; keep the full answer. ".repeat(160)}}}]);
   const limited=createTelegramOutbound({token:"123:fixture",allowedUsers:new Set(["123"]),fetch:async()=>Response.json({ok:false,description:"private details",parameters:{retry_after:9}},{status:429})});
   expect(await limited.sendRich("123",{kind:"text",text:"hello"},new AbortController().signal)).toEqual({status:"rejected",reason:"rate_limited",retryAfter:9});
 });

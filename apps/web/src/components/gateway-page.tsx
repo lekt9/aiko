@@ -1,8 +1,13 @@
 import { ArrowUpRight, MessageCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { databaseLaunch, DatabaseWorkspace } from "./database-workspace";
 import { ConnectorOnboarding } from "./connector-onboarding";
 import { AIKO_TELEGRAM_URL } from "../lib/telegram";
 
 export function GatewayPage() {
+  const [search, setSearch] = useState("");
+  useEffect(() => setSearch(window.location.search), []);
+  if (databaseLaunch(search)) return <DatabaseWorkspace search={search} />;
   return (
     <div className="gateway-page">
       <header className="gateway-header">
@@ -50,6 +55,7 @@ export function GatewayPage() {
           <p>Include the exact page URL when asking Aiko to read it.</p>
         </aside>
         <ConnectorOnboarding />
+        <a href="/connect?screen=databases">Open databases</a>
         <section
           className="gateway-boundaries"
           aria-label="Your data and available capabilities"

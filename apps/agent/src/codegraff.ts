@@ -1,3 +1,4 @@
+import { verifySandboxReceipt, type SandboxJob, type SandboxJobReceipt, type SandboxDigest } from "./sandbox-job.ts";
 import {
   createHash,
   generateKeyPairSync,
@@ -282,14 +283,6 @@ export class CodegraffSandbox {
     });
     if (record.runnerVersion !== version) {
       await this.reportSetup("installing", "Preparing browser software…");
-      if (record.runnerVersion) {
-        // Upgrade only after the previous trusted runner flushes its browser profile.
-        await this.exec(
-          id,
-          `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js health && /home/daytona/.bun/bin/bun runner.js close`,
-          signal,
-        );
-      }
       await this.upload(
         id,
         "/tmp/aiko-bootstrap.sh",
@@ -314,17 +307,29 @@ export class CodegraffSandbox {
         }
       });
       await this.reportSetup("installing-driver", "Installing the browser driver…");
+      // Keep the installed runner usable if a download is interrupted. The
+      // staged runner runs only its install mode before publication.
+      await this.exec(id, `mkdir -p ${RUNNER_ROOT}/install`, signal);
       await this.upload(
         id,
-        `${RUNNER_ROOT}/runner.js`,
+        `${RUNNER_ROOT}/install/runner.js`,
         this.options.runnerBundle,
         signal,
       );
       await this.exec(
         id,
-        `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js install`,
+        `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun install/runner.js install`,
         signal,
       );
+      if (record.runnerVersion) {
+        // Upgrade only after the previous trusted runner flushes its browser profile.
+        await this.exec(
+          id,
+          `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js health && /home/daytona/.bun/bin/bun runner.js close`,
+          signal,
+        );
+      }
+      await this.exec(id, `mv ${RUNNER_ROOT}/install/runner.js ${RUNNER_ROOT}/runner.js`, signal);
     }
     await this.upload(
       id,
@@ -932,6 +937,19 @@ export class CodegraffSandbox {
       this.activeOperations--;
     }
   }
+  /** Readiness metadata; does not launch a browser process. */
+  async harnessEnvironment(signal?: AbortSignal): Promise<SandboxDigest> {
+    const id = await this.ensure(signal);
+    const health = runnerReply(await this.exec(id, `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js health`, signal));
+    if (typeof health.environmentDigest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(health.environmentDigest)) throw Error("Sandbox environment unavailable");
+    return health.environmentDigest as SandboxDigest;
+  }
+  async harnessJob(input: SandboxJob, signal?: AbortSignal): Promise<SandboxJobReceipt> {
+    if (input.owner !== this.options.owner) throw Error("Sandbox job owner mismatch");
+    const id = await this.ensure(signal);
+    const receipt = await this.invokePrivate(id, {operation:"harness-job",input}, signal);
+    return verifySandboxReceipt(input,receipt);
+  }
   async codeSegment(
     input: import("./code-sandbox-protocol.ts").CodeSegment,
     signal: AbortSignal,
@@ -1012,6 +1030,8 @@ export class CodegraffSandbox {
         }
       };
       return {
+        authorizeInspection: (policy, signal) => invoke({operation:"authorize-inspection",policy},signal),
+        inspectCurrentPage: (policy, signal) => readAndFlush({operation:"inspect-current-page",policy},signal),
         readConnectionPage: (url, linkOffset = 0, signal) => readAndFlush({operation:"connection-page",url,linkOffset},signal),
         sessionContext: async () => {
           const result = runnerReply(
@@ -1074,6 +1094,8 @@ export class CodegraffSandbox {
                 "element_not_found",
                 "The browser element was not found; refresh the snapshot before another read",
               );
+            if (result.status === "blocked" && ["private_sign_in_pending", "private_sign_in_cleanup_failed"].includes(result.reason))
+              throw Object.assign(new Error("Browser blocked by private sign-in"), {code: result.reason});
             if (result.status !== "completed")
               throw new Error("sandbox_browser_outcome_unknown");
             return result.output;

@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
@@ -18,7 +20,7 @@ if(config.mode!=="live"||!config.modelKey)throw new Error("Live configuration re
 const root=new URL("../../..",import.meta.url).pathname;
 const reportDirectory=`${root}/artifacts/aiko-cloudflare`;
 await mkdir(reportDirectory,{recursive:true,mode:0o700});
-const probe=new Database("/home/deck/.local/share/unbrowse/aiko/cloudflare-probe/probe.sqlite");
+const probe=new Database(join(process.env.AIKO_PROBE_DIR ?? join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local/share"), "unbrowse/aiko/cloudflare-probe"), "probe.sqlite"));
 const sandbox=new CodegraffSandbox({owner:"acct_cloudflare_probe01",gateway:new Codegraff(config.modelKey),store:{
   get:async <T>(key:string)=>{const row=probe.query("SELECT value FROM state WHERE key=?").get(key) as any;return row?JSON.parse(row.value) as T:undefined;},
   put:async(key,value)=>{probe.query("INSERT INTO state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key,JSON.stringify(value));},

@@ -1,7 +1,9 @@
+import {nativeLoginMetadataJournal} from "./native-login-journal.ts";
 import { nativeLogin, prepareNativeLogin, type NativeLoginInput, type NativeLoginState, type NativeLoginView } from "./native-login.ts";
 import { NativeLoginVault, nativeLoginCipher } from "./native-login-vault.ts";
 import { renewNativeLogin, submitNativeLogin } from "./native-login-renewal.ts";
 import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { nodeStorage } from "../../../packages/entity-learn/lib/storage-node.ts";
 import type { Event } from "tardie/core/event";
 import { createRequestEmbedding } from "./request-embedding.ts";
@@ -25,6 +27,9 @@ import { createPublicProxy, publicTarget } from "./browser-proxy.ts";
 import { connectionRoute, CONNECTION_LINK_LIMIT } from "./connection-index.ts";
 
 export interface BrowserDriver {
+  /** Fixed reads of an already open page; never starts or navigates the browser. */
+  inspectCurrentPage?(policy: BrowserInspectionPolicy, signal?: AbortSignal): Promise<BrowserInspection>;
+  authorizeInspection?(policy: BrowserInspectionPolicy, signal?: AbortSignal): Promise<boolean>;
   readConnectionPage?(url: string, linkOffset?: number, signal?: AbortSignal): Promise<{url:string;text:string;links:string[];linksTruncated:boolean;nextLinkOffset?:number}>;
   nativeAuth?(input: NativeLoginInput, signal?: AbortSignal): Promise<NativeLoginView>;
   execute(
@@ -57,6 +62,10 @@ export interface BrowserDriver {
   screenshot?(signal?: AbortSignal): Promise<Uint8Array>;
   close(): Promise<void>;
 }
+export interface BrowserInspectionPolicy { origin: string; publicOnly: boolean }
+export interface BrowserInspection {
+  url: string; title: string; text: string; snapshot: string; links: string[]; linksTruncated: boolean;
+}
 export type BrowserDriverFactory = (options: {
   domains: readonly string[];
   owner?: string;
@@ -66,7 +75,7 @@ export type BrowserDriverFactory = (options: {
 /** Uses the actual playground process/telemetry adapter, not its older model loop. */
 export function browserDriverFactory(
   executablePath: string,
-  options: { persistentDirectory?: string; nativeAssetDirectory?: string } = {},
+  options: { persistentDirectory?: string; nativeAssetDirectory?: string; browserBackend?: "chromium" | "cloakbrowser" } = {},
 ): BrowserDriverFactory {
   return async ({ domains, emit, owner, signal: initialSignal }) => {
     initialSignal?.throwIfAborted();
@@ -110,6 +119,8 @@ export function browserDriverFactory(
       throw new Error("Browser memory owner mismatch");
     }
     evidenceDb.exec("CREATE TABLE IF NOT EXISTS native_login(id TEXT PRIMARY KEY,state TEXT NOT NULL)");
+    const loginJournal=nativeLoginMetadataJournal(evidenceDb,principal);
+    const flushLoginObservations=()=>loginJournal.flush(emit);
     const nativeStates = () => (evidenceDb.query("SELECT state FROM native_login").all() as {state:string}[]).map(row => JSON.parse(row.state) as NativeLoginState);
     const nativeLocked = () => nativeStates().some(state => state.status === "pending");
     let nativeVault: NativeLoginVault;
@@ -122,6 +133,7 @@ export function browserDriverFactory(
     }
     const restoredNativeSessions = new Set<string>();
     let nativeBusy = false;
+    let privateGeneration = 0;
     const privateLogin = () => nativeBusy || nativeLocked();
     const pointerStorage = nodeStorage(
       join(directory, "request-memory.sqlite"),
@@ -266,10 +278,19 @@ export function browserDriverFactory(
         configPath,
         JSON.stringify({
           executablePath,
-          ...(persistent ? { profile: join(directory, "profile") } : {}),
+          // A Chromium 152 profile cannot safely be opened by the pinned Cloak 146 build.
+          ...(persistent ? { profile: join(directory, options.browserBackend === "cloakbrowser" ? "profile-cloak" : "profile") } : {}),
           proxy: proxy.url,
           proxyBypass: "<-loopback>",
-          args: "--disable-quic,--force-webrtc-ip-handling-policy=disable_non_proxied_udp,--webrtc-ip-handling-policy=disable_non_proxied_udp",
+          args: [
+            "--disable-quic",
+            "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+            "--webrtc-ip-handling-policy=disable_non_proxied_udp",
+            ...(options.browserBackend === "cloakbrowser" ? [
+              `--fingerprint=${Number.parseInt(createHash("sha256").update(`aiko-cloak:${principal}`).digest("hex").slice(0, 8), 16) || 1}`,
+              "--fingerprint-platform=windows",
+            ] : []),
+          ].join(","),
         }),
         { mode: 0o600 },
       );
@@ -355,10 +376,26 @@ export function browserDriverFactory(
         if (!persistent) await rm(directory, { recursive: true, force: true });
       }
     };
+    // Expiry alone does not release private custody: close/revoke the old
+    // sign-in through the native path before exposing any page to the actor.
+    const preparePublicBrowser = async (signal?: AbortSignal) => {
+      if (!nativeBusy && !closed) {
+        const expired = nativeStates().find(state => state.status === "pending" &&
+          (state.expiresAt <= Date.now() || (state.verifiedSession?.expiresAt ?? Infinity) <= Date.now()));
+        if (expired) {
+          try {
+            await driver.nativeAuth!({connectionId: expired.connectionId, domain: expired.domain, action: "status"}, signal);
+          } catch {
+            throw Object.assign(new Error("Expired private sign-in cleanup failed"), {code: "private_sign_in_cleanup_failed"});
+          }
+        }
+      }
+      if (privateLogin()) throw Object.assign(new Error("Browser unavailable during private sign-in"), {code: "private_sign_in_pending"});
+      if (closed) throw new Error("Browser session closed");
+    };
     const requestTransport: HarnessTransport = {
       send: async (request) => {
-        if (privateLogin() || closed)
-          throw new Error("Owned browser session unavailable");
+        await preparePublicBrowser(lifetime.signal);
         if (!["GET","HEAD"].includes(request.method) || request.body !== undefined || request.redirect !== "manual" || Object.keys(request.headers).length)
           throw Error("Only observed read requests can restore a browser session");
         const target = publicTarget(request.url);
@@ -419,7 +456,54 @@ export function browserDriverFactory(
       },
     });
     let hydrating = false;
+    const inspectionAuthorized = (inspection: BrowserInspectionPolicy) => {
+      try {
+        const origin=publicTarget(inspection.origin).origin, hostname=publicTarget(origin).hostname;
+        if (inspection.origin!==origin || typeof inspection.publicOnly!=="boolean" || !opened || !replayEndpoint ||
+            targetOrigin!==origin || closed || privateLogin()) return false;
+        // Revoking cookies does not make an already rendered account page public.
+        if (inspection.publicOnly) return !sessions.hasPrivateSession() && !sessions.hasPrivateHistory(hostname) &&
+          !nativeStates().some(state=>state.status==="connected" || hostname===state.domain || hostname.endsWith(`.${state.domain}`));
+        return sessions.inspectionAuthorized(hostname) && nativeStates().filter(state=>hostname===state.domain||hostname.endsWith(`.${state.domain}`))
+          .every(state=>state.status==="connected" && state.expiresAt>Date.now());
+      } catch {return false;}
+    };
     const driver: BrowserDriver = {
+      authorizeInspection: async (inspection,signal) => {
+        signal?.throwIfAborted();
+        return inspectionAuthorized(inspection);
+      },
+      inspectCurrentPage: (inspection, signal) => sessions.run(targetOrigin, async () => {
+        const origin = publicTarget(inspection.origin).origin;
+        if (inspection.origin !== origin || typeof inspection.publicOnly !== "boolean") throw Error("Invalid inspection policy");
+        signal?.throwIfAborted();
+        if (closed || privateLogin()) throw Error("Page inspection unavailable during private sign-in");
+        if (!opened || !replayEndpoint || targetOrigin !== origin) throw Error("No matching existing page");
+        const generation = privateGeneration;
+        const check = () => {
+          signal?.throwIfAborted();
+          if (!inspectionAuthorized(inspection) || generation !== privateGeneration)
+            throw Error("Page inspection authority unavailable");
+        };
+        check();
+        const currentLocation = async () => {
+          const result=await client.executeAgentAction({action:"url"},null,signal);
+          const location=result.output as {url?:unknown};
+          if (typeof location?.url!=="string" || publicTarget(location.url).origin!==origin) throw Error("Active page origin changed");
+        };
+        await currentLocation();
+        // The fixed DOM read refuses password forms and pins the selected page origin.
+        const page = await readBrowserConnectionPage(replayEndpoint, origin, 0, signal, true);
+        check();
+        const finalPage = await readBrowserConnectionPage(replayEndpoint, origin, 0, signal);
+        await currentLocation();
+        check();
+        if (page.url !== finalPage.url || page.text !== finalPage.text || page.title !== finalPage.title)
+          throw Error("Page changed during inspection");
+        await flush();
+        check();
+        return {...finalPage, snapshot:page.snapshot ?? ""};
+      }),
       readConnectionPage: async (url, linkOffset = 0, signal) => {
         await driver.execute({action:"navigate",url},signal);
         const page = await readBrowserConnectionPage(replayEndpoint!,publicTarget(url).origin,linkOffset,signal);
@@ -431,9 +515,11 @@ export function browserDriverFactory(
       },
       nativeAuth: async (input, signal) => {
         if (nativeBusy) throw Error("Private sign-in busy");
+        privateGeneration++;
         nativeBusy = true;
         let stage = "trace-flush";
         try {
+          await flushLoginObservations();
           await flush();
           stage = "pause-capture";
           await network.stopAndSnapshot().catch(() => undefined);
@@ -466,7 +552,7 @@ export function browserDriverFactory(
               save: state => {
                 if (reason === "expired" && state.status === "disconnected") state = {...state, expired: true};
                 if (state.status === "disconnected") nativeVault.remove(state.connectionId);
-                evidenceDb.query("INSERT INTO native_login(id,state) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state").run(state.connectionId,JSON.stringify(state));
+                loginJournal.save(state);
               },
               credentials: (state, credentials) => nativeVault.stage(state, credentials),
               verified: (state, cookies) => nativeVault.verified(state, cookies),
@@ -488,6 +574,7 @@ export function browserDriverFactory(
           console.warn("private_login_failed",stage);
           throw error;
         } finally {
+          await flushLoginObservations().catch(() => undefined);
           nativeBusy = false;
           if (!nativeLocked()) {
             network = new CdpNetworkListener(async (entry,index,complete) => { if (!privateLogin()) return learning.observe(entry,index,complete); },undefined,lifetime.signal);
@@ -553,7 +640,7 @@ export function browserDriverFactory(
         sessions.run(
           action.action === "navigate" ? action.url : targetOrigin,
           async () => {
-            if (privateLogin() || closed) throw new Error("Browser unavailable during private sign-in");
+            await preparePublicBrowser(signal);
             await startBrowser();
             await flush();
             const active = AbortSignal.any([
@@ -631,7 +718,7 @@ export function browserDriverFactory(
 }
 
 /** Fixed CDP program; callers cannot select JavaScript, CDP methods or another page origin. */
-export async function readBrowserConnectionPage(endpoint:string,origin:string,linkOffset=0,signal?:AbortSignal) {
+export async function readBrowserConnectionPage(endpoint:string,origin:string,linkOffset=0,signal?:AbortSignal,includeSnapshot=false) {
   const target=publicTarget(origin);
   if(!Number.isSafeInteger(linkOffset)||linkOffset<0)throw Error("Invalid link offset");
   const cdp=await openPrivateBrowserCdp(endpoint,signal);
@@ -642,14 +729,22 @@ export async function readBrowserConnectionPage(endpoint:string,origin:string,li
     const {sessionId}=await cdp.send("Target.attachToTarget",{targetId:pages[0].targetId,flatten:true});
     // A single fixed DOM read preserves document order across parent elements.
     // Native selectors do not implement Playwright's `>> nth=` syntax.
-    const expression=`(() => {if(location.origin!==${JSON.stringify(target.origin)}||document.querySelector('input[type="password"]'))throw Error('Sign-in context unavailable');const links=Array.from(document.querySelectorAll('a[href]'));return {url:location.href,text:(document.body?.innerText??'').slice(0,12000),links:links.slice(${linkOffset},${linkOffset+CONNECTION_LINK_LIMIT}).map(a=>a.href),count:links.length};})()`;
+    const expression=`(() => {if(location.origin!==${JSON.stringify(target.origin)}||document.querySelector('input[type="password"]'))throw Error('Sign-in context unavailable');const links=Array.from(document.querySelectorAll('a[href]'));return {url:location.href,title:document.title.slice(0,1000),text:(document.body?.innerText??'').slice(0,12000),links:links.slice(${linkOffset},${linkOffset+CONNECTION_LINK_LIMIT}).map(a=>a.href),count:links.length};})()`;
     const result=await cdp.send("Runtime.evaluate",{expression,returnByValue:true},sessionId);
     const page=result.result?.value;
     if(result.exceptionDetails||!page||typeof page.text!=="string"||!Array.isArray(page.links)||!Number.isSafeInteger(page.count))throw Error("Connection context unavailable");
     const url=connectionRoute(page.url,target.hostname);
     if(!url)throw Error("Connection context left its domain");
     const links=[...new Set<string>(page.links.flatMap((href:unknown)=>typeof href==="string"?(connectionRoute(href,target.hostname,url)??[]):[]))];
-    return {url,text:JSON.stringify({visibleText:page.text}).slice(0,16000),links,linksTruncated:page.count>linkOffset+CONNECTION_LINK_LIMIT,...(page.count>linkOffset+CONNECTION_LINK_LIMIT?{nextLinkOffset:linkOffset+CONNECTION_LINK_LIMIT}:{})};
+    let snapshot:string|undefined;
+    if(includeSnapshot) {
+      const tree=await cdp.send("Accessibility.getFullAXTree",{},sessionId);
+      if(!Array.isArray(tree.nodes))throw Error("Page accessibility snapshot unavailable");
+      // Same explicit CDP target as the DOM read. Values and editable controls are excluded.
+      snapshot=tree.nodes.filter((node:any)=>!node.ignored&&!['textbox','searchbox','combobox'].includes(node.role?.value)).slice(0,200)
+        .map((node:any)=>`${String(node.role?.value??'').slice(0,80)}: ${String(node.name?.value??'').slice(0,500)}`).join('\n').slice(0,12000);
+    }
+    return {url,title:typeof page.title === "string" ? page.title.slice(0,1000) : "",text:JSON.stringify({visibleText:page.text}).slice(0,16000),links,linksTruncated:page.count>linkOffset+CONNECTION_LINK_LIMIT,...(snapshot!==undefined?{snapshot}:{}),...(page.count>linkOffset+CONNECTION_LINK_LIMIT?{nextLinkOffset:linkOffset+CONNECTION_LINK_LIMIT}:{})};
   } finally {cdp.close();}
 }
 
@@ -1143,6 +1238,12 @@ export class PrivateBrowserSessions {
       }
       this.schedule();
     });
+  }
+  hasPrivateSession() { return [...this.records.values()].some(record => record.active); }
+  hasPrivateHistory(hostname:string) { return [...this.records.values()].some(record=>record.allowedDomains.includes(hostname)); }
+  inspectionAuthorized(hostname:string) {
+    return !this.failed && [...this.records.values()].filter(record=>record.allowedDomains.includes(hostname))
+      .every(record=>record.active && !record.revoked && record.expiresAt>this.now());
   }
   run<T>(url: string | undefined, action: () => Promise<T>) {
     return this.serial(async () => {

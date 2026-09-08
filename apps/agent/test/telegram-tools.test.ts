@@ -770,6 +770,25 @@ test("typing lifecycle closes on failure, cancellation and explicit host shutdow
   }
 });
 
+test("cold replay never restarts typing for terminal turns without delivery receipts", () => {
+  for (const terminal of ["TurnCompleted", "TurnFailed", "TurnCancelled"]) {
+    const typing = createTelegramTyping("123", {
+      typing: () => { throw Error("Historical turn must not start typing"); },
+    }, { waitForDelivery: true });
+    const machine = typing.component.machine;
+    let state = machine.step(machine.initial(), incoming());
+    state = machine.step(state, event("AikoTelegramTypingStarted", {
+      turn: "turn-1", epoch: 0, activation: "previous-process",
+    }));
+    state = machine.step(state, event(terminal, { turn: "turn-1", epoch: 0 }));
+    expect(machine.output(state).transitions).toHaveLength(0);
+    state = machine.step(state, event("TurnResumed", { turn: "turn-1", epoch: 1 }));
+    expect(machine.output(state).transitions).toHaveLength(1);
+    state = machine.step(state, event("AikoDeliverySettled", { turn: "turn-1", epoch: 0 }));
+    expect(machine.output(state).transitions).toHaveLength(1);
+  }
+});
+
 test("strict-provider null optional arguments do not reject a normal final reply", async () => {
   const f = fixture(true, async text => ({status:"ready",text,persona:"fixture"}));
   expect(await f.run("send_message", {kind:"text",text:"Hello",replyTo:null,buttons:null,caption:null,fileId:null,fileIds:null,final:true})).toMatchObject({status:"delivered",final:true});
@@ -808,8 +827,9 @@ test("native drafts keep typing through composition and fence delivery by resume
   state = machine.step(state, event("AikoTelegramActionSettled", {turn:"turn-1",epoch:1,result:{owner:"456",final:true,status:"delivered"}}));
   expect(machine.output(state).transitions).toHaveLength(0);
   state = machine.step(state, event("ToolCalled", {turn:"turn-1",epoch:1,callId:"search",name:"memory_recall"}));
-  await settle();
-  expect(drafts.at(-1)).toMatchObject({id:drafts[1]!.id,text:"Searching…"});
+  // A tool call does not automatically narrate progress; the actor chooses a send/progress tool.
+  expect(machine.output(state).transitions).toHaveLength(0);
+  expect(drafts.at(-1)).toMatchObject({id:drafts[1]!.id,text:""});
   state = machine.step(state, event("AikoDeliverySettled", {turn:"turn-1",epoch:1,result:{status:"delivered"}}));
   await settle();
   expect(stops).toBe(2);

@@ -47,9 +47,5 @@ export function liveAnswer(
     citations.has(id) ? id : "[unverified citation]",
   );
   const suffix = [...citations].filter((id) => !text.includes(id)).slice(0, 3);
-  return (
-    text.slice(0, 3200) +
-    (text.length > 3200 ? "\n[Answer truncated]" : "") +
-    (suffix.length ? `\n\nEvidence: ${suffix.join(", ")}` : "")
-  );
+  return text;
 }

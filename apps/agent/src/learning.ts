@@ -19,6 +19,29 @@ export interface LearningInput {
   type: string;
   payload: Json;
 }
+/** Owner-private evidence from the existing entity-learn journal, not a new receipt log. */
+export interface LearningIngestionEvidence {
+  version: 1;
+  owner: string;
+  scope: string;
+  sourceId: string;
+  sourceRevision: string;
+  readKey: string;
+  inputDigest: string;
+  inputHashPolicyVersion: "aiko-learning-input/v1";
+  commit: { key: string; sequence: number; digest: string; requestDigest: string; recordedAt: number; scopeVersion: number };
+}
+export interface LearningResult {
+  observation: string;
+  subject: string;
+  digest: string;
+  changed: boolean;
+  ingestion: LearningIngestionEvidence;
+}
+/** Hashes validated, redacted input only. Keep within the owner-private boundary. */
+const inputDigest = (input: LearningInput) => sha256(`aiko-learning-input/v1\n${JSON.stringify([
+  input.id, input.subject, input.title, input.kind, input.type, input.payload,
+])}`);
 type Binding = MemoryStoreBinding;
 const sha256 = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -178,12 +201,7 @@ export async function indexLearning(
   binding: Binding,
   value: LearningInput,
   redact: (value: string) => string,
-): Promise<{
-  observation: string;
-  subject: string;
-  digest: string;
-  changed: boolean;
-}> {
+): Promise<LearningResult> {
   const validated = validateLearningInput(value);
   if (!validated)
     throw new MemoryError("invalid_input", "Invalid learning evidence");
@@ -207,6 +225,7 @@ export async function indexLearning(
       "invalid_input",
       "Invalid redacted learning evidence",
     );
+  const readKey = `learning-read:${sha256(input.id)}`;
   const identity = sha256(input.subject);
   const sourceId = `learning-${identity}`;
   const locator = `aiko-learning:${identity}`;
@@ -248,7 +267,26 @@ export async function indexLearning(
       };
     },
   });
+  // Refresh's native request fingerprints the source recipe, not adapter bytes.
+  // Check retained bytes too so the same read identity cannot silently bind new input.
+  const receipt = () => {
+    const row = memory.journal.receipt(memory.scope, readKey);
+    if (!row) return undefined;
+    const observation = row.event.observations[0];
+    if (row.event.operation !== "refresh") return undefined;
+    const payload = observation?.payload as Record<string, Json> | undefined;
+    const retained = observation && payload && validateLearningInput({
+      id: input.id, subject: payload.id, title: observation.title,
+      kind: observation.kind, type: observation.type, payload: payload.data,
+    });
+    if (!retained || inputDigest(retained) !== inputDigest(input) ||
+        observation.producer.sourceId !== sourceId ||
+        !observation.producer.evidenceReference?.startsWith(`aiko-learning:${input.id}#previous=`))
+      throw new MemoryError("idempotency_conflict", "Learning read identity already binds different input");
+    return { row, scopeVersion: row.scopeVersion };
+  };
   try {
+    receipt();
     const previous = memory.journal.source(memory.scope, sourceId);
     if (previous && !previous.enabled) {
       if (
@@ -287,7 +325,7 @@ export async function indexLearning(
       );
     }
     const refreshed = await memory.refresh(sourceId, {
-      key: `learning-read:${sha256(input.id)}`,
+      key: readKey,
       maxBytes: 32_000,
       timeoutMs: 5_000,
     });
@@ -302,6 +340,9 @@ export async function indexLearning(
         "evidence_unavailable",
         "Learning evidence is suppressed or unavailable",
       );
+    const committed = receipt();
+    if (!committed || !committed.row.event.observations.some(o => o.id === observation.id))
+      throw new MemoryError("evidence_unavailable", "Native learning commit unavailable");
     const digest = contentDigest(observation);
     const previousId = /#previous=(obs_[a-f0-9]{64}|none)$/.exec(
       observation.producer.evidenceReference ?? "",
@@ -315,6 +356,14 @@ export async function indexLearning(
       subject: observation.subject,
       digest,
       changed: !prior || contentDigest(prior) !== digest,
+      ingestion: {
+        version: 1, owner: binding.owner, scope: memory.scope, sourceId,
+        sourceRevision: observation.producer.sourceRevision!, readKey,
+        inputDigest: inputDigest(input), inputHashPolicyVersion: "aiko-learning-input/v1",
+        commit: { key: committed.row.event.key, sequence: committed.row.seq,
+          digest: committed.row.digest, requestDigest: committed.row.event.requestDigest,
+          recordedAt: committed.row.event.recordedAt, scopeVersion: committed.scopeVersion },
+      },
     };
   } finally {
     memory.close();
@@ -322,6 +371,11 @@ export async function indexLearning(
 }
 
 export interface MemorySnapshot {
+  scope: string;
+  /** Scope-wide revisions bracketing this read, never attributed to one ingestion. */
+  scopeVersion: number;
+  endScopeVersion: number;
+  hashPolicyVersion: "aiko-memory-semantic/v1";
   root: string;
   leaves: {
     subject: string;
@@ -412,11 +466,14 @@ export function memorySnapshot(binding: Binding): MemorySnapshot {
         );
       level = parents;
     }
+    const endScopeVersion = memory.journal.scopeVersion(memory.scope);
     return {
+      scope: memory.scope, scopeVersion: before, endScopeVersion,
+      hashPolicyVersion: "aiko-memory-semantic/v1",
       root: level[0],
       leaves,
       complete:
-        before === memory.journal.scopeVersion(memory.scope),
+        before === endScopeVersion,
     };
   } finally {
     memory.close();

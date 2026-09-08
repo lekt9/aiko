@@ -13,10 +13,11 @@
     "aiko:init": "pnpm --filter @unlock/agent exec bun src/init.ts",
     "aiko:key": "pnpm --filter @unlock/agent exec bun src/plane-key.ts",
     "aiko:dev": "pnpm --filter @unlock/agent dev",
+    "aiko:lab": "bun apps/agent/scripts/request-lab-demo.ts",
     "aiko:build": "pnpm --filter @unlock/agent build",
     "aiko:backup": "bun apps/agent/src/backup.ts",
     "test:aiko": "pnpm --filter @unlock/agent test",
-    "test:browser-client": "bun run --cwd ../unbrowse-playground/runtime test:client",
+    "test:browser-client": "pnpm --filter @unbrowse/browser-harness test:client",
     "aiko:browser:init": "bun scripts/init-aiko-browser.ts",
     "server:dev": "pnpm --filter @unlock/server dev",
     "server:start": "pnpm --filter @unlock/server start",
@@ -36,7 +37,10 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:migrate": "bun --env-file=.env scripts/migrate-unlock.ts",
-    "db:verify": "bun --env-file=.env scripts/verify-supabase.ts"
+    "db:verify": "bun --env-file=.env scripts/verify-supabase.ts",
+    "aiko:cloud:build": "bun scripts/build-aiko-cloudflare.ts",
+    "aiko:cloud:deploy": "bun scripts/deploy-aiko-cloudflare.ts --deploy",
+    "aiko:cloud:verify": "bun scripts/verify-portable-cloud.ts"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
@@ -50,7 +54,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "@unbrowse/browser-harness": "link:../unbrowse-playground/runtime",
+    "@unbrowse/browser-harness": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "postgres": "^3.4.9"
   }

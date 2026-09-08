@@ -522,6 +522,43 @@ test("configured credential redaction applies before workflow outputs enter mode
   }
 });
 
+test("workflow follow-up commentary survives with credential redaction", async () => {
+  const db = new Database(":memory:");
+  const controller = new WorkflowController("alice", "user-alice", {
+    store:createWorkflowStore(sqliteWorkflowKV(db)),dispatcher:{resolve:async()=>undefined},
+  }, text=>text.replaceAll("private-commentary-key","[redacted]"));
+  try {
+    const base=Layer.succeed(Infer,{react:()=>Effect.succeed({kind:"call" as const,
+      callId:"next",name:"fixture_read",arguments:{},text:"Checking the next result. private-commentary-key"})});
+    const result=await Effect.runPromise(Effect.gen(function*(){
+      const model=yield* Infer;
+      return yield* model.react({identity:{thread:"user-alice",turn:"current",epoch:0},
+        trajectory:[{type:"ToolReturned",turn:"current",result:{kind:"workflow-receipt",owner:"alice",runId:"past"}}],
+      } as unknown as import("tardie").InferRequest);
+    }).pipe(Effect.provide(controller.inference(base))));
+    expect(result).toMatchObject({kind:"call",name:"fixture_read",text:"Checking the next result. [redacted]"});
+  } finally {db.close();}
+});
+
+test("workflow calls in a mixed native batch retain distinct private requests and unrelated siblings",async()=>{
+  const db=new Database(":memory:");
+  const controller=new WorkflowController("alice","user-alice",{store:createWorkflowStore(sqliteWorkflowKV(db)),dispatcher:{resolve:async()=>undefined}},s=>s);
+  try {
+    const action={kind:"calls" as const,batchId:"mixed",calls:[
+      {callId:"one",name:"workflow_run",arguments:{id:"PRIVATE_WORKFLOW_ONE",inputs:{query:"first"}}},
+      {callId:"two",name:"workflow_run",arguments:{id:"PRIVATE_WORKFLOW_TWO",inputs:{query:"second"}}},
+      {callId:"three",name:"fixture_read",arguments:{count:3}},
+    ],usage:{promptTokens:40,completionTokens:10}};
+    const base=Layer.succeed(Infer,{react:()=>Effect.succeed(action)});
+    const result=await Effect.runPromise(Effect.gen(function*(){return yield* (yield* Infer).react({identity:{actor:"aiko",instance:"test",thread:"user-alice",turn:"batch"},trajectory:[],system:"",tools:[]});}).pipe(Effect.provide(controller.inference(base))));
+    expect(result.kind).toBe("calls");if(result.kind!=="calls")throw Error("Missing batch");
+    expect(result.calls).toHaveLength(3);expect(new Set(result.calls.map(call=>call.callId)).size).toBe(3);
+    expect((result.calls[0]!.arguments as any).request).not.toBe((result.calls[1]!.arguments as any).request);
+    expect(result.calls[2]).toEqual(action.calls[2]);expect(result.usage).toEqual(action.usage);
+    expect(JSON.stringify(result)).not.toContain("PRIVATE_WORKFLOW");
+  }finally{db.close();}
+});
+
 test("workflow inference preserves ordinary completion output shape, including after an older workflow turn", async () => {
   const db = new Database(":memory:");
   const controller = new WorkflowController("alice", "user-alice", {

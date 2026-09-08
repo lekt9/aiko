@@ -1,0 +1,980 @@
+{
+  "version": "2026-09-08-reddit-1",
+  "retrieval_provider": "web_search",
+  "authorization": "User approved standard web search after Unbrowse failures.",
+  "evidence_note": "Curated paraphrases of returned search excerpts, not full-thread archives or independently verified personal accounts. Comments are scoped separately. No usernames or contact details retained. Extra budgets, constraints and corrections in variants are fictional.",
+  "sources": [
+    {
+      "id": "reddit_1rx90o8",
+      "url": "https://www.reddit.com/r/smallbusiness/comments/1rx90o8/",
+      "title": "Anyone here using a virtual assistant to grow their small business (especially for social media)?",
+      "subreddit": "smallbusiness",
+      "published_at": "2026-03-18",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A solo broker wants help with social content, messages and lead follow-up while avoiding another management burden.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Content and small business marketing",
+          "capabilities": [
+            "conversation",
+            "file_read"
+          ],
+          "prompt": "Help me plan social posts for my small business.",
+          "expected_outcome": "Use the business brief; propose distinct relevant posts without invented offers.",
+          "variant_prompt": "three posts only, and no salesy language",
+          "variant_expected_outcome": "Return three grounded posts matching the stated tone."
+        },
+        {
+          "category": "Inbox and messages",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Which leads need a follow-up? Draft the messages.",
+          "expected_outcome": "Use dated lead records; identify overdue follow-ups and draft without sending.",
+          "variant_prompt": "That lead replied this morning. Update the follow-up list.",
+          "variant_expected_outcome": "Remove or revise that follow-up using the new reply; preserve other leads."
+        }
+      ]
+    },
+    {
+      "id": "reddit_1ly4p57",
+      "url": "https://www.reddit.com/r/smallbusiness/comments/1ly4p57/",
+      "title": "Any good virtual assistant services?",
+      "subreddit": "smallbusiness",
+      "published_at": "2025-07-12",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A business-development requester needs meeting scheduling, simple CRM updates and tracking open tasks.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Scheduling and calendar",
+          "capabilities": [
+            "calendar_read"
+          ],
+          "prompt": "Find a time for this client meeting.",
+          "expected_outcome": "Use calendars and timezone; ask only for essential missing details.",
+          "variant_prompt": "Actually, afternoons only next week.",
+          "variant_expected_outcome": "Recompute feasible slots with the new constraint."
+        },
+        {
+          "category": "Spreadsheets and data cleanup",
+          "capabilities": [
+            "file_read",
+            "compute"
+          ],
+          "prompt": "Update my lead tracker from these meeting notes.",
+          "expected_outcome": "Map notes to fixture leads; leave unknown fields blank and return the updated file.",
+          "variant_prompt": "Two leads have the same name. Dont guess which one.",
+          "variant_expected_outcome": "Disambiguate using available identifiers or ask before changing those rows."
+        }
+      ]
+    },
+    {
+      "id": "reddit_1pouvbu",
+      "url": "https://www.reddit.com/r/smallbusiness/comments/1pouvbu/",
+      "title": "Where does one hire a Virtual Assistant/Virtual Employee for my startup?",
+      "subreddit": "smallbusiness",
+      "published_at": "2025-12-17",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A startup owner wants scheduling, reminders and inbox support to free up time.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Inbox and messages",
+          "capabilities": [
+            "email_read"
+          ],
+          "prompt": "Sort my inbox into what needs me and what can wait.",
+          "expected_outcome": "Use fixture deadlines and senders; explain urgent selections.",
+          "variant_prompt": "just show the urgent ones, im in a rush",
+          "variant_expected_outcome": "Return urgent actionable items without unrelated email summaries."
+        },
+        {
+          "category": "Reminders and follow-through",
+          "capabilities": [
+            "reminder_write"
+          ],
+          "prompt": "Remind me about the tasks due this week.",
+          "expected_outcome": "Extract fixture due dates; persist requested reminders in the test store.",
+          "variant_prompt": "Cancel the proposal reminder; I sent it.",
+          "variant_expected_outcome": "Cancel only the matching test reminder and verify its state."
+        }
+      ]
+    },
+    {
+      "id": "reddit_vobya4",
+      "url": "https://www.reddit.com/r/smallbusiness/comments/vobya4/",
+      "title": "If you would have a virtual assistant, what would you make him/her do?",
+      "subreddit": "smallbusiness",
+      "published_at": "2022-06-30",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "Employer comments dated July 1 and July 3 report delegating customer sales/returns emails and spreadsheet creation or modification.",
+      "requester_type": "experienced_employer_comment",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "comments",
+      "tasks": [
+        {
+          "category": "Customer service assistance",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Draft replies to these returns questions.",
+          "expected_outcome": "Apply supplied return policy to each ticket without promising unsupported refunds.",
+          "variant_prompt": "Theyre outside the return window. Keep the reply kind.",
+          "variant_expected_outcome": "Explain the fixture policy plainly without inventing an exception."
+        },
+        {
+          "category": "Spreadsheets and data cleanup",
+          "capabilities": [
+            "file_read",
+            "compute"
+          ],
+          "prompt": "Clean up this business spreadsheet for me.",
+          "expected_outcome": "Clarify the cleanup goal where needed; preserve data and return a usable file.",
+          "variant_prompt": "I only meant formatting. Put the removed rows back.",
+          "variant_expected_outcome": "Restore original rows from fixtures; apply formatting without dropping records."
+        }
+      ],
+      "evidence_dates": [
+        "2022-07-01",
+        "2022-07-03"
+      ]
+    },
+    {
+      "id": "reddit_1fkkg8f",
+      "url": "https://www.reddit.com/r/smallbusiness/comments/1fkkg8f/",
+      "title": "Person/Virtual assistant hiring - Any good resources or suggestions?",
+      "subreddit": "smallbusiness",
+      "published_at": "2024-09-19",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A busy owner asks for help with invoicing, new-lead emails and customer replies as work spills into personal time.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Receipts and expense organisation",
+          "capabilities": [
+            "file_read",
+            "compute"
+          ],
+          "prompt": "Prepare invoices from these completed jobs.",
+          "expected_outcome": "Use fixture prices and quantities; reconcile totals and return drafts.",
+          "variant_prompt": "The second job was cancelled. Remove it before you finish.",
+          "variant_expected_outcome": "Exclude the cancelled job and recompute draft totals."
+        },
+        {
+          "category": "Everyday writing and tone",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Draft a professional reply to this customer enquiry.",
+          "expected_outcome": "Answer the actual enquiry using supplied business facts; keep the draft unsent.",
+          "variant_prompt": "Less formal please, but keep the price and date.",
+          "variant_expected_outcome": "Make the wording natural while preserving both facts exactly."
+        }
+      ]
+    },
+    {
+      "id": "reddit_11g60ll",
+      "url": "https://www.reddit.com/r/smallbusiness/comments/11g60ll/",
+      "title": "Using a virtual assistant",
+      "subreddit": "smallbusiness",
+      "published_at": "2023-03-02",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "The requester describes email processing, organising digital files, documenting processes and coordinating work and family calendars.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Document understanding",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Turn my process notes into instructions someone else can follow.",
+          "expected_outcome": "Order concrete steps from the notes; mark missing details rather than inventing them.",
+          "variant_prompt": "Explain step two without the technical words.",
+          "variant_expected_outcome": "Simplify the step without changing the required action."
+        },
+        {
+          "category": "Document understanding",
+          "capabilities": [
+            "file_read",
+            "compute"
+          ],
+          "prompt": "Help me organise these digital files.",
+          "expected_outcome": "Propose a usable folder scheme from fixture contents; do not delete originals.",
+          "variant_prompt": "There are duplicate names. Keep both versions.",
+          "variant_expected_outcome": "Use distinct names and preserve every input file."
+        }
+      ]
+    },
+    {
+      "id": "reddit_lpvezq",
+      "url": "https://www.reddit.com/r/smallbusiness/comments/lpvezq/",
+      "title": "Virtual Assistants",
+      "subreddit": "smallbusiness",
+      "published_at": "2021-02-22",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A requester who is not tech-savvy wants social posting, customer email help, website changes and wholesale-account correspondence.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Plain-language technical help",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Help me change the wording on my business website.",
+          "expected_outcome": "Use the supplied page and desired text; prepare the edit and explain the next step simply.",
+          "variant_prompt": "I dont know what deploy means. What do I do?",
+          "variant_expected_outcome": "Explain publishing in everyday language for the configured workflow."
+        },
+        {
+          "category": "Everyday writing and tone",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Draft an email to a possible wholesale customer.",
+          "expected_outcome": "Use supplied product and ordering facts; avoid invented deals.",
+          "variant_prompt": "Make it shorter and ask if they want our catalogue.",
+          "variant_expected_outcome": "Preserve the relevant facts and add the requested question."
+        }
+      ]
+    },
+    {
+      "id": "reddit_p9laub",
+      "url": "https://www.reddit.com/r/smallbusiness/comments/p9laub/",
+      "title": "Virtual assistant for small online business?",
+      "subreddit": "smallbusiness",
+      "published_at": "2021-08-22",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A digital-product seller wants partner/affiliate research and templated outreach, with concern about content quality.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Research and shortlists",
+          "capabilities": [
+            "web_search",
+            "browser"
+          ],
+          "prompt": "Find potential partners for my digital product.",
+          "expected_outcome": "Use product criteria; return evidence-backed relevant prospects.",
+          "variant_prompt": "Just three, with a reason each would fit.",
+          "variant_expected_outcome": "Limit to three supported matches and explain fit briefly."
+        },
+        {
+          "category": "Everyday writing and tone",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Draft an outreach email to these possible partners.",
+          "expected_outcome": "Tailor supplied template to verified prospect facts; leave drafts unsent.",
+          "variant_prompt": "Dont pretend we have met before.",
+          "variant_expected_outcome": "Remove unsupported familiarity while keeping the partnership request."
+        }
+      ]
+    },
+    {
+      "id": "reddit_1u3f705",
+      "url": "https://www.reddit.com/r/ADHD/comments/1u3f705/",
+      "title": "Any budget virtual assistant sites you’d recommend?",
+      "subreddit": "ADHD",
+      "published_at": "2026-06-11",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A requester seeks affordable help organising tasks, scheduling appointments, following up and researching.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Overwhelm and daily planning",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Help me organise my to-do list.",
+          "expected_outcome": "Use the supplied list and deadlines; choose a manageable first step.",
+          "variant_prompt": "Only have 15 mins. What can I finish?",
+          "variant_expected_outcome": "Select a realistic task or bounded first step within the time."
+        },
+        {
+          "category": "Scheduling and calendar",
+          "capabilities": [
+            "calendar_read"
+          ],
+          "prompt": "Help me arrange my appointments.",
+          "expected_outcome": "Use fixture appointment needs and availability; identify conflicts.",
+          "variant_prompt": "Put the urgent appointment first, but dont change anything yet.",
+          "variant_expected_outcome": "Prioritise feasible options and leave calendar records unchanged."
+        }
+      ]
+    },
+    {
+      "id": "reddit_1l04tps",
+      "url": "https://www.reddit.com/r/ADHD/comments/1l04tps/",
+      "title": "Where can I find a virtual assistant to help me with things involving health and financial data?",
+      "subreddit": "ADHD",
+      "published_at": "2025-05-31",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "The requester describes overdue administration, reimbursement paperwork and application deadlines; only administrative needs are retained.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Document understanding",
+          "capabilities": [
+            "file_read"
+          ],
+          "prompt": "What paperwork is missing from my reimbursement request?",
+          "expected_outcome": "Compare fictional documents with the supplied checklist; list gaps without assessing medical eligibility.",
+          "variant_prompt": "Explain the missing bits like I have never filled this out.",
+          "variant_expected_outcome": "Give concrete document names and next actions in plain language."
+        },
+        {
+          "category": "Overwhelm and daily planning",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Sort these application and paperwork deadlines for me.",
+          "expected_outcome": "Extract dates from fixture notices; prioritise without inventing rules.",
+          "variant_prompt": "One letter has no deadline. Dont make one up.",
+          "variant_expected_outcome": "Mark its deadline unknown and identify how to check it."
+        }
+      ]
+    },
+    {
+      "id": "reddit_1ghmjg2",
+      "url": "https://www.reddit.com/r/ADHD/comments/1ghmjg2/",
+      "title": "Hiring a Virtual Assistant",
+      "subreddit": "ADHD",
+      "published_at": "2024-11-02",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A requester starting a new role wants help staying organised and keeping a routine.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Overwhelm and daily planning",
+          "capabilities": [
+            "conversation"
+          ],
+          "prompt": "Help me build a routine for my new job.",
+          "expected_outcome": "Use stated work hours and obligations; suggest a manageable routine.",
+          "variant_prompt": "Too much. Give me a simple morning routine.",
+          "variant_expected_outcome": "Reduce to a few feasible actions without a lecture."
+        },
+        {
+          "category": "Overwhelm and daily planning",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Help me keep track of what needs doing at work.",
+          "expected_outcome": "Turn supplied responsibilities into an actionable list with known deadlines.",
+          "variant_prompt": "I missed yesterday. Help me restart today.",
+          "variant_expected_outcome": "Reprioritise unfinished tasks kindly without pretending they were completed."
+        }
+      ]
+    },
+    {
+      "id": "reddit_13ui2b7",
+      "url": "https://www.reddit.com/r/ADHD/comments/13ui2b7/",
+      "title": "ADHD Accountability- Hiring a Virtual Assistant....???",
+      "subreddit": "ADHD",
+      "published_at": "2023-05-29",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "An existing assistant user wants accountability, nudges and help breaking work into smaller steps.",
+      "requester_type": "experienced_employer",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Overwhelm and daily planning",
+          "capabilities": [
+            "conversation"
+          ],
+          "prompt": "Break this project into small steps so I can start.",
+          "expected_outcome": "Use the project brief; give a concrete first action and short sequence.",
+          "variant_prompt": "Even that feels too big. Whats a two-minute start?",
+          "variant_expected_outcome": "Offer a genuinely small action tied to the project."
+        },
+        {
+          "category": "Reminders and follow-through",
+          "capabilities": [
+            "reminder_write"
+          ],
+          "prompt": "Check in later to see whether I finished this task.",
+          "expected_outcome": "Resolve the requested time and persist a test check-in; do not promise unsupported monitoring.",
+          "variant_prompt": "Stop checking in about it now.",
+          "variant_expected_outcome": "Cancel the matching test check-in and confirm verified state."
+        }
+      ]
+    },
+    {
+      "id": "reddit_m68s1t",
+      "url": "https://www.reddit.com/r/ADHD/comments/m68s1t/",
+      "title": "Entrepreneurs and business owners with ADHD: yes, you absolutely need an assistant.",
+      "subreddit": "ADHD",
+      "published_at": "2021-03-16",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "An employer reports delegating topic research and finding a good price for a child’s toy; universal advice in the post is not adopted.",
+      "requester_type": "experienced_employer",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Research and shortlists",
+          "capabilities": [
+            "web_search",
+            "browser"
+          ],
+          "prompt": "Research this topic and give me the useful bits.",
+          "expected_outcome": "Use the supplied topic; summarise material findings with supporting sources.",
+          "variant_prompt": "Im new to this. Explain the terms too.",
+          "variant_expected_outcome": "Define necessary terms briefly without replacing evidence with jargon."
+        },
+        {
+          "category": "Shopping comparisons",
+          "capabilities": [
+            "web_search",
+            "browser"
+          ],
+          "prompt": "Find a good price for this toy.",
+          "expected_outcome": "Match the exact fixture model and compare delivered costs.",
+          "variant_prompt": "That cheaper one is a different version. Check again.",
+          "variant_expected_outcome": "Recheck model compatibility and exclude mismatched listings."
+        }
+      ]
+    },
+    {
+      "id": "reddit_1004500",
+      "url": "https://www.reddit.com/r/ADHD/comments/1004500/",
+      "title": "Entrepreneurs/Business Owners: Have you tried having an assistant? Worth it or no?",
+      "subreddit": "ADHD",
+      "published_at": "2022-12-31",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A business owner describes avoided bookkeeping details, transaction tracking, travel and documenting processes; management overhead is a concern.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Receipts and expense organisation",
+          "capabilities": [
+            "file_read",
+            "compute"
+          ],
+          "prompt": "Organise the transaction details my bookkeeper needs.",
+          "expected_outcome": "Reconcile fixture transactions and list missing receipts or descriptions.",
+          "variant_prompt": "There are two copies of one receipt. Dont count it twice.",
+          "variant_expected_outcome": "Deduplicate using evidence and reconcile the total."
+        },
+        {
+          "category": "Document understanding",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Document this recurring business task for someone else.",
+          "expected_outcome": "Turn supplied process details into clear reusable steps.",
+          "variant_prompt": "Can you make it a checklist instead?",
+          "variant_expected_outcome": "Preserve essential steps and conditions in a usable checklist."
+        }
+      ]
+    },
+    {
+      "id": "reddit_plvtxj",
+      "url": "https://www.reddit.com/r/ADHD/comments/plvtxj/",
+      "title": "Using a Virtual Assistant to manage my ADHD life?",
+      "subreddit": "ADHD",
+      "published_at": "2021-09-10",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "The requester wants personal/family scheduling, gift research, task tracking and bill administration.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Shopping comparisons",
+          "capabilities": [
+            "web_search",
+            "browser"
+          ],
+          "prompt": "Help me choose gifts for my family.",
+          "expected_outcome": "Ask for essential recipient interests and budget; suggest supported options.",
+          "variant_prompt": "One person hates gadgets. Change only their gift.",
+          "variant_expected_outcome": "Replace only that suggestion while preserving other recipients and budgets."
+        },
+        {
+          "category": "Reminders and follow-through",
+          "capabilities": [
+            "file_read",
+            "reminder_write"
+          ],
+          "prompt": "Help me remember when these bills are due.",
+          "expected_outcome": "Extract fixture due dates and set requested test reminders; do not pay bills.",
+          "variant_prompt": "Did you actually save the reminders?",
+          "variant_expected_outcome": "Read the test store and report verified reminder state."
+        }
+      ]
+    },
+    {
+      "id": "reddit_f3c6id",
+      "url": "https://www.reddit.com/r/productivity/comments/f3c6id/",
+      "title": "Has anyone used a personal assistant?",
+      "subreddit": "productivity",
+      "published_at": "2020-02-13",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A former-assistant comment lists voicemail summaries, appointment scheduling and collecting home-repair quotes among delegated tasks.",
+      "requester_type": "former_assistant_comment",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "comments",
+      "tasks": [
+        {
+          "category": "Inbox and messages",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Summarise these voicemails and tell me who needs a callback.",
+          "expected_outcome": "Use fictional transcripts; extract callers, requests and deadlines.",
+          "variant_prompt": "One recording is unclear. Dont guess the number.",
+          "variant_expected_outcome": "Flag the uncertain contact detail and summarise only supported content."
+        },
+        {
+          "category": "Household administration",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Compare these home-repair quotes for me.",
+          "expected_outcome": "Compare supplied scope and totals; flag exclusions.",
+          "variant_prompt": "Which is cheapest if we include the extra call-out fee?",
+          "variant_expected_outcome": "Recompute comparable totals and explain any unknown charges."
+        }
+      ]
+    },
+    {
+      "id": "reddit_1vd1fo9",
+      "url": "https://www.reddit.com/r/adhdwomen/comments/1vd1fo9/",
+      "title": "Personal Assistant recs to help with ADHD task avoidance",
+      "subreddit": "adhdwomen",
+      "published_at": "2026-08-01",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A requester has a backlog of avoided personal and professional messages and wants help handling it.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Inbox and messages",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Help me catch up on messages I have avoided answering.",
+          "expected_outcome": "Triage fixture messages and propose an easy first reply.",
+          "variant_prompt": "Start with just one. I cant face the whole list.",
+          "variant_expected_outcome": "Choose one justified priority and provide a manageable reply draft."
+        },
+        {
+          "category": "Everyday writing and tone",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Draft a reply to this message I left unanswered.",
+          "expected_outcome": "Address the actual message with a brief honest acknowledgement of delay.",
+          "variant_prompt": "Dont make up an excuse for why I was late.",
+          "variant_expected_outcome": "Remove invented reasons and retain the substantive answer."
+        }
+      ]
+    },
+    {
+      "id": "reddit_rfe4hy",
+      "url": "https://www.reddit.com/r/workingmoms/comments/rfe4hy/",
+      "title": "Personal assistant or the likes",
+      "subreddit": "workingmoms",
+      "published_at": "2021-12-13",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A parent seeks help scheduling appointments, online orders, tracking gifts and remembering school paperwork.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Family and event coordination",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Keep track of which presents I have bought.",
+          "expected_outcome": "Build a gift tracker from fictional notes; distinguish bought from planned.",
+          "variant_prompt": "I returned one of them. Update the list.",
+          "variant_expected_outcome": "Change only the returned item and show what remains to buy."
+        },
+        {
+          "category": "Family and event coordination",
+          "capabilities": [
+            "file_read",
+            "reminder_write"
+          ],
+          "prompt": "Remind me when these school forms are due.",
+          "expected_outcome": "Extract fixture form deadlines and persist requested test reminders.",
+          "variant_prompt": "The school changed the date. Here is the new note.",
+          "variant_expected_outcome": "Use the updated notice and verify the revised reminder."
+        }
+      ]
+    },
+    {
+      "id": "reddit_1po9gbu",
+      "url": "https://www.reddit.com/r/workingmoms/comments/1po9gbu/",
+      "title": "How much do you pay your personal assistant?",
+      "subreddit": "workingmoms",
+      "published_at": "2025-12-16",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "An employer describes delegating errands, household supplies, groceries, organisation and occasional bill administration.",
+      "requester_type": "experienced_employer",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Meals and groceries",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Make a restocking list for the household.",
+          "expected_outcome": "Use supplied inventory and needs; consolidate quantities.",
+          "variant_prompt": "We already have detergent. Take it off.",
+          "variant_expected_outcome": "Remove detergent without losing other required items."
+        },
+        {
+          "category": "Household administration",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Help me organise this week’s errands.",
+          "expected_outcome": "Group fixture errands by location and opening hours.",
+          "variant_prompt": "Can you do the pickup yourself?",
+          "variant_expected_outcome": "State the actual physical-task limitation and offer a concrete coordination option."
+        }
+      ]
+    },
+    {
+      "id": "reddit_1sp255b",
+      "url": "https://www.reddit.com/r/TechForAgingParents/comments/1sp255b/",
+      "title": "Has anyone hired a virtual assistant to help support an aging parent?",
+      "subreddit": "TechForAgingParents",
+      "published_at": "2026-04-18",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A caregiver wants non-medical check-ins, a shared shopping list, appointment reminders and short summaries while supporting a parent remotely.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Family and event coordination",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Turn these family check-in notes into a short update.",
+          "expected_outcome": "Summarise stated needs and next actions from fictional notes without medical inference.",
+          "variant_prompt": "Just tell me what they need help with today.",
+          "variant_expected_outcome": "Return today’s supported practical needs concisely."
+        },
+        {
+          "category": "Meals and groceries",
+          "capabilities": [
+            "file_read",
+            "compute"
+          ],
+          "prompt": "Update our shared shopping list from these messages.",
+          "expected_outcome": "Merge requested items into the fixture list without duplicates.",
+          "variant_prompt": "Milk was already bought. Keep it off the list.",
+          "variant_expected_outcome": "Mark the purchase and preserve the remaining requested items."
+        }
+      ]
+    },
+    {
+      "id": "reddit_pydcxw",
+      "url": "https://www.reddit.com/r/fatFIRE/comments/pydcxw/",
+      "title": "How to get 100% full service FatFire travel? Is there a company that will set it all up for us?",
+      "subreddit": "fatFIRE",
+      "published_at": "2021-09-30",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A traveller wants multi-country hotels, transport and tours coordinated without spending hours on unfamiliar booking sites.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Trips and travel administration",
+          "capabilities": [
+            "web_search",
+            "browser"
+          ],
+          "prompt": "Help me organise hotels and activities for a multi-country trip.",
+          "expected_outcome": "Resolve route, dates and budget; create a coherent sourced plan without booking.",
+          "variant_prompt": "No big group tours please.",
+          "variant_expected_outcome": "Filter activities to the stated preference and preserve the itinerary constraints."
+        },
+        {
+          "category": "Trips and travel administration",
+          "capabilities": [
+            "web_search",
+            "browser"
+          ],
+          "prompt": "Work out how to get between these cities.",
+          "expected_outcome": "Compare supported transport options for fixture dates and locations.",
+          "variant_prompt": "One train is sold out. What else can we do?",
+          "variant_expected_outcome": "Find supported alternatives and explain changes to time and cost."
+        }
+      ]
+    },
+    {
+      "id": "reddit_1b2dsle",
+      "url": "https://www.reddit.com/r/fatFIRE/comments/1b2dsle/",
+      "title": "Virtual Assistant recommendations?",
+      "subreddit": "fatFIRE",
+      "published_at": "2024-02-28",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A requester wants repair quotes, tree-maintenance coordination, trip plans and children’s birthday entertainment research.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Household administration",
+          "capabilities": [
+            "web_search",
+            "browser"
+          ],
+          "prompt": "Help me find options for getting my car repaired.",
+          "expected_outcome": "Resolve location and repair need; shortlist relevant providers without claiming obtained quotes.",
+          "variant_prompt": "Can you tell me the actual price, not a guess?",
+          "variant_expected_outcome": "Use a real quote fixture or explain what information a provider needs."
+        },
+        {
+          "category": "Family and event coordination",
+          "capabilities": [
+            "web_search",
+            "browser"
+          ],
+          "prompt": "Find entertainment options for a child’s birthday party.",
+          "expected_outcome": "Ask for location, age, date and budget; return supported suitable options.",
+          "variant_prompt": "Keep it indoors and under S$200.",
+          "variant_expected_outcome": "Apply the fictional budget and indoor constraint; flag unknown fees."
+        }
+      ]
+    },
+    {
+      "id": "reddit_1jdt2my",
+      "url": "https://www.reddit.com/r/smallbusiness/comments/1jdt2my/",
+      "title": "Virtual assistant",
+      "subreddit": "smallbusiness",
+      "published_at": null,
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "An employer comment reports an assistant answering web chat, handling FAQs, updating CRM records and scheduling appointments.",
+      "requester_type": "experienced_employer_comment",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "comments",
+      "tasks": [
+        {
+          "category": "Customer service assistance",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Answer these customer questions using our FAQ.",
+          "expected_outcome": "Ground each answer in the fixture FAQ; flag questions it does not answer.",
+          "variant_prompt": "The FAQ doesnt say that. Check your answer.",
+          "variant_expected_outcome": "Correct unsupported claims and state what remains unknown."
+        },
+        {
+          "category": "Spreadsheets and data cleanup",
+          "capabilities": [
+            "file_read",
+            "compute"
+          ],
+          "prompt": "Add the details from these customer chats to my lead tracker.",
+          "expected_outcome": "Extract supported fields into matching fixture records.",
+          "variant_prompt": "The customer corrected their email in the last message.",
+          "variant_expected_outcome": "Use the latest explicit correction and preserve other fields."
+        }
+      ],
+      "evidence_date": "2025-03-21"
+    },
+    {
+      "id": "reddit_1lfloqu",
+      "url": "https://www.reddit.com/r/ADHDthriving/comments/1lfloqu/",
+      "title": "Anyone hire a virtual assistant?",
+      "subreddit": "ADHDthriving",
+      "published_at": "2025-06-19",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A business owner with an existing remote team asks about part-time help staying on track and organising personal life.",
+      "requester_type": "experienced_employer",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Overwhelm and daily planning",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Help me stay on top of work and personal tasks.",
+          "expected_outcome": "Combine supplied obligations into a manageable plan without inventing commitments.",
+          "variant_prompt": "Keep work tasks separate from home stuff.",
+          "variant_expected_outcome": "Reorganise the plan while preserving deadlines and priorities."
+        },
+        {
+          "category": "Overwhelm and daily planning",
+          "capabilities": [
+            "file_read",
+            "conversation"
+          ],
+          "prompt": "Help me review what is still unfinished this week.",
+          "expected_outcome": "Compare the fixture task list with completion records; surface unfinished priorities.",
+          "variant_prompt": "That one is done already. Dont keep bringing it up.",
+          "variant_expected_outcome": "Apply the correction and remove it from outstanding tasks."
+        }
+      ]
+    },
+    {
+      "id": "reddit_16tr3p9",
+      "url": "https://www.reddit.com/r/ADHD/comments/16tr3p9/",
+      "title": "Ideas for a personal assistant and/or other (PROACTIVE) virtual aid to help me keep my life together?",
+      "subreddit": "ADHD",
+      "published_at": "2023-09-27",
+      "retrieved_at": "2026-09-08",
+      "evidence_path": "reddit-corpus.json",
+      "request_summary": "A requester wants quick spoken or written task capture and a daily view of appointments, approaching deadlines and preparation needed later in the week.",
+      "requester_type": "help_seeker",
+      "review_status": "verified",
+      "retrieval_mode": "web_search_excerpt",
+      "review_method": "agent_checked_against_returned_excerpt",
+      "scope": "original_post",
+      "tasks": [
+        {
+          "category": "Overwhelm and daily planning",
+          "capabilities": [
+            "file_read",
+            "calendar_read"
+          ],
+          "prompt": "What am I doing today, and what should I prepare for later this week?",
+          "expected_outcome": "Combine fixture calendar and task deadlines; distinguish today’s events from advance preparation.",
+          "variant_prompt": "Just the things I need to act on today, please.",
+          "variant_expected_outcome": "Include necessary preparation today while excluding unrelated future events."
+        },
+        {
+          "category": "Reminders and follow-through",
+          "capabilities": [
+            "file_read",
+            "task_write"
+          ],
+          "prompt": "Save the tasks from this quick note so I dont lose them.",
+          "expected_outcome": "Extract tasks into the test store; keep uncertain dates unresolved and confirm saved items.",
+          "variant_prompt": "I meant next Thursday, not this Thursday.",
+          "variant_expected_outcome": "Resolve the corrected date using the test clock and update only the matching task."
+        }
+      ]
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import { loginUuid } from "./native-login-observation.ts";
 import { randomUUID } from "node:crypto";
 import type { routerCaller } from "./connector-router-host.ts";
 import type { ConnectorEngine } from "./connectors.ts";
@@ -91,6 +92,10 @@ export async function connectorApi(
         "username",
         "password",
         "code",
+        "attemptId",
+        "challengeId",
+        "expectedRevision",
+        "submissionId",
         "x",
         "y",
         "text",
@@ -106,6 +111,23 @@ export async function connectorApi(
     };
     if (path === "/api/connectors/password-managers/add")
       return await managerRoute(() => engine.addManager(body));
+    const vaultActions: Record<string, "parameters" | "unlock" | "browse" | "select"> = {
+      "/api/connectors/password-managers/unlock-parameters": "parameters",
+      "/api/connectors/password-managers/unlock": "unlock",
+      "/api/connectors/password-managers/browse": "browse",
+      "/api/connectors/password-managers/select": "select",
+    };
+    const vaultAction = vaultActions[path];
+    if (vaultAction) {
+      const field = vaultAction === "unlock" ? "key" : vaultAction === "browse" ? "page" : vaultAction === "select" ? "references" : undefined;
+      if (!body || typeof body.managerId !== "string" || !/^[a-f0-9-]{36}$/.test(body.managerId) ||
+          Object.keys(body).some(key => key !== "managerId" && key !== field) ||
+          (vaultAction === "unlock" && (typeof body.key !== "string" || !/^[a-f0-9]{64}$/.test(body.key))) ||
+          (vaultAction === "browse" && (!Number.isSafeInteger(body.page) || body.page < 1 || body.page > 1000)) ||
+          (vaultAction === "select" && (!Array.isArray(body.references) || body.references.length > 50 || body.references.some((ref: unknown) => typeof ref !== "string"))))
+        return json({ error: "invalid_body" }, 400);
+      return await managerRoute(() => engine.managerVault(body.managerId, vaultAction, field ? body[field] : undefined));
+    }
     if (["/api/connectors/password-managers/authorize", "/api/connectors/password-managers/callback"].includes(path)) {
       if (!body || typeof body.managerId !== "string" || !/^[a-f0-9-]{36}$/.test(body.managerId) || Object.keys(body).some((key) => !["managerId", "state", "code"].includes(key)))
         return json({ error: "invalid_body" }, 400);
@@ -168,6 +190,10 @@ export async function connectorApi(
       return json({ error: "invalid_body" }, 400);
     if (path === "/api/connectors/native") {
       const { connectionId, ...input } = body;
+      if ([input.attemptId,input.challengeId,input.submissionId].some(value=>value!==undefined&&!loginUuid(value)) ||
+          input.expectedRevision!==undefined&&(!Number.isSafeInteger(input.expectedRevision)||input.expectedRevision<1) ||
+          input.code!==undefined&&(input.action!=="credentials"||!loginUuid(input.attemptId)||!loginUuid(input.challengeId)||!loginUuid(input.submissionId)||!Number.isSafeInteger(input.expectedRevision)||input.expectedRevision<1))
+        return json({error:"invalid_login_binding"},400);
       return json(await engine.nativeControl(connectionId, input, request.signal));
     }
     if (path.endsWith("/complete"))

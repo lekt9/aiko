@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "dataset": "OpenSLR 72",
+  "publisher": "Google, Inc.",
+  "copyright": "Copyright 2018, 2019 Google, Inc.",
+  "license": "CC-BY-SA-4.0",
+  "licenseSha256": "bae5ccc863235f984a52c07d011e48a86c0c12f923be2dedd8624c7abdc22c6c",
+  "source": "https://www.openslr.org/72/",
+  "selection": "First local ZIP member from female and male archives, selected before model measurement; two recordings only, no population representativeness claim.",
+  "rubric": {
+    "frozenBeforeInference": true,
+    "maxWordErrorRate": 0.35,
+    "normalization": "Lowercase Unicode letters/numbers as tokens; punctuation ignored; diacritics retained; exact token Levenshtein distance/reference length.",
+    "timestampCheck": "Monotonic segments inside physically probed duration; no independent word-level alignment labels.",
+    "noSpeech": "No text and zero segments for declared silence/noise fixtures; a hallucination is a failed case."
+  },
+  "fixtures": [
+    {
+      "id": "cof_00610_00008989777",
+      "file": "cof_00610_00008989777.wav",
+      "language": "es",
+      "split": "development",
+      "transcript": "Los niños tienen mucha imaginación",
+      "bytes": 499756,
+      "sha256": "72fefe60d31f2ac21b0b7331c8571452962880b4bace835e7459698ba5c168cf",
+      "source": "https://www.openslr.org/resources/72/es_co_female.zip",
+      "archiveMember": "cof_00610_00008989777.wav",
+      "index": "https://www.openslr.org/resources/72/line_index_female.tsv",
+      "indexSha256": "f63a42d4cb186c59dd4d011154c9a8142424b5aa571d80b4c9e7ee510949d249",
+      "zipMemberCrc32": "d6456939"
+    },
+    {
+      "id": "com_00610_00008909944",
+      "file": "com_00610_00008909944.wav",
+      "language": "es",
+      "split": "held-out",
+      "transcript": "Al circular menos automóviles en la ciudad se logra una mejor calidad del aire",
+      "bytes": 565292,
+      "sha256": "9a44dcd40a3d4aff89a6bbe7851d1b85561abb4e0a2bbd5ff4b7bdef50ca57f8",
+      "source": "https://www.openslr.org/resources/72/es_co_male.zip",
+      "archiveMember": "com_00610_00008909944.wav",
+      "index": "https://www.openslr.org/resources/72/line_index_male.tsv",
+      "indexSha256": "9075a96fe2bc69721494b5fbdd1f7e3bf88488613812331f9e57b685bc53aca6",
+      "zipMemberCrc32": "0313851d"
+    }
+  ]
+}

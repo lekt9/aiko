@@ -71,18 +71,21 @@ export async function hash(value: unknown): Promise<string> {
 export const actionApprovalEventKey = (e: Event): string | undefined => e.type === "AikoActionApprovalTransition"
   ? JSON.stringify([e.type, e.owner, e.thread, e.id, e.previous]) : undefined;
 
-function project(events: readonly Event[], owner: string, thread: string, id: string): ActionApproval | undefined {
-  let state: ActionApproval | undefined;
+/** Read-only canonical projection shared with domain collection views. */
+export function projectActionApprovals(events: readonly Event[], owner: string, thread: string, onlyId?: string): Map<string, ActionApproval> {
+  const states = new Map<string, ActionApproval>();
   for (const row of events) {
-    if (row.type !== "AikoActionApprovalTransition" || row.owner !== owner || row.thread !== thread || row.id !== id) continue;
+    if (row.type !== "AikoActionApprovalTransition" || row.owner !== owner || row.thread !== thread || typeof row.id !== "string" || onlyId !== undefined && row.id !== onlyId) continue;
     const e = row as Transition;
+    const state = states.get(e.id);
     if (e.previous !== (state?.version ?? 0) || e.snapshot.version !== e.previous + 1) continue;
     if (!state && e.snapshot.state !== "pending") continue;
     if (state && canonical(e.snapshot.prepared) !== canonical(state.prepared)) continue;
-    state = e.snapshot;
+    states.set(e.id, e.snapshot);
   }
-  return state && copy(state);
+  return new Map([...states].map(([id, state]) => [id, copy(state)]));
 }
+const project = (events: readonly Event[], owner: string, thread: string, id: string) => projectActionApprovals(events, owner, thread, id).get(id);
 
 /** Host-only service. Never expose decide/handleDecision as NativeTools or actor methods.
  * Bind all calls for this owner to the SAME durable thread EventLog (linearizable reads

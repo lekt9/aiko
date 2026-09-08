@@ -5,6 +5,10 @@ import { openAICompatibleAdapter } from "tardie/model/openai";
 import { Effect, Layer } from "effect";
 import { safeUserId, type HttpFetch } from "./security.ts";
 import { sumUsage, type Usage } from "tardie/inference/usage";
+import { ModelBudgetDenied, type ModelBudgetDenial } from "./model-budget-denial.ts";
+import { parseModelCapabilities, modelPromptCacheKey, CEREBRAS_MODEL_CAPABILITIES } from "./model-capabilities.ts";
+import { hydrateProviderCompaction,responsesCompactor,type CompactionIdentity } from "./model-compaction.ts";
+import type { HarnessBlobStore } from "./harness-library.ts";
 
 export const MODEL_ROLES = ["conversation", "rag", "browser"] as const;
 export type ModelRole = typeof MODEL_ROLES[number];
@@ -109,8 +113,8 @@ function cerebrasStrictSchema(value: unknown, depth = 0): boolean {
     if (Array.isArray(schema[key]) && !schema[key].every((child: unknown) => cerebrasStrictSchema(child, depth + 1))) return false;
   return true;
 }
-function adaptCerebras(body: Record<string, any>) {
-  const adapted: Record<string, any> = { ...body, parallel_tool_calls: false, temperature: 0, stream_options: { include_usage: true } };
+function adaptCerebras(body: Record<string, any>, parallelToolCalls: boolean) {
+  const adapted: Record<string, any> = { ...body, parallel_tool_calls: parallelToolCalls, temperature: 0, stream_options: { include_usage: true } };
   if (body.tools !== undefined) {
     if (!Array.isArray(body.tools)) throw new Error("Invalid model tools");
     if (!body.tools.length) delete adapted.tools;
@@ -172,6 +176,13 @@ export type ModelRoutingOptions = {
   /** Preserve host stream timing; the supplied budget transport may impose a stricter deadline. */
   stream?: { firstChunkMs: number; idleMs: number; totalMs: number };
   throttleRetryDelaysMs?: readonly number[];
+  /** Trusted selection made by layerFor, never a model-supplied wire option. */
+  effort?: string;
+  compactionBlobs?:HarnessBlobStore;
+  authorizeCompaction?(identity:CompactionIdentity):boolean|Promise<boolean>;
+  /** Per-invocation trusted receipt sink. Called only for an actual ledger
+   * denial before its upstream dispatch callback has been entered. */
+  onBudgetDenied?: (denial: Readonly<ModelBudgetDenial>) => Promise<void>;
 };
 /**
  * Root integration: routing.layer(role) replaces only modelInfer(...). Keep withSpokenHistory and actor/browser gates.
@@ -201,6 +212,47 @@ export function createModelRouting(options: ModelRoutingOptions) {
     }
   }
   const config = parseModelRouting(configEnv, { contextWindowTokens: options.config.contextWindowTokens, maxOutputTokens: options.config.maxOutputTokens });
+  const routes = [...new Map(MODEL_ROLES.flatMap(role => [config.roles[role], ...(config.fallbacks?.[role] ?? [])])
+    .map(route => [`${route.provider}/${route.model}`, route] as const)).values()];
+  const capabilities = parseModelCapabilities(options.env.AIKO_MODEL_CAPABILITIES);
+  const capabilityFor = (route: ModelRoute) => capabilities[`${route.provider}/${route.model}`] ?? {};
+  const routeFor = (ref: { provider: string; model_id: string }) => {
+    const route = routes.find(route => route.provider === ref?.provider && route.model === ref?.model_id);
+    if (!route) throw Error("Worker model is outside the configured routes");
+    return route;
+  };
+  // Model support is declared by the operator's route policy rather than guessed
+  // from a model name. An unsupported explicit effort is never silently erased.
+  const effortPolicies: Record<string, readonly string[]> = (() => {
+    const raw = options.env.AIKO_MODEL_EFFORTS;
+    if (!raw) return {};
+    const value = JSON.parse(raw);
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw Error("Invalid model effort policies");
+    for (const [key, efforts] of Object.entries(value)) {
+      if (!/^(?:codegraff|cerebras)\/[A-Za-z0-9_./-]{1,128}$/.test(key) || !Array.isArray(efforts) || efforts.length > 8 ||
+          new Set(efforts).size !== efforts.length || efforts.some(effort => !["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(effort)))
+        throw Error("Invalid model effort policy");
+    }
+    return value;
+  })();
+  const contextFor = (ref: { provider: string; model_id: string }) => {
+    const route = routeFor(ref);
+    const policy=capabilityFor(route);
+    const defaults=route.provider==="cerebras"?CEREBRAS_MODEL_CAPABILITIES[route.model]:undefined;
+    const contextWindowTokens = policy.contextWindowTokens ?? Math.min(config.contextWindowTokens, defaults?.contextWindowTokens ?? (route.provider==="cerebras"?32768:config.contextWindowTokens));
+    const maxOutputTokens=Math.min(config.maxOutputTokens,policy.maxOutputTokens??defaults?.maxOutputTokens??config.maxOutputTokens);
+    if (maxOutputTokens >= contextWindowTokens) throw Error("Model output allowance exceeds selected context window");
+    return { contextWindowTokens, maxOutputTokens };
+  };
+  // Replay may encounter retired routes or host-supplied Infer identities.
+  // This sizes history for current routes; it grants no inference authority.
+  const contextForHistory = (ref?: { provider: string; model_id: string }) => {
+    if (ref && routes.some(route => route.provider === ref.provider && route.model === ref.model_id)) return contextFor(ref);
+    return routes.map(route => contextFor({provider:route.provider,model_id:route.model}))
+      .reduce((smallest, next) => next.contextWindowTokens < smallest.contextWindowTokens ? next : smallest);
+  };
+  if (options.effort !== undefined && !effortPolicies[`${config.roles.conversation.provider}/${config.roles.conversation.model}`]?.includes(options.effort))
+    throw Error("Requested model effort is not configured for this route");
   const status = (rawRole: ModelRole): ModelRouteStatus => {
     const role = roleOf(rawRole), route = config.roles[role], key = options.env[route.secretEnv];
     const reason = options.env.AIKO_ALLOW_PAID_INFERENCE !== "true" ? "paid_inference_disabled"
@@ -213,8 +265,10 @@ export function createModelRouting(options: ModelRoutingOptions) {
     if (result.status === "unavailable") throw new ModelRoutingUnavailable(result.role, result.provider, result.reason!);
     return result;
   };
-  const transport = (role: ModelRole): HttpFetch => {
-    const route = requireRoute(role), endpoint = `${MODEL_PROVIDERS[route.provider].baseUrl}/chat/completions`;
+  const transport = (role: ModelRole,operation:"infer"|"compact"="infer"): HttpFetch => {
+    const route = requireRoute(role),protocol=capabilityFor(route).protocol??"openai-chat-completions";
+    if(operation==="compact"&&!capabilityFor(route).serverCompaction)throw Error("Server compaction is not configured");
+    const endpoint = `${MODEL_PROVIDERS[route.provider].baseUrl}/${operation==="compact"?"responses/compact":protocol==="openai-responses"?"responses":"chat/completions"}`;
     const accountingEndpoint = `${MODEL_PROVIDERS.codegraff.baseUrl}/chat/completions`;
     return async (input, init) => {
       requireRoute(role);
@@ -223,25 +277,43 @@ export function createModelRouting(options: ModelRoutingOptions) {
       let body: Record<string, any>;
       try {
         body = JSON.parse(init.body);
-        if (!body || typeof body !== "object" || Array.isArray(body) || body.model !== route.model || !Array.isArray(body.messages) || !Number.isInteger(body.max_tokens) || body.max_tokens < 1 || body.max_tokens > config.maxOutputTokens) throw new Error("invalid model request");
-        body.messages = orderedToolMessages(body.messages);
-        if (route.provider === "cerebras") body = adaptCerebras(body);
+        if (!body || typeof body !== "object" || Array.isArray(body) || body.model !== route.model) throw new Error("invalid model request");
+        const maxTokens=operation==="compact"?contextFor({provider:route.provider,model_id:route.model}).maxOutputTokens:protocol==="openai-responses"?(body.max_output_tokens??body.max_tokens):body.max_tokens;
+        if(!Number.isInteger(maxTokens)||maxTokens<1||maxTokens>contextFor({provider:route.provider,model_id:route.model}).maxOutputTokens)throw Error("invalid output allowance");
+        if(protocol==="openai-responses") {
+          if(!Array.isArray(body.input))throw Error("invalid Responses input");
+          if(operation!=="compact"){body.max_output_tokens=maxTokens;delete body.max_tokens;body.store=false;}
+        } else {
+          if(!Array.isArray(body.messages))throw Error("invalid chat messages");
+          body.messages = orderedToolMessages(body.messages);
+        }
+        if (route.provider === "cerebras") body = adaptCerebras(body,capabilityFor(route).parallelToolCalls??CEREBRAS_MODEL_CAPABILITIES[route.model]?.parallelToolCalls??false);
         else if (Array.isArray(body.tools)) body = {...body,tools:body.tools.map((tool:any) =>
           tool?.function?.strict === true ? {...tool,function:{...tool.function,parameters:strictWireSchema(tool.function.parameters)}} : tool)};
+        if(operation!=="compact"&&capabilityFor(route).parallelToolCalls!==undefined)body.parallel_tool_calls=capabilityFor(route).parallelToolCalls;
+        if (options.effort !== undefined&&operation!=="compact") {
+          if (!effortPolicies[`${route.provider}/${route.model}`]?.includes(options.effort)) throw Error("Unsupported model effort");
+          if(protocol==="openai-responses")body.reasoning={...body.reasoning,effort:options.effort};
+          else body.reasoning_effort = options.effort;
+        }
       } catch { throw new ModelRoutingUnavailable(role, route.provider, "request_rejected"); }
       const encoded = JSON.stringify(body);
       if (Buffer.byteLength(encoded) > 262144) throw new ModelRoutingUnavailable(role, route.provider, "request_rejected");
       const key = options.env[route.secretEnv]!;
       const dispatchInput = options.budget ? accountingEndpoint : endpoint;
+      let dispatched = false;
       const dispatch: HttpFetch = async (accountingInput, chargedInit) => {
         if (String(accountingInput) !== dispatchInput) throw new Error("Invalid model dispatch endpoint");
+        init.signal?.throwIfAborted();
+        chargedInit?.signal?.throwIfAborted();
+        dispatched = true;
         const response = await (options.fetch ?? fetch)(endpoint, {
           ...chargedInit, method: "POST", body: encoded, redirect: "manual",
           signal: options.budget ? chargedInit?.signal : AbortSignal.any([
             ...(chargedInit?.signal ? [chargedInit.signal] : []),
             AbortSignal.timeout(integer(options.stream?.totalMs ?? 60000, 1, 300000)),
           ]),
-          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "text/event-stream" },
+          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: operation==="compact"?"application/json":"text/event-stream" },
         });
         if (!response.ok || !response.body) {
           await response.body?.cancel().catch(() => undefined);
@@ -259,26 +331,55 @@ export function createModelRouting(options: ModelRoutingOptions) {
       try {
         const send = options.budget ? options.budget.transport(options.owner, dispatch) : dispatch;
         // No credential is needed by the local accounting middleware. Dispatcher attaches it only at pinned egress.
-        return await send(dispatchInput, { ...init, body: encoded, headers: { "Content-Type": "application/json" }, redirect: "manual" });
-      } catch { throw new ModelRoutingUnavailable(role, route.provider, "transport_or_budget_unavailable"); }
+        // Existing daily/concurrency ledger accepts its original accounting shape.
+        // The dispatcher always uses the exact selected protocol body above.
+        const accountingBody=protocol==="openai-responses"?JSON.stringify({...body,max_tokens:body.max_output_tokens??contextFor({provider:route.provider,model_id:route.model}).maxOutputTokens}):encoded;
+        return await send(dispatchInput, { ...init, body: options.budget?accountingBody:encoded, headers: { "Content-Type": "application/json" }, redirect: "manual" });
+      } catch (error) {
+        if (options.budget && !dispatched && error instanceof ModelBudgetDenied && error.denial.owner === options.owner) {
+          init.signal?.throwIfAborted();
+          await options.onBudgetDenied?.(error.denial);
+          throw new ModelRoutingUnavailable(role, route.provider, "daily_budget_exhausted");
+        }
+        throw new ModelRoutingUnavailable(role, route.provider, "transport_or_budget_unavailable");
+      }
     };
   };
   const layer = (role: ModelRole): Layer.Layer<Infer> => {
     const route = requireRoute(role);
+    const capability=capabilityFor(route);
     const stream = options.stream ?? { firstChunkMs: 20000, idleMs: 20000, totalMs: 60000 };
     for (const value of [stream.firstChunkMs, stream.idleMs, stream.totalMs]) integer(value, 1, 300000);
     const native = modelInfer({
       provider: route.provider, baseUrl: MODEL_PROVIDERS[route.provider].baseUrl, apiKey: options.env[route.secretEnv]!, model: route.model,
-      protocol: "openai-chat-completions", contextWindowTokens: route.provider === "cerebras" ? Math.min(config.contextWindowTokens, 32768) : config.contextWindowTokens, maxOutputTokens: config.maxOutputTokens,
-      maxTokensLadder: [config.maxOutputTokens],
+      protocol: capability.protocol??"openai-chat-completions", ...contextFor({provider:route.provider,model_id:route.model}),
+      maxTokensLadder: [contextFor({provider:route.provider,model_id:route.model}).maxOutputTokens],
       throttleRetryDelaysMs: options.throttleRetryDelaysMs ?? DEFAULT_MODEL_RETRY_DELAYS_MS,
       fetch: transport(role),
       stream,
-    }, modelAdapters(openAICompatibleAdapter));
+    }, modelAdapters({...openAICompatibleAdapter,start:context=>openAICompatibleAdapter.start({...context,fetch:async(input,init)=>{
+      const state=(context.request as {providerState?:unknown}).providerState;
+      if(!capability.promptCache&&state===undefined)return context.fetch(input,init);
+      if(typeof init?.body!=="string")throw Error("Invalid cacheable model request");
+      const body=JSON.parse(init.body);
+      const {actor,instance,thread}=context.identity;
+      if(capability.promptCache) {
+        body.prompt_cache_key=modelPromptCacheKey(options.owner,{actor,instance,thread},`${route.provider}/${route.model}`,{system:context.systemPrompts,tools:context.tools});
+        if(capability.promptCache.retention)body.prompt_cache_retention=capability.promptCache.retention;
+      }
+      if(state!==undefined) {
+        if(capability.protocol!=="openai-responses"||!Array.isArray(body.input))throw Error("Provider compaction requires a Responses input window");
+        const items=await hydrateProviderCompaction(state,options.owner,context.identity,{provider:route.provider,model_id:route.model},{blobs:options.compactionBlobs,current:options.authorizeCompaction});
+        body.input=[...items,...body.input];
+      }
+      return context.fetch(input,{...init,body:JSON.stringify(body)});
+    }})}));
     // Reject model overrides from a request before I/O; choosing a role never grants another model/provider.
     return Layer.effect(Infer, Effect.gen(function* () {
       const binding = yield* Infer;
-      return { ...binding, react: (request: InferRequest, key?: string, signal?: AbortSignal) => {
+      return { ...binding,
+        ...(capability.serverCompaction?{compact:responsesCompactor({owner:options.owner,model:{provider:route.provider,model_id:route.model},endpoint:`${MODEL_PROVIDERS[route.provider].baseUrl}/responses/compact`,transport:transport(role,"compact"),custody:{blobs:options.compactionBlobs,current:options.authorizeCompaction}})}:{}),
+        react: (request: InferRequest, key?: string, signal?: AbortSignal) => {
         if (request.model && (request.model.provider !== route.provider || request.model.model_id !== route.model))
           return Effect.succeed({ kind: "fail" as const, error: "Model request override is outside the configured role" });
         const current = status(role);
@@ -320,5 +421,20 @@ export function createModelRouting(options: ModelRoutingOptions) {
       } };
     })).pipe(Layer.provide(native));
   };
-  return { config, status, transport, layer };
+  const layerFor = (ref: { provider: string; model_id: string }, effort?: string): Layer.Layer<Infer> => {
+    const route = routeFor(ref);
+    if (effort !== undefined && !effortPolicies[`${route.provider}/${route.model}`]?.includes(effort))
+      throw Error("Requested model effort is not configured for this route");
+    // A worker explicitly pinned to one model must not silently become another
+    // model after a failure. Its caller can make a new recorded routing decision.
+    return createModelRouting({ ...options, effort,
+      config: { ...config, roles: { ...config.roles, conversation: route },
+        fallbacks: { ...config.fallbacks, conversation: [] } },
+    }).layer("conversation");
+  };
+  return { config, status, transport, layer, layerFor, contextFor, contextForHistory,
+    models: () => routes.map(route => ({provider:route.provider,model_id:route.model,
+      efforts:[...(effortPolicies[`${route.provider}/${route.model}`] ?? [])],
+      ...contextFor({provider:route.provider,model_id:route.model}),protocol:capabilityFor(route).protocol??"openai-chat-completions"})),
+  };
 }

@@ -18,6 +18,8 @@ it("login fields render immediately without remote form metadata or password-man
   expect(markup).toContain('name="password"');
   expect(markup).not.toContain("Use a password manager");
   expect(markup).not.toContain("Could not confirm sign-in");
+  expect(markup).not.toContain("Sign in on website");
+  expect(markup).not.toContain("native-login-browser");
   expect(markup).not.toContain("disabled=");
   expect(request).not.toHaveBeenCalled();
 });

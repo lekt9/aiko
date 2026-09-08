@@ -1,10 +1,10 @@
+import { cloudflareState, cloudflareOperatorConfig } from "./cloudflare-paths.ts";
 /** End-to-end deployment witness against the isolated public canary site.
  * Only synthetic credentials are submitted; no third-party login is exercised. */
 import { mkdir, writeFile } from "node:fs/promises";
-import { loadConfig, privateEnv } from "../apps/agent/src/config.ts";
 process.umask(0o077);
-const state=await privateEnv("/home/deck/.config/unbrowse/aiko-cloudflare.env");
-const config=await loadConfig(process.env,{readonly:true});
+const state=await cloudflareState();
+const config=await cloudflareOperatorConfig();
 const owner=state.AIKO_E2E_OWNER,base=state.AIKO_CLOUDFLARE_URL;
 const domain="unlock-login-canary.lewis-6d8.workers.dev";
 if(owner!=="acct_cloudflare_e2e02")throw Error("Invalid canary account");

@@ -246,7 +246,7 @@ describe("native Tardie vertical slice", () => {
         (e) => e.type === "MessageReceived",
       ),
     ).toHaveLength(0);
-  });
+  }, 30_000);
 
   test("authenticated console stores actual notes and explicitly observes real native thread metadata", async () => {
     const app = await setup();

@@ -1,3 +1,4 @@
+import { SecretaryWorkPanel } from "./secretary-work-panel";
 import { useEffect, useState } from "react";
 
 type Chat = {
@@ -57,6 +58,7 @@ export function SecretaryPanel({ request }: { request: Request }) {
   }
   return (
     <section className="secretary-panel" aria-labelledby="secretary-title">
+      <SecretaryWorkPanel request={request} />
       <div className="app-section-heading">
         <h3 id="secretary-title">Secretary Mode</h3>
         <button

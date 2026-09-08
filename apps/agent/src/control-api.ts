@@ -10,6 +10,9 @@ import { memorySnapshot } from "./learning.ts";
 import { openMemory, type MemoryBinding } from "./memory.ts";
 import { boundedText } from "./security.ts";
 import type { AikoEvent } from "./actor.ts";
+import { requestLabApi, type RequestLabRunner } from "./request-lab-api.ts";
+import { proactivePreferences, validateProactivePreferences } from "./proactive-policy.ts";
+import { harnessDigest } from "./harness-library.ts";
 
 type Context = {
   host: Pick<
@@ -24,6 +27,7 @@ type Context = {
   serialize: <T>(operation: () => Promise<T>) => Promise<T>;
   validOwner: (id: string) => boolean;
   memoryBindingFor: (owner: string) => MemoryBinding;
+  requestLab?: RequestLabRunner;
 };
 const json = (body: unknown, status = 200) =>
   Response.json(body, {
@@ -40,6 +44,46 @@ export async function controlApi(c: Context): Promise<Response> {
   const registered = (await host.threads()).filter((t) => threadBinding(t));
   const allowed = (owner: string) =>
     c.validOwner(owner) && (principal.operator || owner === principal.owner);
+  if (url.pathname === "/api/control/request-lab")
+    return requestLabApi({ request, principal, allowed, run: c.requestLab, serialize: c.serialize });
+  if (url.pathname === "/api/control/proactive") {
+    if (request.method === "GET") {
+      const account = url.searchParams.get("account") ?? principal.owner;
+      if ([...url.searchParams.keys()].some(key => key !== "account")) return json({ error: "invalid_query" }, 400);
+      if (!allowed(account)) return json({ error: "forbidden" }, 403);
+      return json({ account, ...proactivePreferences(await host.read(`user-${account}`), account), writable: principal.scopes.includes("write") });
+    }
+    if (request.method !== "POST") return json({ error: "not_found" }, 404);
+    if (!principal.scopes.includes("write")) return json({ error: "forbidden" }, 403);
+    let body: any, preferences: ReturnType<typeof validateProactivePreferences>;
+    try {
+      body = JSON.parse(await boundedText(new Response(request.body), 16 * 1024));
+      if (!body || Object.keys(body).sort().join(",") !== "account,expectedRevision,operationId,preferences" ||
+        typeof body.account !== "string" || typeof body.operationId !== "string" || !/^[A-Za-z0-9._:-]{1,120}$/.test(body.operationId) ||
+        typeof body.expectedRevision !== "string" || !/^(default|sha256:[a-f0-9]{64})$/.test(body.expectedRevision)) throw Error("invalid_body");
+      preferences = validateProactivePreferences(body.preferences);
+    } catch { return json({ error: "invalid_body" }, 400); }
+    if (!allowed(body.account)) return json({ error: "forbidden" }, 403);
+    if (!registered.includes(`user-${body.account}`)) return json({ error: "not_found" }, 404);
+    return c.serialize(async () => {
+      const owner = body.account, thread = `user-${owner}`;
+      const id = harnessDigest(["aiko-proactive-preferences/v1", owner, body.operationId]);
+      const preferencesDigest = harnessDigest(preferences!);
+      const history = await host.read(thread), current = proactivePreferences(history, owner);
+      const existing = history.find(e => e.type === "AikoProactivePreferencesSet" && e.owner === owner && e.id === id);
+      if (existing) return existing.preferencesDigest === preferencesDigest && existing.previousRevision === body.expectedRevision
+        ? json({ status: "recorded", revision: id, currentRevision: current.revision })
+        : json({ error: "operation_conflict" }, 409);
+      if (current.revision !== body.expectedRevision) return json({ error: "revision_conflict", revision: current.revision }, 409);
+      await host.commitRoot(host.self(thread), { type: "AikoProactivePreferencesSet", id, owner,
+        previousRevision: current.revision, preferencesDigest, preferences: preferences!, at: Date.now() });
+      const retained = await host.read(thread);
+      if (!retained.some(e => e.type === "AikoProactivePreferencesSet" && e.id === id && e.owner === owner && e.preferencesDigest === preferencesDigest))
+        return json({ error: "revision_conflict", revision: proactivePreferences(retained, owner).revision }, 409);
+      void host.wake(thread).catch(() => undefined);
+      return json({ status: "accepted", revision: id, currentRevision: proactivePreferences(retained, owner).revision }, 202);
+    });
+  }
   if (url.pathname === "/api/control/accounts" && request.method === "GET") {
     const accounts = [
       ...new Set(registered.map((t) => threadBinding(t)!.owner)),

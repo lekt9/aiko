@@ -25,7 +25,7 @@ try {
     );
   const configPath =
     process.env.AIKO_SECRET_FILE ??
-    join(homedir(), ".config/unbrowse/aiko.env");
+    join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "unbrowse/aiko.env");
   privateDirectory(dirname(configPath));
   const lock = await open(`${configPath}.lock`, "wx", 0o600);
   const temporary = `${configPath}.${randomUUID()}.tmp`;
@@ -57,7 +57,7 @@ try {
     );
     await rename(temporary, configPath);
     console.info(
-      `Account ${account}; client credential saved privately. Restart Aiko to load the grant. Revoke by removing its digest from AIKO_PLANE_CREDENTIALS and restarting.`,
+      `Account ${account}; client credential saved privately. Redeploy hosted Aiko or restart local Aiko to load the grant. Revoke by removing its digest from AIKO_PLANE_CREDENTIALS and applying the configuration again.`,
     );
   } finally {
     await lock.close();

@@ -1,8 +1,8 @@
+import { cloudflareState } from "./cloudflare-paths.ts";
 /** Exercise request memory through the deployed Tardigrade agent itself. */
 import { writeFile } from "node:fs/promises";
-import { privateEnv } from "../apps/agent/src/config.ts";
 process.umask(0o077);
-const state=await privateEnv("/home/deck/.config/unbrowse/aiko-cloudflare.env");
+const state=await cloudflareState();
 if(state.AIKO_E2E_OWNER!=="acct_cloudflare_e2e02")throw Error("Invalid canary account");
 const id=`native-request-witness-${Date.now()}`,turn=`plane:${id}`,started=Date.now();
 async function request(path:string,body?:object) {

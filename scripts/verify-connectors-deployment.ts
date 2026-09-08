@@ -1,7 +1,7 @@
-import { privateEnv } from "../apps/agent/src/config.ts";
+import { cloudflareState } from "./cloudflare-paths.ts";
 import { mkdir, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-const env = await privateEnv("/home/deck/.config/unbrowse/aiko-cloudflare.env");
+const env = await cloudflareState();
 const base = env.AIKO_CLOUDFLARE_URL;
 if (!base?.startsWith("https://") || !env.AIKO_E2E_TOKEN)
   throw new Error("Deployment canary configuration missing");

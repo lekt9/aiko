@@ -44,6 +44,8 @@ export interface MemoryBinding {
   embedding?: EmbeddingProvider;
   styleExampleConsent?: (observationId: string) => boolean;
   redact: (text: string) => string;
+  /** Trusted same-owner, same-instance source reads for background provenance only. */
+  readSourcePage?: (source: ThreadAddress, after: number, limit: number) => Promise<readonly ThreadEventRow[]>;
   /** Already authorized and bound to exactly this actor thread by the host. */
   readPage: (
     after: number,
@@ -718,6 +720,8 @@ export function memoryTools(
     description: string,
     inputSchema: ReturnType<typeof schema>,
   ): NativeTool<Self> => ({
+    // These operations inspect recorded evidence without refresh, embedding or mutation.
+    speculativeRead: ["scan", "page", "lint_pages", "recall", "get"].includes(operation),
     spec: { name, description, inputSchema },
     run: run(operation),
   });

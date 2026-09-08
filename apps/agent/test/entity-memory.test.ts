@@ -454,27 +454,7 @@ describe("real entity-learn engine in native Tardie tools", () => {
       components: [
         infer([
           system("Use memory"),
-          tool(
-            memoryTools(bound).map((binding) =>
-              binding.spec.name === "memory_remember"
-                ? {
-                    ...binding,
-                    run: (...args: Parameters<typeof binding.run>) =>
-                      binding
-                        .run(...args)
-                        .pipe(
-                          Effect.tap(() =>
-                            Effect.die(
-                              new Error(
-                                "simulated process loss after memory commit",
-                              ),
-                            ),
-                          ),
-                        ),
-                  }
-                : binding,
-            ),
-          ),
+          tool(memoryTools(bound)),
           outputValidateOnce,
         ]),
       ],
@@ -485,6 +465,13 @@ describe("real entity-learn engine in native Tardie tools", () => {
       actorInstance: "test",
       actorFor: () => crashing,
       layersFor: () => inference,
+      // Fail the durable acknowledgement boundary after memory committed.
+      // A tool defect is an ordinary captured tool error, not process loss.
+      canAppend: (_thread, events) => {
+        if (events.some(event => event.type === "ToolReturned"))
+          throw new Error("simulated process loss after memory commit");
+        return true;
+      },
     });
     cleanup.push(() => host.close());
     await host.commitRoot(

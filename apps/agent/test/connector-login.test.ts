@@ -124,6 +124,7 @@ test("pending login and recommendation converge to one native Mini App button ac
     {
       chat_id: "123",
       text: "Sign in to service.net to continue with Aiko.",
+      parse_mode: "HTML",
       link_preview_options: { is_disabled: true },
       reply_markup: {
         inline_keyboard: [
@@ -204,4 +205,37 @@ test("login notifications require trusted owner chat history and an owned pendin
   });
   await other.drive();
   expect(other.sends).toHaveLength(0);
+});
+
+test("challenge notices are attempt/challenge-bound and completion has its own durable identity",async()=>{
+  const f=await fixture();
+  const attemptId=crypto.randomUUID(),challengeId=crypto.randomUUID();
+  const challenge={type:"AikoPrivateLoginObserved",id:"challenge",owner:"123",connectionId:id,attemptId,challengeId,kind:"challenge",at:3};
+  await f.seed(telegramMessage,challenge);await f.drive();
+  expect(f.sends).toHaveLength(1);expect(f.sends[0].text).toContain("verification code");
+  await f.restart();await f.seed(challenge);await f.drive();expect(f.sends).toHaveLength(1);
+  await f.seed({...challenge,id:"replacement",challengeId:crypto.randomUUID()});await f.drive();expect(f.sends).toHaveLength(2);
+  f.status("connected");await f.seed({type:"AikoLoginOperationVerified",id:"verified",owner:"123",connectionId:id,attemptId,at:4});await f.drive();
+  expect(f.sends).toHaveLength(3);expect(f.sends[2].text).toContain("verified");
+  await f.restart();expect(f.sends).toHaveLength(3);
+});
+
+test("a cancelled attempt cannot emit a late OTP prompt",async()=>{
+  const f=await fixture(),attemptId=crypto.randomUUID();
+  await f.seed(telegramMessage,{type:"AikoLoginOperationCancelled",id:"cancel",owner:"123",connectionId:id,attemptId,at:3},
+    {type:"AikoPrivateLoginObserved",id:"late-challenge",owner:"123",connectionId:id,attemptId,challengeId:crypto.randomUUID(),kind:"challenge",at:4});
+  await f.drive();expect(f.sends).toHaveLength(0);
+});
+
+test("late opening from a retired attempt cannot displace the current challenge notice",async()=>{
+  const f=await fixture(),old=crypto.randomUUID(),current=crypto.randomUUID();
+  const base={owner:"123",connectionId:id,at:3};
+  await f.seed(telegramMessage,
+    {...base,type:"AikoLoginOperationRequested",id:"old-request",attemptId:old},
+    {...base,type:"AikoLoginOperationCancelled",id:"old-cancel",attemptId:old},
+    {...base,type:"AikoLoginOperationRequested",id:"current-request",attemptId:current},
+    {...base,type:"AikoPrivateLoginObserved",id:"late-opening",attemptId:old,kind:"opening"},
+    {...base,type:"AikoPrivateLoginObserved",id:"current-challenge",attemptId:current,kind:"challenge",challengeId:crypto.randomUUID()});
+  await f.drive();expect(f.sends).toHaveLength(1);expect(f.sends[0].text).toContain("verification code");
+  await f.restart();expect(f.sends).toHaveLength(1);
 });

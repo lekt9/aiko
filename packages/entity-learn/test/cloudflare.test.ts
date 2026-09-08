@@ -187,3 +187,52 @@ describe("native Cloudflare storage adapter", () => {
     } finally { fixture.db.close(); }
   });
 });
+
+for (const backend of ["node", "cloudflare"] as const) {
+  test(`indexed journal receipt preserves interleaved scope ordinals and hydrates only its event (${backend})`, () => {
+    const directory = mkdtempSync("/tmp/entity-learn-receipt-");
+    const durable = backend === "cloudflare" ? durableStorage() : undefined;
+    const path = `${directory}/receipt.sqlite`;
+    let storage = durable ? cloudflareStorage(durable.storage) : nodeStorage(path);
+    try {
+      let a = new Memory({ storage, scope: "owner:a", clock: () => 1000 });
+      const b = new Memory({ storage, scope: "owner:b", clock: () => 1000 });
+      a.remember(claim("first"), write("a-first"));
+      b.remember(claim("foreign-first"), write("shared-key"));
+      const observation = a.remember(claim("target"), write("shared-key"));
+      const original = a.journal.receipt(a.scope, "shared-key")!;
+      expect(original.seq).toBe(3);
+      expect(original.scopeVersion).toBe(2);
+      expect(original.event.observations).toEqual([observation]);
+      expect(a.journal.prior(a.scope, "shared-key", original.event.requestDigest)).toEqual(original.event);
+      expect(() => a.journal.prior(a.scope, "shared-key", "different")).toThrow("different input");
+      expect(b.journal.receipt(b.scope, "shared-key")?.scopeVersion).toBe(1);
+      expect(b.journal.receipt(b.scope, "a-first")).toBeUndefined();
+      expect(a.journal.receipt(a.scope, "missing")).toBeUndefined();
+      const unrelated = a.remember(claim("later", { text: "separate artifact" }), write("a-later"));
+      b.remember(claim("foreign-later"), write("b-later"));
+      expect(a.journal.receipt(a.scope, "shared-key")).toEqual(original);
+      const keyPlan = storage.prepare("EXPLAIN QUERY PLAN SELECT * FROM journal WHERE scope=? AND request_key=?").all(a.scope, "shared-key");
+      const ordinalPlan = storage.prepare("EXPLAIN QUERY PLAN SELECT COUNT(*) AS n FROM journal WHERE scope=? AND seq<=?").all(a.scope, original.seq);
+      expect(JSON.stringify(keyPlan)).toContain("sqlite_autoindex_journal_1");
+      expect(JSON.stringify(ordinalPlan)).toContain("COVERING INDEX journal_scope_seq");
+      expect(JSON.stringify(ordinalPlan)).toContain("seq<?");
+      // A real missing unrelated payload must not prevent recovery of this receipt.
+      storage.prepare("DELETE FROM artifacts WHERE digest=?").run(unrelated.payloadDigest);
+      expect(a.journal.receipt(a.scope, "shared-key")).toEqual(original);
+      expect(() => a.journal.events(a.scope)).toThrow("artifact is missing");
+      storage.close();
+      storage = durable ? cloudflareStorage(durable.storage) : nodeStorage(path);
+      a = new Memory({ storage, scope: "owner:a" });
+      expect(a.journal.receipt(a.scope, "shared-key")).toEqual(original);
+      expect(a.journal.scopeVersion(a.scope)).toBe(3);
+      // The requested event's missing bytes still fail closed.
+      storage.prepare("DELETE FROM artifacts WHERE digest=?").run(observation.payloadDigest);
+      expect(() => a.journal.receipt(a.scope, "shared-key")).toThrow("artifact is missing");
+    } finally {
+      storage.close();
+      durable?.db.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+}

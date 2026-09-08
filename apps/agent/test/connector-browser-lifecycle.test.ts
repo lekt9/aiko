@@ -378,3 +378,76 @@ test("terminal progress publication retries durably without failing or replaying
  expect(calls).toBe(1);expect(delivered.filter(event=>event.id===pending[0].id)).toHaveLength(1);
  expect([...store.rows.values()].find(row=>row.id===connection.id).pendingEvents).toEqual([]);
 });
+
+test("login operation mount requires matching native attempt and committed connection revision",async()=>{
+ const attemptId=crypto.randomUUID();let nativeRevision=2,confirmedRevision=2;
+ const e=engine({native:true,begin,status:async b=>verified(b,confirmedRevision),control:async(_binding,input)=>({status:"connected",domain:"service.net",attemptId:input.attemptId,revision:nativeRevision,expiresAt:Date.now()+600000})});
+ const connection=await e.connectBrowser("service.net");
+ expect((await e.loginOperationControl({connectionId:connection.id,domain:"service.net",attemptId,action:"finish"},AbortSignal.timeout(5000))).status).toBe("connected");
+ nativeRevision=3;
+ await expect(e.loginOperationControl({connectionId:connection.id,domain:"service.net",attemptId,action:"finish"},AbortSignal.timeout(5000))).rejects.toThrow("custody");
+ expect(()=>e.loginOperationControl({connectionId:connection.id,domain:"service.net",attemptId,action:"credentials"},AbortSignal.timeout(5000))).toThrow();
+ await expect(e.loginOperationControl({connectionId:connection.id,domain:"foreign.net",attemptId,action:"finish"},AbortSignal.timeout(5000))).rejects.toThrow("Owned");
+});
+
+test("private API forwards OTP binding fields, rejects invalid bindings, and keeps normal login compatible",async()=>{
+ const calls:any[]=[];
+ const e=engine({native:true,begin,control:async(_binding,input)=>{calls.push(input);return {status:"pending",domain:"service.net",revision:1,expiresAt:Date.now()+60000};}});
+ const connection=await e.connectBrowser("service.net");
+ const request=(input:object)=>connectorApi(new Request("http://localhost/api/connectors/native",{method:"POST",body:JSON.stringify({connectionId:connection.id,...input})}),e);
+ const binding={attemptId:crypto.randomUUID(),challengeId:crypto.randomUUID(),submissionId:crypto.randomUUID(),expectedRevision:2};
+ expect((await request({action:"credentials",code:"PRIVATE_FIXTURE_OTP",...binding}))?.status).toBe(200);
+ expect(calls[0]).toEqual({action:"credentials",code:"PRIVATE_FIXTURE_OTP",...binding});
+ expect((await request({action:"login",username:"fixture",password:"PRIVATE_FIXTURE_PASSWORD"}))?.status).toBe(200);
+ expect(calls[1]).toEqual({action:"login",username:"fixture",password:"PRIVATE_FIXTURE_PASSWORD"});
+ for(const change of [{attemptId:undefined},{challengeId:"bad"},{submissionId:undefined},{expectedRevision:0},{expectedRevision:"2"},{action:"login"}]){
+   const response=await request({action:"credentials",code:"PRIVATE_FIXTURE_OTP",...binding,...change});
+   expect(response?.status).toBe(400);expect(await response!.text()).not.toContain("PRIVATE_FIXTURE");
+ }
+ expect(calls).toHaveLength(2);
+});
+
+test("panel OTP binding reaches the real private handler; stale challenges and lost acknowledgements never retype",async()=>{
+ const {nativeLogin}=await import("../src/native-login.ts");
+ const {nativeOtpSubmission}=await import("../../web/src/lib/native-login-input.ts");
+ let state:import("../src/native-login.ts").NativeLoginState;
+ let typed=0,loseAck=false;
+ const adapter:SecureBrowserAdapter={native:true,begin,control:async(binding,input)=>nativeLogin({...input,connectionId:binding.connectionId,domain:binding.domain},{read:()=>state,save:next=>{state=structuredClone(next);},cdp:{close(){},async send(method,params:any){
+   if(method==="Target.attachToTarget")return {sessionId:"fixture"};
+   if(method==="Input.insertText"){typed++;return {};}
+   if(method==="Runtime.evaluate"){
+     if(params.expression==="location.hostname")return {result:{value:"service.net"}};
+     if(params.expression==="location.origin")return {result:{value:"https://service.net"}};
+     if(params.expression.includes("Object.keys(f)"))return {result:{value:["code"]}};
+     if(loseAck&&params.expression.includes("f.requestSubmit"))throw Error("lost acknowledgement");
+     return {result:{value:true}};
+   }
+   return {};
+ }}})};
+ const e=engine(adapter);const connection=await e.connectBrowser("service.net");
+ state={connectionId:connection.id,domain:"service.net",targetId:"fixture",attemptId:crypto.randomUUID(),status:"pending",revision:1,expiresAt:Date.now()+60000,challenge:{id:crypto.randomUUID(),revision:1,expiresAt:Date.now()+60000}};
+ const request=(input:object)=>connectorApi(new Request("http://localhost/api/connectors/native",{method:"POST",body:JSON.stringify({connectionId:connection.id,...input})}),e);
+ const displayed=await (await request({action:"form"}))!.json() as any;
+ const bound=nativeOtpSubmission(displayed,displayed);
+ state.challenge={id:crypto.randomUUID(),revision:2,expiresAt:Date.now()+60000};
+ const stale=await request({action:"credentials",code:"PRIVATE_OTP",...bound});
+ expect(stale!.status).toBe(409);expect(typed).toBe(0);expect(await stale!.text()).not.toContain("PRIVATE_OTP");
+ const fresh=await (await request({action:"form"}))!.json() as any;
+ const current=nativeOtpSubmission(fresh,fresh);
+ loseAck=true;
+ expect((await request({action:"credentials",code:"PRIVATE_OTP",...current}))!.status).toBe(409);
+ expect(typed).toBe(1);
+ expect((await request({action:"credentials",code:"PRIVATE_OTP",...current}))!.status).toBe(200);
+ expect(typed).toBe(1);
+});
+
+test("private adapter forwards only sanitized login metadata and preserves lost delivery acknowledgement",async()=>{
+ const attemptId=crypto.randomUUID(),connectionId=crypto.randomUUID();let offline=true,privateEmit!: (event:object)=>Promise<void>;
+ const received:object[]=[];
+ const adapter=nativeBrowserConnector("123",async({emit})=>{privateEmit=emit;return {close:async()=>{},execute:async()=>({}),nativeAuth:async()=>({status:"pending",domain:"service.net",revision:1,expiresAt:Date.now()+60000})};},async e=>{if(offline)throw Error("fixture offline");received.push(e);});
+ await adapter.control!({owner:"123",domain:"service.net",connectionId},{action:"status"});
+ const observation={type:"AikoPrivateLoginObserved",id:"ignored",owner:"123",connectionId,attemptId,kind:"opening",sequence:1,revision:1,at:Date.now(),expiresAt:Date.now()+60000,code:"PRIVATE_CODE",password:"PRIVATE_PASSWORD"};
+ await expect(privateEmit(observation)).rejects.toThrow("offline");offline=false;await privateEmit(observation);
+ await privateEmit({type:"BrowserTrace",code:"PRIVATE_CODE"});
+ expect(received).toHaveLength(1);expect(JSON.stringify(received)).not.toContain("PRIVATE_");
+});

@@ -9,6 +9,7 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ShieldCheck } from "lucide-react";
 import { ConnectorOnboarding } from "../src/components/connector-onboarding";
+import { databaseLaunch, DatabaseWorkspace } from "../src/components/database-workspace";
 import "../src/styles/mini-app.css";
 
 type TelegramAppearance = {
@@ -54,7 +55,7 @@ function MiniApp() {
           <ShieldCheck size={16} aria-hidden="true" /> Your access, your choice
         </span>
       </header>
-      <ConnectorOnboarding />
+      {databaseLaunch(window.location.search) ? <DatabaseWorkspace search={window.location.search} /> : <><ConnectorOnboarding /><a href="/connect?screen=databases">Open databases</a></>}
       <footer className="mini-footer">A little more connected.</footer>
     </main>
   );

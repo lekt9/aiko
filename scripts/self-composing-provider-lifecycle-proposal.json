@@ -1,0 +1,53 @@
+{
+  "status": "partial-native-proof-not-eligible-for-registration",
+  "fixture": "scripts/fixtures/self-composing-provider-lifecycle.ts",
+  "fixtureSha256": "43cb08902768e2c1e047e83abcbaa139ceb7878e4fb7e6a947a2bb242e0e046f",
+  "command": "TMPDIR=/tmp bun scripts/fixtures/self-composing-provider-lifecycle.ts <private-evidence-directory> <fresh-nonce>",
+  "evidence": "/tmp/independent-provider-lifecycle-final/observed.json",
+  "nativeTrace": "/tmp/independent-provider-lifecycle-final/native-traces.json",
+  "sourceFence": "/tmp/independent-provider-lifecycle-final/source-before.json",
+  "literalCriteria": {
+    "S24.C05": "Poll-only source advances cursor only after batch accepted/rejected custody; crash restores cursor and unchanged poll makes no alert",
+    "S24.C08": "Restart each creation/renewal/pause/resume/upgrade/retirement handoff; no duplicate fixture subscriptions, old generation fenced, queued decode version pinned, cleanup reconciled"
+  },
+  "observed": {
+    "nonce": "provider-final",
+    "production": "Bun createService default registry",
+    "counts": {
+      "models": 2,
+      "jobs": 14,
+      "code": 8
+    },
+    "physicalPolls": 3,
+    "physicalSends": 1,
+    "subscriptions": 0,
+    "acceptedAndRejectedBeforeCursor": true,
+    "reopenZeroWork": true,
+    "unchangedQuiet": true,
+    "gapStops": true,
+    "wholeC05": false,
+    "wholeC08": false,
+    "remaining": [
+      "retained batch before admission process cut",
+      "missing private batch recovery",
+      "actual Worker entry",
+      "all C08 lifecycle handoff cuts and original-key renewal"
+    ]
+  },
+  "review": {
+    "runtimeDefectReproduced": false,
+    "C05Gap": "Actual Bun complete-batch restart is proven; retained PollFetched-before-admission process cut and missing private batch at recovery are not independently exercised here. Actual Worker fixture also remains to be authored without app-test imports.",
+    "C08Gap": "No complete independent matrix yet for creation/renewal/pause/resume/upgrade/retirement cuts, unknown original-key renewal reconciliation, old ingress generations and pinned queued-work cancellation. Existing implementation tests and source review are not substitutes.",
+    "nativeSource": "provider-adapter.ts maps provider_adapter_control to finite native requests; channel-runtime.ts retains PollFetched separately, opens batch without dispatch on replay, returns invalid_batch on unavailable custody, appends dispositions plus cursor as one effect batch and rejects later requests after source_gap.",
+    "productionScope": "Uses createService/configured default registry and actual codeMode/local sandbox, fixed independent oracle and loopback HMAC provider. No runtime classes replaced; controlled foreground Infer only issues native setup code.",
+    "preservation": {
+      "checks": 187,
+      "parents": 25,
+      "registrations": 11,
+      "manifestSha256": "23c009ae864fcc8d85133bc1cee340a2214286d5fded38a12b7401f57d911a7c",
+      "gateSha256": "94a0f62ccb75d221fb929b82c4afafd0ba2053d40d6afcd5cf14c71e77f2545a",
+      "manifestGatePinsEdited": false
+    }
+  },
+  "fullGoalComplete": false
+}

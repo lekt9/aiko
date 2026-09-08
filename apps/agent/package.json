@@ -16,12 +16,13 @@
     "build": "bun ../../scripts/check-entity-learn.ts && bun build src/main.ts --target=bun --packages=external --outdir=dist"
   },
   "dependencies": {
+    "@babel/parser": "7.29.8",
     "@cfworker/json-schema": "4.1.1",
     "@huggingface/transformers": "3.8.1",
     "@jitl/quickjs-singlefile-cjs-release-sync": "0.32.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@supabase/supabase-js": "^2.115.0",
-    "@unbrowse/browser-harness": "link:../../../unbrowse-playground/runtime",
+    "@unbrowse/browser-harness": "workspace:*",
     "@unlock/sdk": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "effect": "4.0.0-rc.110",

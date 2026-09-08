@@ -1,0 +1,165 @@
+{
+  "schemaVersion": 1,
+  "status": "registered-after-frozen-semantic-review",
+  "scope": {
+    "preservedChecks": 187,
+    "preservedParents": 25,
+    "runtimeCredit": false
+  },
+  "entries": [
+    {
+      "id": "native-child-trials-v1",
+      "entry": "scripts/verify-self-composing-child-trials.ts",
+      "graphEntrypoints": [
+        "scripts/verify-self-composing-child-trials.ts",
+        "scripts/fixtures/self-composing-child-controller.ts"
+      ],
+      "timeoutMs": 60000,
+      "checks": {
+        "S16.C02": {
+          "nativeTrace": "full/native-trace.json",
+          "assertions": [
+            {
+              "id": "full-fresh-trial-scope",
+              "artifact": "observed.json",
+              "pointer": "/semantics",
+              "expected": {
+                "unchangedBaseline": true,
+                "exactCandidate": true,
+                "sameSandboxAndFixtures": true,
+                "freshNativeThreads": 12,
+                "exactDigestTraceMapping": true,
+                "exactCheckedOutputs": true
+              }
+            },
+            {
+              "id": "exact-real-work",
+              "artifact": "observed.json",
+              "pointer": "/counts",
+              "expected": {
+                "requests": 39,
+                "jobs": 15,
+                "prepare": 12,
+                "proposal": 1,
+                "verifier": 15
+              }
+            },
+            {
+              "id": "no-replay-work",
+              "artifact": "observed.json",
+              "pointer": "/partialMirrorRecovery",
+              "expected": {
+                "differentProcess": true,
+                "originalTracePrefix": true,
+                "settledTrials": 1,
+                "counts": {
+                  "requests": 0,
+                  "jobs": 0,
+                  "prepare": 0,
+                  "proposal": 0,
+                  "verifier": 0
+                }
+              }
+            },
+            {
+              "id": "input-custody-fence",
+              "artifact": "observed.json",
+              "pointer": "/mirrorInputFence",
+              "expected": true
+            }
+          ]
+        }
+      },
+      "rationale": "Whole S16.C02 artifact-trial scope: unchanged retained baseline and exact candidate, same native sandbox/network fixture/context, complete two-artifact by three-case by two-repeat matrix, twelve fresh native child threads, retained exact digest/input/output/score-to-trace mapping. Actor source is unchanged; isolated actor-source naming clause is inapplicable. No S16 parent credit."
+    },
+    {
+      "id": "native-network-optimization-v1",
+      "entry": "scripts/verify-self-composing-network-optimization.ts",
+      "graphEntrypoints": [
+        "scripts/verify-self-composing-network-optimization.ts",
+        "scripts/fixtures/self-composing-network-optimization.ts"
+      ],
+      "checksProposed": [
+        "S19.C06",
+        "S19.C13"
+      ],
+      "rationale": "Existing composed read plus local structural transform fixture; fixed measured reduction, renewed-session revalidation, schema-drift refusal and different-process replay. Existing assertions unchanged; rerun only after freeze."
+    },
+    {
+      "id": "native-candidate-frozen-v1",
+      "entry": "scripts/verify-self-composing-candidate-frozen.ts",
+      "graphEntrypoints": [
+        "scripts/verify-self-composing-candidate-frozen.ts",
+        "scripts/fixtures/self-composing-candidate-frozen.ts"
+      ],
+      "timeoutMs": 60000,
+      "checks": {
+        "S19.C03": {
+          "nativeTrace": "verifier/native-trace.json",
+          "assertions": [
+            {
+              "id": "candidate-origin",
+              "artifact": "observed.json",
+              "pointer": "/candidateOrigin",
+              "expected": true
+            },
+            {
+              "id": "all-six-supported-boundaries",
+              "artifact": "observed.json",
+              "pointer": "/attackKinds",
+              "expected": [
+                "verifier",
+                "cases",
+                "policy",
+                "evaluator-file",
+                "cases-file",
+                "policy-file"
+              ]
+            },
+            {
+              "id": "allFrozen",
+              "artifact": "observed.json",
+              "pointer": "/allFrozen",
+              "expected": true
+            },
+            {
+              "id": "noCandidateAcceptance",
+              "artifact": "observed.json",
+              "pointer": "/noCandidateAcceptance",
+              "expected": true
+            },
+            {
+              "id": "noPromotion",
+              "artifact": "observed.json",
+              "pointer": "/noPromotion",
+              "expected": true
+            },
+            {
+              "id": "noRecall",
+              "artifact": "observed.json",
+              "pointer": "/noRecall",
+              "expected": true
+            }
+          ]
+        }
+      },
+      "rationale": "Whole literal refusal branch on current supported native generation interface: actual provider responses attempt verifier/cases/policy replacement as extra fields or undeclared files. Production Infer/reflection rejects each before candidate acceptance; exact baseline/contract/checker/dataset/experiment policy and archive/head remain unchanged. Existing strict host identity checks remain complementary evidence, not substituted candidate origin. No universal attack-proof or parent claim."
+    }
+  ],
+  "pinningPrerequisite": "Completed in frozen independent review: all eight semantic entries passed; manifest now holds reviewed exact entry/runtime/transitive source and installed dependency tree pins. Source freeze unchanged through full gate. No section parent or full-goal completion.",
+  "deferred": {},
+  "finalReview": {
+    "newlySatisfied": [
+      "S16.C02",
+      "S19.C03",
+      "S19.C06",
+      "S19.C13"
+    ],
+    "fullGateSatisfied": 12,
+    "fullGateBlocked": 175,
+    "all25SectionParentsBlocked": true,
+    "evidenceRoot": "/tmp/unlock-self-composing-evidence-ok9Nj1",
+    "reviewDirectory": "/tmp/frozen-independent-final",
+    "manifestSha256": "9692bbc1eb82ed7a69235daeb3df45120e5f274228366ec2bc362d6a035f8044"
+  }
+}

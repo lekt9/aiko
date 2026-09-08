@@ -58,8 +58,8 @@ def private_config():
     # Use the same owner-only parser as verify-deployed-native-login.ts. Its
     # stdout is captured in memory; neither the bearer nor config is logged.
     code = """
-    import { privateEnv } from './apps/agent/src/config.ts';
-    const s = await privateEnv('/home/deck/.config/unbrowse/aiko-cloudflare.env');
+    import { cloudflareState } from './scripts/cloudflare-paths.ts';
+    const s = await cloudflareState();
     process.stdout.write(JSON.stringify({base:s.AIKO_CLOUDFLARE_URL,
       owner:s.AIKO_E2E_OWNER,token:s.AIKO_E2E_TOKEN}));
     """
@@ -296,8 +296,8 @@ def live():
         # Match the deployed API witness's Bun transport. Some deployment edges
         # reject Python urllib before the authenticated application is reached.
         code = """
-        import {privateEnv} from './apps/agent/src/config.ts';
-        const s=await privateEnv('/home/deck/.config/unbrowse/aiko-cloudflare.env');
+        import {cloudflareState} from './scripts/cloudflare-paths.ts';
+        const s=await cloudflareState();
         if(s.AIKO_E2E_OWNER!=='acct_cloudflare_e2e02')throw Error('Invalid canary');
         const r=await fetch(s.AIKO_CLOUDFLARE_URL.replace(/\\/$/,'')+'/api/connectors/connections',
           {headers:{authorization:'Bearer '+s.AIKO_E2E_TOKEN},redirect:'error',signal:AbortSignal.timeout(30000)});

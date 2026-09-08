@@ -1,10 +1,10 @@
+import { cloudflareState, cloudflareOperatorConfig } from "./cloudflare-paths.ts";
 /** Exercise the deployed Worker -> Codegraff -> encrypted R2 backup seam.
  * Uses only the existing canary account; retains the completed recovery point. */
 import { mkdir, writeFile } from "node:fs/promises";
-import { loadConfig, privateEnv } from "../apps/agent/src/config.ts";
 process.umask(0o077);
-const state = await privateEnv("/home/deck/.config/unbrowse/aiko-cloudflare.env");
-const config = await loadConfig(process.env,{readonly:true});
+const state = await cloudflareState();
+const config = await cloudflareOperatorConfig();
 const base = state.AIKO_CLOUDFLARE_URL, owner = state.AIKO_E2E_OWNER;
 if (!base?.startsWith("https://aiko-agent.") || owner !== "acct_cloudflare_e2e02") throw Error("Invalid canary binding");
 const call = async (path:string,token:string,method="GET") => fetch(`${base}/api/control/${path}?account=${owner}`,{method,headers:{authorization:`Bearer ${token}`},signal:AbortSignal.timeout(300_000)});

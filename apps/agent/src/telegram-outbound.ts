@@ -1,4 +1,5 @@
 import { trustedMiniAppUrl } from "./telegram-mini-app.ts";
+import { telegramHtml, telegramText } from "./telegram-format.ts";
 import {
   telegramOwner,
   TELEGRAM_MEDIA_LIMITS,
@@ -238,15 +239,15 @@ export function createTelegramOutbound(options: {
         if (!message.text || message.text.length > 16000)
           return { status: "rejected", reason: "invalid_request" };
         const text = safe(message.text);
-        // Rich blocks preserve a long reply as one atomic, durable message.
+        // A rich message preserves a long reply as one atomic, durable delivery.
         if ([...text].length > 4096) return call("sendRichMessage", {
-          ...common, rich_message: { blocks: [{ type: "paragraph", text }] },
+          ...common, rich_message: { html: telegramHtml(text) },
         }, signal, "message");
         return call(
           "sendMessage",
           {
             ...common,
-            text: safe(message.text),
+            ...telegramText(text),
             link_preview_options: { is_disabled: true },
           },
           signal,
@@ -301,7 +302,7 @@ export function createTelegramOutbound(options: {
       const caption = (value: string | undefined) => {
         if (value !== undefined && [...value].length > 1024)
           throw new Error("caption_too_long");
-        return value === undefined ? undefined : safe(value);
+        return value === undefined ? undefined : telegramHtml(safe(value));
       };
       let method: string, body: Record<string, unknown>;
       if (message.kind === "album") {
@@ -321,6 +322,7 @@ export function createTelegramOutbound(options: {
             type: item.kind,
             media: file(item.file, item.kind),
             caption: caption(item.caption),
+            ...(item.caption !== undefined ? { parse_mode: "HTML" } : {}),
           })),
         };
       } else {
@@ -352,7 +354,7 @@ export function createTelegramOutbound(options: {
           ...common,
           [message.kind]: file(message.file, message.kind),
           ...(message.caption !== undefined
-            ? { caption: caption(message.caption) }
+            ? { caption: caption(message.caption), parse_mode: "HTML" }
             : {}),
           ...(message.duration !== undefined
             ? { duration: message.duration }
@@ -534,7 +536,7 @@ export function createTelegramOutbound(options: {
         {
           chat_id: chat,
           message_id: messageId,
-          text: safe(text),
+          ...telegramText(safe(text)),
           link_preview_options: { is_disabled: true },
           ...(buttons ? { reply_markup: markup(buttons) } : {}),
         },
@@ -568,7 +570,7 @@ export function createTelegramOutbound(options: {
     publishedDrafts.set(key, body);
     return call(
       "sendMessageDraft",
-      { chat_id: chat, draft_id: draftId, text: body, ...(context?.messageThreadId ? { message_thread_id: context.messageThreadId } : {}), ...(context?.canStop ? { can_stop: true, keep_on_stop: false } : {}) },
+      { chat_id: chat, draft_id: draftId, ...telegramText(body), ...(context?.messageThreadId ? { message_thread_id: context.messageThreadId } : {}), ...(context?.canStop ? { can_stop: true, keep_on_stop: false } : {}) },
       signal,
     );
   };

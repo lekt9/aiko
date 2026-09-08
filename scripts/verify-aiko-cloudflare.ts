@@ -1,16 +1,14 @@
+import { cloudflareState, cloudflareOperatorConfig } from "./cloudflare-paths.ts";
 import { strict as assert } from "node:assert";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { loadConfig, privateEnv } from "../apps/agent/src/config.ts";
 
 process.umask(0o077);
-const credentials = await privateEnv(
-  "/home/deck/.config/unbrowse/aiko-cloudflare.env",
-);
+const credentials = await cloudflareState();
 const url = credentials.AIKO_CLOUDFLARE_URL;
 assert.match(url, /^https:\/\/aiko-agent\.[a-z0-9-]+\.workers\.dev$/);
 const owner = credentials.AIKO_E2E_OWNER;
-const directory = "/home/deck/work/unlock/artifacts/aiko-cloudflare";
+const directory = new URL("../artifacts/aiko-cloudflare", import.meta.url).pathname;
 const file = `${directory}/live.json`;
 async function telegramEvidence(account: string) {
   assert.match(
@@ -20,7 +18,7 @@ async function telegramEvidence(account: string) {
   );
   const migration = await Bun.file(`${directory}/migration.json`).json();
   assert.equal(migration.verified, true, "Cloudflare handoff is not verified");
-  const config = await loadConfig(process.env, { readonly: true });
+  const config = await cloudflareOperatorConfig();
   const history: any[] = [];
   let after = 0;
   for (;;) {
@@ -684,7 +682,7 @@ if (process.argv.includes("--automations-test")) {
     "Live Telegram media acceptance not verified",
   );
   await telegramEvidence(media.owner);
-  const config = await loadConfig(process.env, { readonly: true });
+  const config = await cloudflareOperatorConfig();
   const response = await fetch(
     `https://api.telegram.org/bot${config.botToken}/getWebhookInfo`,
     { signal: AbortSignal.timeout(15000) },

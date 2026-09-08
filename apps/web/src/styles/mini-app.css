@@ -1050,28 +1050,10 @@ summary {
   margin: 0 auto;
   padding: 24px 20px calc(24px + env(safe-area-inset-bottom));
 }
-.native-login-browser {
+.native-login-provider {
   display: grid;
   gap: 12px;
   margin: 20px 0;
-}
-.native-login-browser img {
-  width: 100%;
-  max-width: 390px;
-  margin: auto;
-  border: 1px solid #ddd;
-  border-radius: 8px;
-  cursor: pointer;
-  touch-action: manipulation;
-}
-.native-login-browser input {
-  width: 100%;
-  padding: 12px;
-  border: 1px solid #ddd;
-  border-radius: 10px;
-  background: var(--tg-theme-secondary-bg-color, #f5f5f5);
-  color: inherit;
-  font: inherit;
 }
 .native-login-tools {
   display: flex;
@@ -1093,15 +1075,6 @@ summary {
   max-height: 260px;
   overflow: auto;
   font-size: 13px;
-}
-.native-login-browser input {
-  width: 100%;
-  padding: 12px;
-  margin: 8px 0;
-  border: 1px solid #8886;
-  border-radius: 10px;
-  background: transparent;
-  color: inherit;
 }
 /* Password managers and login import in the connect mini app. */
 .drawer-managers {
@@ -1262,3 +1235,36 @@ summary {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
+
+/* Owner work stays readable on the narrow Telegram surface. */
+.secretary-work { border-bottom: 1px solid var(--app-line); padding-bottom: 24px; margin-bottom: 24px; }
+.secretary-work h4 { margin: 0; font-size: 16px; line-height: 1.45; }
+.work-actions, .work-item-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.work-actions { justify-content: flex-start; }
+.secretary-work button, .secretary-work select, .secretary-work input { min-height: 48px; }
+.secretary-work button { cursor: pointer; }
+.secretary-work button:not(.text-button) { padding: 10px 14px; border: 1px solid var(--app-line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; }
+.secretary-work .work-form button[type="submit"], .secretary-work .work-decision .work-actions button:first-child { background: var(--accent); color: var(--app-on-blue); border-color: var(--accent); }
+.secretary-work button:disabled { cursor: not-allowed; opacity: .6; }
+.work-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 20px 0 12px; }
+.work-tabs button { padding: 8px; border: 1px solid var(--app-line); background: transparent; border-radius: 8px; color: inherit; }
+.secretary-work .work-tabs button[aria-pressed="true"] { background: var(--accent); color: var(--app-on-blue); border-color: var(--accent); }
+.work-tabs span { margin-left: 4px; }
+.work-list { display: grid; gap: 12px; }
+.work-item { padding: 16px; border: 1px solid var(--app-line); border-radius: 12px; overflow-wrap: anywhere; }
+.work-item p { margin: 8px 0; }
+.work-item .work-actions { margin-top: 12px; }
+.work-state, .work-overdue { font-size: 12px; line-height: 1.5; border-radius: 4px; padding: 3px 7px; background: var(--app-field); color: var(--app-success); }
+.work-overdue, .work-error { background: var(--app-field); color: var(--app-danger); }
+.work-decision { margin: 16px 0; padding: 12px; background: var(--app-field); border-radius: 8px; }
+.work-decision blockquote { margin: 8px 0; border-left: 3px solid var(--accent); padding: 8px 12px; white-space: pre-wrap; }
+.work-note { margin: 12px 0; }
+.work-note p { white-space: pre-wrap; }
+.work-form { display: grid; gap: 14px; padding: 16px 0; }
+.work-form label { display: grid; gap: 6px; font-size: 14px; }
+.work-form input, .work-form textarea, .work-form select { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid var(--app-line); border-radius: 6px; padding: 9px; font: inherit; font-size: 16px; background: var(--surface); color: var(--ink); }
+.work-times { display: grid; gap: 14px; }
+.work-handoffs { margin: 16px 0; }
+.work-handoffs .work-item-heading { padding: 10px 0; }
+.work-empty { padding: 12px 0; }
+@media (min-width: 560px) { .work-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); } .work-times { grid-template-columns: 1fr 1fr; } }

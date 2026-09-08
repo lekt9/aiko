@@ -1,13 +1,13 @@
+import { cloudflareState } from "./cloudflare-paths.ts";
 /** Download the deployed canary snapshot and recover it into an empty private
  * local directory with the production decrypt/verify/publish implementation. */
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { Database } from "bun:sqlite";
 import { CloudBackups } from "../apps/agent/src/cloud-backup.ts";
-import { privateEnv } from "../apps/agent/src/config.ts";
 import { writeVmRestore, verifyVmRestore, publishVmRestore } from "../apps/agent/src/vm-backup.ts";
 import { NativeLoginVault, nativeLoginCipher } from "../apps/agent/src/native-login-vault.ts";
 process.umask(0o077);
-const state=await privateEnv("/home/deck/.config/unbrowse/aiko-cloudflare.env");
+const state=await cloudflareState();
 const receipt=await Bun.file("artifacts/backups/deployed.json").json();
 if(receipt.owner!==state.AIKO_E2E_OWNER || receipt.verified!==true) throw Error("Canary backup receipt missing");
 const directory=await mkdtemp("/tmp/unlock-deployed-recovery-");

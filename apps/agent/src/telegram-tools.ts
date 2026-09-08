@@ -469,7 +469,7 @@ export function createTelegramTools(
   };
   add(
     "telegram_send",
-    "Send text, a location/venue, contact card or a native anonymous poll to the current owner when useful for the request. Use question/choices for a poll, coordinates for a location, and phoneNumber/firstName for a contact. Media fileId(s) must come from this thread; arbitrary URLs, paths and other users' files are prohibited. Albums need 2–10 matching/compatible items. Use final=true only when this is the complete answer; delivered/unknown final messages suppress duplicate plain-text delivery. Unknown outcomes must never be resent.",
+    "Send text, a location/venue, contact card or a native anonymous poll to the current owner when useful for the request. Use question/choices for a poll, coordinates for a location, and phoneNumber/firstName for a contact. Media fileId(s) must come from this thread; arbitrary URLs, paths and other users' files are prohibited. Albums need 2–10 matching/compatible items. Use final=false for an optional intermediate text or media update while work continues; use final=true only when this is the complete answer; delivered/unknown final messages suppress duplicate plain-text delivery. Unknown outcomes must never be resent.",
     {
       kind: { type: "string", enum: ["text", ...fileKinds, "album", "location", "venue", "contact", "poll"] },
       text: { type: "string" },
@@ -833,7 +833,7 @@ export function createTelegramTools(
   add("telegram_capabilities", "Search the reviewed official Telegram API method catalog and see which native tools are mounted. This is discovery, not an arbitrary API executor or permission grant.", { query: { type: "string" } }, [], async (args, _log, turn) =>
     receipt(turn, "telegram_capabilities", "listed", "Telegram capability catalog; methods marked not_mounted cannot be executed through these tools.", { catalog: telegramCapabilities(typeof args.query === "string" ? safe(args.query).slice(0, 128) : "") }), false);
   const sendMessage = tools.find(entry => entry.spec.name === "telegram_send");
-  if (sendMessage) tools.push({ ...sendMessage, spec: { ...sendMessage.spec, name: "send_message", description: `Send the current owner's Telegram reply. Use kind=text and text for a normal message; media kinds use owned file IDs. ${options.compose ? "Wording passes through the configured persona before delivery." : "Your wording is delivered directly after host validation and credential redaction."} Set final=true for the complete answer. The destination is fixed by the host; never retry an unknown send.` } });
+  if (sendMessage) tools.push({ ...sendMessage, spec: { ...sendMessage.spec, name: "send_message", description: `Send the current owner's Telegram reply. Use kind=text and text for a normal message; media kinds use owned file IDs. ${options.compose ? "Wording passes through the configured persona before delivery." : "Your wording is delivered directly after host validation and credential redaction."} Choose final=false for a useful acknowledgement or progress update while you continue working, and final=true for the complete answer. Actively use intermediate messages on longer tasks so the user sees progress and understands waits; choose useful moments yourself. Quick answers can go straight to the final reply. The destination is fixed by the host; never retry an unknown send.` } });
   return tools;
 }
 function ownedMessage(
@@ -1013,11 +1013,14 @@ export function createTelegramTyping(
           return state;
         }
         if (Number(e.epoch ?? 0) !== current.epoch) return state;
-        if ((options.waitForDelivery ? e.type === "AikoDeliverySettled" : terminals.has(e.type)) ||
+        // Keep an existing renewal alive while the outbox delivers, but never
+        // restart typing for a terminal turn replayed by a fresh activation.
+        // Legacy turns can have native terminals without delivery receipts.
+        if ((options.waitForDelivery ? e.type === "AikoDeliverySettled" || (terminals.has(e.type) && !current.started) : terminals.has(e.type)) ||
           (e.type === "AikoTelegramActionSettled" && e.result?.owner === owner && e.result?.final && ["delivered", "unknown"].includes(e.result.status)))
           state.set(String(e.turn), { ...current, done: true });
-        if (e.type === "ToolCalled" && !current.done) state.set(String(e.turn), { ...current,
-          activityKey: String(e.callId), activity: /search|recall/.test(String(e.name)) ? "Searching…" : /browser/.test(String(e.name)) ? "Reading the page…" : /voice/.test(String(e.name)) ? "Preparing audio…" : /respond|send/.test(String(e.name)) ? "Preparing your reply…" : "Working on your request…" });
+        // if (e.type === "ToolCalled" && !current.done) state.set(String(e.turn), { ...current,
+        //   activityKey: String(e.callId), activity: /search|recall/.test(String(e.name)) ? "Searching…" : /browser/.test(String(e.name)) ? "Reading the page…" : /voice/.test(String(e.name)) ? "Preparing audio…" : /respond|send/.test(String(e.name)) ? "Preparing your reply…" : "Working on your request…" });
         if (e.activation === activation && e.type === "AikoTelegramDraftStarted") state.set(String(e.turn), { ...current, shown: String(e.activityKey) });
         if (
           e.activation === activation &&

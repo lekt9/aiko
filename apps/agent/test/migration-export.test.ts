@@ -78,8 +78,12 @@ test("offline export retains every scoped foreground/background event and native
   native.approveSource(source.id, source.revision, false, "fixture:revoke");
   const beforeMemory = native.exportArchive(); native.close();
   poller(f.stateDir);
+  // Bun defers finalizing closed SQLite statements until GC. Finish the fixture's
+  // writable handles before measuring export, then finalize its readers too.
+  Bun.gc(true);
   const before = sourceDigests(f.stateDir);
   const inventory = exportAikoCloudflare({ ...f, sourceOffline: true });
+  Bun.gc(true);
   expect(sourceDigests(f.stateDir)).toEqual(before);
   expect(inventory.actor).toBe("aiko"); expect(inventory.instance).toBe("demo");
   expect(inventory.hostLockHeld).toBe(true);

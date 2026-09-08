@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, test } from "bun:test";
 import { existsSync, realpathSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -6,10 +7,19 @@ import { AgentBrowserClient } from "@unbrowse/browser-harness/client";
 import { prepareTrustedNetworkEntries } from "@unbrowse/browser-harness/network-observation";
 
 const root = resolve(import.meta.dir, "../../..");
-const shared = resolve(root, "../unbrowse-playground/runtime");
+const shared = resolve(root, "packages/browser-harness");
 
-test("Unlock imports the exact playground modules, with no vendored runtime fallback", async () => {
+test("Unlock imports the pinned workspace browser library without a sibling checkout", async () => {
   const manifest = JSON.parse(readFileSync(resolve(shared, "package.json"), "utf8"));
+  const provenance = JSON.parse(readFileSync(resolve(shared, "provenance.json"), "utf8"));
+  for (const [file, digest] of Object.entries(provenance.upstreamSha256)) {
+    // Only package scripts/workspace metadata differ from the upstream snapshot.
+    if (file === "package.json") continue;
+    if (typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest)) throw Error("Invalid upstream provenance digest");
+    expect(createHash("sha256").update(readFileSync(resolve(shared, file))).digest("hex")).toBe(digest);
+  }
+  for (const file of ["package.json", "apps/agent/package.json"])
+    expect(JSON.parse(readFileSync(resolve(root, file), "utf8")).dependencies["@unbrowse/browser-harness"]).toBe("workspace:*");
   for (const name of ["client", "trace", "network-listener", "network-observation", "network-compiler", "network-facts", "har", "harness-runtime", "network-tool-catalog", "harness-artifact", "response-semantics"]) {
     const resolved = fileURLToPath(import.meta.resolve(`@unbrowse/browser-harness/${name}`));
     expect(realpathSync(resolved)).toBe(realpathSync(resolve(shared, manifest.exports[`./${name}`])));

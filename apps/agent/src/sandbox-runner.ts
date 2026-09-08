@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile, rename, rm } from "node:fs/promises";
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { browserDriverFactory } from "./browser-driver.ts";
+import { installPinnedCloakBrowser, verifyCloakBrowser, CLOAK_BROWSER_VERSION } from "@unbrowse/browser-harness/install-cloakbrowser";
 import {
   replayKeys,
   unwrapReplay,
@@ -9,6 +10,8 @@ import {
   PrivateOperationFence,
 } from "./codegraff.ts";
 import { BrowserEventQueue } from "./browser-event-queue.ts";
+import { runSandboxJob, sandboxEnvironment } from "./sandbox-job-runner.ts";
+import { sandboxJobJournal } from "./sandbox-job-journal.ts";
 import { runCodeSegment } from "./code-sandbox-runner.ts";
 import { snapshotVm, readVmSnapshot, discardVmSnapshot, writeVmRestore, verifyVmRestore, publishVmRestore } from "./vm-backup.ts";
 import {
@@ -22,9 +25,11 @@ import {
 // Trusted execution adapter in one tenant VM. Tardigrade stays in the control plane.
 const root = "/home/daytona/aiko";
 const endpoint = "http://127.0.0.1:4860";
+const cloakDirectory = `${root}/native/cloakbrowser-${CLOAK_BROWSER_VERSION}`;
 await mkdir(`${root}/operations`, { recursive: true, mode: 0o700 });
 const mode = process.argv[2];
 if (mode === "install") {
+  await installPinnedCloakBrowser({ directory: cloakDirectory });
   const asset = pinnedAgentBrowserAssetFor();
   const path = pinnedAgentBrowserExecutablePath(asset, `${root}/native`);
   await mkdir(path.slice(0, path.lastIndexOf("/")), {
@@ -62,12 +67,16 @@ if (mode === "install") {
   const runnerDigest = createHash("sha256")
     .update(await readFile(`${root}/runner.js`))
     .digest("hex");
+  const owner = JSON.parse(await readFile(`${root}/owner.json`, "utf8")).owner;
+  const environmentDigest = await sandboxEnvironment(runnerDigest);
+  const jobJournal = await sandboxJobJournal(db, `${root}/sandbox-receipts.key`);
   let closing = false;
   let busy = false;
   const active = new Map<string, AbortController>();
   const queue = new BrowserEventQueue(db);
   const batch = () => queue.batch();
-  const driver = await browserDriverFactory("/usr/bin/chromium", {
+  const driver = await browserDriverFactory(await verifyCloakBrowser(cloakDirectory), {
+    browserBackend: "cloakbrowser",
     persistentDirectory: `${root}/browser`,
     nativeAssetDirectory: `${root}/native`,
   })({
@@ -90,9 +99,12 @@ if (mode === "install") {
         return Response.json({
           ready: true,
           runnerDigest,
+          environmentDigest,
           replayPublicKey: replayIdentity.publicKey,
           privateContext: await driver.sessionContext?.(),
           backend: "playground-agent-browser",
+          browser: "cloakbrowser",
+          browserVersion: CLOAK_BROWSER_VERSION,
           persistentProfile: true,
         });
       if (url.pathname === "/drain" && request.method === "GET")
@@ -170,7 +182,7 @@ if (mode === "install") {
             replayIdentity.privateKey,
           );
           privateOperations.consume(value.id);
-          if (value.operation !== "code") {
+          if (value.operation !== "code" && value.operation !== "harness-job") {
             if (busy || !driver.requestTransport)
               return new Response("Unavailable", { status: 409 });
             busy = true;
@@ -194,8 +206,14 @@ if (mode === "install") {
                     if(value.action === "discard") return discardVmSnapshot(root,value.snapshotId).then(()=>({discarded:true}));
                     throw Error("Unknown backup action");
                   })()
+              : value.operation === "harness-job"
+                ? await runSandboxJob(value.input, {owner, environmentDigest, journal:jobJournal}, cancellation.signal)
               : value.operation === "code"
                 ? await runCodeSegment(value.input, cancellation.signal)
+                  : value.operation === "authorize-inspection" && driver.authorizeInspection
+                    ? await driver.authorizeInspection(value.policy,cancellation.signal)
+                  : value.operation === "inspect-current-page" && driver.inspectCurrentPage
+                    ? await driver.inspectCurrentPage(value.policy,cancellation.signal)
                   : value.operation === "connection-page" && driver.readConnectionPage
                     ? await driver.readConnectionPage(value.url,value.linkOffset,cancellation.signal)
                   : value.operation === "native-auth" && driver.nativeAuth
@@ -318,7 +336,10 @@ if (mode === "install") {
           error instanceof AgentBrowserClientError &&
           error.code === "element_not_found"
             ? { status: "failed", reason: "element_not_found" }
-            : { status: "unknown" };
+            : error && typeof error === "object" && "code" in error &&
+              ["private_sign_in_pending", "private_sign_in_cleanup_failed"].includes(String(error.code))
+              ? {status: "blocked", reason: error.code}
+              : { status: "unknown" };
         const result = JSON.stringify(outcome);
         db.query("UPDATE operations SET status=?,result=? WHERE id=?").run(
           outcome.status,

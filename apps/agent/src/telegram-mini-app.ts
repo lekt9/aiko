@@ -2,6 +2,14 @@ export const AIKO_MINI_APP_URL =
   "https://aiko-agent.lewis-6d8.workers.dev/connect";
 const connectionIdPattern =
   /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+const artifactIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,159}$/;
+export function artifactMiniAppUrl(artifactId: string, base = AIKO_MINI_APP_URL): string {
+  if (!artifactIdPattern.test(artifactId)) throw Error("Invalid artifact ID");
+  const url = new URL(base);
+  if (!trustedMiniAppUrl(url.href, base)) throw Error("Invalid Mini App URL");
+  url.searchParams.set("artifact", artifactId);
+  return url.href;
+}
 
 /** A connection ID selects a screen; the authenticated API still owns access. */
 export function connectionMiniAppUrl(
@@ -46,8 +54,8 @@ export function trustedMiniAppUrl(value: string, base?: string): boolean {
     const entries = [...url.searchParams];
     return (
       entries.length === 1 &&
-      entries[0]![0] === "connection" &&
-      connectionIdPattern.test(entries[0]![1])
+      ((entries[0]![0] === "connection" && connectionIdPattern.test(entries[0]![1])) ||
+       (entries[0]![0] === "artifact" && artifactIdPattern.test(entries[0]![1])))
     );
   } catch {
     return false;

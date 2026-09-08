@@ -24,6 +24,7 @@ import {
 } from "../src/browser-proxy.ts";
 import { AgentBrowserClientError, isolatedAgentBrowserEnvironment } from "@unbrowse/browser-harness/client";
 import { BrowserController } from "../src/browser.ts";
+import { Self } from "tardie/core/runtime";
 import type { BrowserDriverFactory } from "../src/browser-driver.ts";
 import { voiceAndOutbox, type AikoEvent } from "../src/actor.ts";
 import { createVoice } from "../src/voice.ts";
@@ -47,6 +48,76 @@ const returns = (req: InferRequest) =>
       e.type === "ToolReturned" &&
       (e as { turn?: string }).turn === req.identity.turn,
   );
+test("inherited inspection uses the parent's existing browser and current per-origin grants, cancellation and private gate",async()=>{
+  let privateSession=false, pendingLogin=false, credentialsValid=true, opened=0, inspections=0;
+  let grant:{scope:"research"|"browser";origins?:string[]}|undefined={scope:"research"};
+  let duringRead:(()=>Promise<void>)|undefined;
+  const actions:string[]=[];
+  const app=await nativeAnswerHost(mockModel(req=>!returns(req).length
+    ? {kind:"call",callId:"navigate",name:"agent_browser_navigate",arguments:{url:"https://example.com/page"}}
+    : {kind:"complete",output:"Page opened."}),async()=>{
+      opened++;
+      return {execute:async action=>{actions.push(action.action);return {url:"https://example.com/page"};},close:async()=>{},
+        authorizeInspection:async()=>!pendingLogin&&credentialsValid,
+        inspectCurrentPage:async(policy,signal)=>{
+          inspections++;expect(policy.origin).toBe("https://example.com");
+          if(pendingLogin||(policy.publicOnly&&privateSession))throw Error("Private inspection blocked");
+          await duringRead?.();signal?.throwIfAborted();
+          return {url:"https://example.com/page",title:"Parent page",text:"PUBLIC_TEXT",snapshot:"[link]",links:["https://example.com/one","https://other.com/foreign"],linksTruncated:false};
+        }};
+    });
+  const native=app.browser.workerInspectionTools("123","worker",{parentThread:"user-123",current:async()=>grant})[0]!;
+  const invoke=(input:unknown={origin:"https://example.com",publicOnly:grant?.scope!=="browser"},signal=new AbortController().signal,thread="worker")=>Effect.runPromise(native.run(input,{turn:"inspect",callId:crypto.randomUUID(),signal}).pipe(Effect.provideService(Self,{actor:"aiko",instance:"test",thread})));
+  expect(await invoke()).toMatchObject({status:"denied"});expect(opened).toBe(0);
+  await app.send("parent-open","Open parent page");
+  expect(await invoke()).toMatchObject({status:"completed",untrustedPageContent:{text:"PUBLIC_TEXT",links:["https://example.com/one"]}});
+  expect(opened).toBe(1);expect(actions).toEqual(["navigate"]);
+  for (const [owner,parentThread] of [["456","user-123"],["123","different-parent"]]) {
+    const other=app.browser.workerInspectionTools(owner!,"worker",{parentThread:parentThread!,current:async()=>grant})[0]!;
+    expect(await Effect.runPromise(other.run({origin:"https://example.com",publicOnly:true},{turn:"inspect",callId:crypto.randomUUID(),signal:new AbortController().signal}).pipe(Effect.provideService(Self,{actor:"aiko",instance:"test",thread:"worker"})))).toMatchObject({status:"denied"});
+  }
+  let enter!:()=>void,release!:()=>void;const entered=new Promise<void>(r=>enter=r),gate=new Promise<void>(r=>release=r);
+  duringRead=async()=>{enter();await gate;};const pending=invoke();await entered;
+  const concurrently=inspections;expect(await invoke()).toMatchObject({status:"denied"});expect(inspections).toBe(concurrently);
+  release();expect(await pending).toMatchObject({status:"completed"});duringRead=undefined;
+  expect(await invoke({origin:"https://example.com",action:"navigate"})).toMatchObject({status:"denied"});
+  expect(await invoke({origin:"http://127.0.0.1"})).toMatchObject({status:"denied"});
+  expect(await invoke(undefined,undefined,"foreign-thread")).toMatchObject({status:"denied"});
+  privateSession=true;expect(await invoke()).toMatchObject({status:"denied"});
+  grant={scope:"browser",origins:["https://example.com"]};expect(await invoke()).toMatchObject({status:"completed"});
+  pendingLogin=true;expect(await invoke()).toMatchObject({status:"denied"});pendingLogin=false;
+  const original={origin:"https://example.com",publicOnly:false};expect(await native.authorizeRetained!(original)).toBe(true);
+  credentialsValid=false;expect(await native.authorizeRetained!(original)).toBe(false);credentialsValid=true;
+  expect(await invoke({origin:"https://example.com",publicOnly:true})).toMatchObject({status:"denied"});
+  grant={scope:"browser",origins:["https://other.com"]};const before=inspections;
+  expect(await invoke()).toMatchObject({status:"denied"});expect(inspections).toBe(before);expect(await native.authorizeRetained!(original)).toBe(false);
+  grant={scope:"research"};privateSession=false;expect(await native.authorizeRetained!(original)).toBe(false);
+  duringRead=async()=>{grant=undefined;};expect(await invoke()).toMatchObject({status:"denied"});
+  grant={scope:"research"};const abort=new AbortController();duringRead=async()=>abort.abort();
+  expect(await invoke(undefined,abort.signal)).toMatchObject({status:"denied"});
+  duringRead=undefined;expect(await invoke()).toMatchObject({status:"completed"});
+  await app.browser.retire("123");expect(await invoke()).toMatchObject({status:"denied"});expect(opened).toBe(1);
+  expect(await native.authorizeRetained!({origin:"https://example.com",publicOnly:true})).toBe(true);
+  grant={scope:"browser",origins:["https://example.com"]};expect(await native.authorizeRetained!(original)).toBe(false);
+});
+test("browser and request-memory calls in one provider batch keep distinct private inputs and sibling metadata",async()=>{
+  const browser=new BrowserController({domains:["*"],factory:async()=>{throw Error("No dispatch expected");},redact:s=>s});
+  try {
+    const action={kind:"calls" as const,batchId:"provider-batch",calls:[
+      {callId:"page-one",name:"agent_browser_navigate",arguments:{url:"https://example.com/private-first"}},
+      {callId:"page-two",name:"agent_browser_navigate",arguments:{url:"https://example.com/private-second"}},
+      {callId:"search",name:"request_memory_search",arguments:{query:"PRIVATE_INDEX_QUERY"}},
+      {callId:"other",name:"ordinary_read",arguments:{count:2}},
+    ],usage:{promptTokens:20,completionTokens:8},endpoint:{provider:"fixture",model:"batch"}};
+    const layer=browser.inference(mockModel(()=>action),"123");
+    const result=await Effect.runPromise(Effect.gen(function*(){return yield* (yield* Infer).react({identity:{actor:"aiko",instance:"test",thread:"user-123",turn:"batch"},trajectory:[],system:"",tools:[]},"same-model-attempt");}).pipe(Effect.provide(layer)));
+    expect(result.kind).toBe("calls");if(result.kind!=="calls")throw Error("Missing batch");
+    expect(result.calls).toHaveLength(4);expect(new Set(result.calls.map(call=>call.callId)).size).toBe(4);
+    expect(new Set(result.calls.slice(0,3).map(call=>(call.arguments as any).request)).size).toBe(3);
+    expect(result.calls[3]).toEqual(action.calls[3]);expect(result.usage).toEqual(action.usage);expect(result.endpoint).toEqual(action.endpoint);
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE_INDEX_QUERY|private-first|private-second/);
+  }finally{await browser.close();}
+});
 async function setup(
   model: Layer.Layer<Infer>,
   factory: BrowserDriverFactory,
@@ -598,8 +669,11 @@ describe("Aiko native browser integration", () => {
     });
     await app.service.host.drive();
     const log = (await app.service.host.read("user-local")) as AikoEvent[];
-    // Technical fallbacks are tracked but never sent: no prepared reply, no delivery.
-    expect(log.find((e) => e.type === "AikoReplyPrepared")).toBeUndefined();
+    // An uncertain action gets a visible notice even when verbose diagnostics are off.
+    const replies = log.filter((e) => e.type === "AikoReplyPrepared");
+    expect(replies).toHaveLength(1);
+    expect((replies[0] as any).result.text).toContain("couldn’t confirm");
+    expect((replies[0] as any).result.text).toContain("before trying it again");
     expect(log.some((e) => e.type === "AikoDeliverySettled")).toBe(false);
   });
 
@@ -911,7 +985,7 @@ describe("Aiko native browser integration", () => {
         }
       )?.text,
     );
-    expect(reply).toContain("Browser effects may already have completed");
+    expect(reply).toContain("Actions already submitted may still complete");
     expect(reply).not.toContain("No app changes were made");
   });
 
@@ -1224,4 +1298,18 @@ describe("public-web boundary", () => {
     });
     expect(status).toBe(403);
   });
+});
+
+for(const code of ["private_sign_in_pending","private_sign_in_cleanup_failed"]) test(`private browser gate stays blocked without stopping the sign-in: ${code}`,async()=>{
+ let closes=0;
+ const app=await nativeAnswerHost(mockModel(req=>returns(req).length
+  ? {kind:"complete",output:"The browser is waiting for sign-in."}
+  : {kind:"call",callId:"private-gate",name:"agent_browser_navigate",arguments:{url:"https://example.com"}}),
+  async()=>({execute:async()=>{throw Object.assign(new Error("private data"),{code});},close:async()=>{closes++;}}));
+ await app.send("private-gate","Browse the public site");
+ const log=await app.host.read("user-123");
+ const result=log.find(e=>e.type==="ToolReturned")?.result;
+ expect(result).toMatchObject({status:"blocked",reason:code,operation:"agent_browser_navigate"});
+ expect(JSON.stringify(result)).not.toContain("private data");
+ expect(closes).toBe(0);
 });

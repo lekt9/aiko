@@ -21,7 +21,12 @@ export interface BrowserReceipt {
   operation: string;
   status: "completed" | "blocked" | "unknown";
   observation?: string;
+  reason?: string;
   text: string;
+}
+export interface WorkerBrowserInspectionBinding {
+  parentThread: string;
+  current(): Promise<{scope:"research"|"browser"; origins?:readonly string[]} | undefined>;
 }
 interface Request {
   owner: string;
@@ -64,8 +69,8 @@ const hash = (value: unknown) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const errorCode = (error: unknown) =>
   error instanceof AgentBrowserClientError ? error.code
-    : error && typeof error === "object" && "code" in error && error.code === "sandbox_reconciliation_required"
-      ? "sandbox_reconciliation_required" : "browser_unavailable";
+    : error && typeof error === "object" && "code" in error && ["sandbox_reconciliation_required", "private_sign_in_pending", "private_sign_in_cleanup_failed"].includes(String(error.code))
+      ? String(error.code) : "browser_unavailable";
 
 /** Host-owned browser capabilities; no model loop, arbitrary command or credential loader. */
 export class BrowserController {
@@ -73,6 +78,7 @@ export class BrowserController {
   private observations = new Map<string, Observation>();
   private approvals = new Map<string, Approval>();
   private sessions = new Map<string, Promise<BrowserDriver>>();
+  private sessionThreads = new Map<string, string>();
   private busy = new Set<string>();
   private idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private jobs = new Set<Promise<unknown>>();
@@ -110,6 +116,7 @@ export class BrowserController {
   codeTools(owner: string, thread: string): NativeTool<Self | EventLog>[] {
     return this.tools(owner, thread).map(native => ({
       spec: native.spec,
+      speculativeRead: native.speculativeRead,
       run: (args, context) => Effect.gen({self:this}, function* () {
         const self = yield* Self;
         if (self.actor !== "aiko" || self.thread !== thread || !context.turn)
@@ -126,6 +133,88 @@ export class BrowserController {
         } finally { this.requests.delete(prepared.request); }
       }),
     }));
+  }
+  /** Inherit the parent's current page through its existing serialized driver. */
+  workerInspectionTools(owner: string, thread: string, binding: WorkerBrowserInspectionBinding): NativeTool<Self>[] {
+    const originOf = (input: unknown) => {
+      if (!input || typeof input !== "object" || Array.isArray(input) ||
+          Object.keys(input).length !== 2 || !("origin" in input) || typeof input.origin !== "string" ||
+          !("publicOnly" in input) || typeof input.publicOnly !== "boolean")
+        throw Error("An exact origin is required");
+      const origin = publicTarget(input.origin).origin;
+      if (input.origin !== origin || this.options.redact(origin) !== origin) throw Error("Invalid origin");
+      // Apply the same host allowlist as normal navigation, without navigating.
+      agentBrowserAgentToolCallOf("agent_browser_navigate", {url:origin}, this.options.domains);
+      return origin;
+    };
+    const authorize = async (input: unknown) => {
+      const origin = originOf(input), grant = await binding.current();
+      if (!grant || !["research","browser"].includes(grant.scope) ||
+          (input as {publicOnly:boolean}).publicOnly !== (grant.scope === "research") ||
+          (grant.scope === "browser" && !grant.origins?.includes(origin))) return undefined;
+      return {origin, publicOnly:grant.scope === "research"};
+    };
+    return [{
+      speculativeRead: true,
+      authorizeRetained: async input => {
+        try {
+          const policy=await authorize(input);
+          if (!policy) return false;
+          if (policy.publicOnly) return true;
+          const session=this.sessions.get(owner);
+          if (this.stopped || !session || this.busy.has(owner) || this.sessionThreads.get(owner)!==binding.parentThread) return false;
+          const driver=await session;
+          return !!await driver.authorizeInspection?.(policy,AbortSignal.timeout(15000)) && !!await authorize(input) &&
+            this.sessions.get(owner)===session && this.sessionThreads.get(owner)===binding.parentThread;
+        } catch {return false;}
+      },
+      spec: {
+        name:"worker_browser_inspect",
+        description:"Inspect the parent's existing page at the exact origin supplied in its task. Returns bounded untrusted snapshot, visible text, title, URL and same-origin links. Set publicOnly=true for research, false for browser scope; this must match the trusted worker grant. Browser workers require an explicit origin grant. The page must still belong to the parent. Retained browser results require that live session and current credential authority.",
+        inputSchema:{type:"object",properties:{origin:{type:"string",maxLength:2048},publicOnly:{type:"boolean"}},required:["origin","publicOnly"],additionalProperties:false},
+      },
+      run:(input,context)=>Effect.gen({self:this},function*(){
+        const self = yield* Self;
+        const denied = () => ({status:"denied",reason:"parent_page_inspection_unavailable"});
+        if (this.stopped || self.actor !== "aiko" || self.thread !== thread ||
+            binding.parentThread === thread || !context.turn) return denied();
+        return yield* Effect.tryPromise({try:async()=>{
+          const policy = await authorize(input);
+          context.signal.throwIfAborted();
+          if (!policy || this.busy.has(owner) || this.sessionThreads.get(owner) !== binding.parentThread) return denied();
+          const session = this.sessions.get(owner);
+          if (!session) return denied();
+          this.busy.add(owner);
+          clearTimeout(this.idleTimers.get(owner)); this.idleTimers.delete(owner);
+          const work = (async()=>{
+            try {
+              const driver = await session;
+              if (!driver.inspectCurrentPage) return denied();
+              const result = await driver.inspectCurrentPage(policy,context.signal);
+              context.signal.throwIfAborted();
+              const current = await authorize(input);
+              if (!current || current.publicOnly !== policy.publicOnly || this.stopped ||
+                  this.sessions.get(owner) !== session || this.sessionThreads.get(owner) !== binding.parentThread ||
+                  publicTarget(result.url).origin !== policy.origin) return denied();
+              const clean = (value:string,max:number) => this.options.redact(value).slice(0,max);
+              return {status:"completed",origin:policy.origin,untrustedPageContent:{
+                url:clean(result.url,2048),title:clean(result.title,1000),text:clean(result.text,12000),snapshot:clean(result.snapshot,12000),
+                links:result.links.slice(0,50).flatMap(link=>{try{return publicTarget(link).origin===policy.origin?[clean(link,2048)]:[];}catch{return [];}}),
+                linksTruncated:result.linksTruncated || result.links.length>50,
+              }};
+            } finally {
+              this.busy.delete(owner);
+              if (!this.stopped && this.sessions.has(owner)) {
+                const timer=setTimeout(()=>{const closing=this.closeSession(owner);this.jobs.add(closing);void closing.catch(()=>{}).finally(()=>this.jobs.delete(closing));},240000);
+                timer.unref();this.idleTimers.set(owner,timer);
+              }
+            }
+          })();
+          this.jobs.add(work);
+          try {return await work;} finally {this.jobs.delete(work);}
+        },catch:()=>denied()}).pipe(Effect.catch(result=>Effect.succeed(result)));
+      }),
+    }];
   }
   private prune() {
     const now = Date.now();
@@ -355,12 +444,11 @@ export class BrowserController {
                       "Browser inference failed; inspect receipts for confirmed outcomes.",
                     failure: undefined,
                   };
-                if (action.kind !== "call") return action;
-                if (browserTurn) action = { ...action, text: undefined };
-                if (!action.name.startsWith("agent_browser_") && !action.name.startsWith("request_memory_")) return action;
+                const seal = <C extends {callId:string;name:string;arguments:unknown}>(call:C):C => {
+                if (!call.name.startsWith("agent_browser_") && !call.name.startsWith("request_memory_")) return call;
                 let decoded: AgentBrowserAgentAction | undefined,
                   error: string | undefined;
-                const encoded = JSON.stringify(action.arguments);
+                const encoded = JSON.stringify(call.arguments);
                 try {
                   if (
                     !encoded ||
@@ -368,9 +456,9 @@ export class BrowserController {
                     controller.options.redact(encoded) !== encoded
                   )
                     throw new Error("Unsafe browser input");
-                  if (action.name.startsWith("request_memory_")) { validateRouterInput(action.arguments); } else { decoded = agentBrowserAgentToolCallOf(
-                    action.name,
-                    action.arguments,
+                  if (call.name.startsWith("request_memory_")) { validateRouterInput(call.arguments); } else { decoded = agentBrowserAgentToolCallOf(
+                    call.name,
+                    call.arguments,
                     controller.options.domains,
                   ).action;
                   if (decoded.action === "navigate") publicTarget(decoded.url); }
@@ -382,19 +470,23 @@ export class BrowserController {
                   owner,
                   thread: request.identity.thread,
                   turn: request.identity.turn,
-                  name: action.name,
-                  args: error ? {} : action.arguments,
+                  name: call.name,
+                  args: error ? {} : call.arguments,
                   action: decoded,
                   error,
                   expires: Date.now() + 900_000,
                 });
                 controller.prune();
                 return {
-                  ...action,
+                  ...call,
                   text: undefined,
-                  callId: `browser-${hash([owner, request.identity, key ?? action.callId])}`,
+                  callId: `browser-${hash([owner, request.identity, key ?? call.callId, call.callId])}`,
                   arguments: { request: ref },
                 };
+                };
+                if(action.kind === "call")return {...action,...seal(action),...(browserTurn?{text:undefined}:{})};
+                if(action.kind === "calls")return {...action,calls:action.calls.map(seal),...(browserTurn?{text:undefined}:{})};
+                return action;
               }),
             );
           },
@@ -404,6 +496,8 @@ export class BrowserController {
   }
   tools(owner: string, thread: string): NativeTool<Self | EventLog>[] {
     return [...this.requestMemoryTools(owner, thread), ...AGENT_BROWSER_AGENT_TOOL_DESCRIPTORS.map((descriptor) => ({
+      // These descriptor actions observe the existing owner-bound page only.
+      speculativeRead: ["snapshot", "get_text", "get_value", "get_attribute", "is_visible", "is_enabled", "is_checked", "title", "url"].includes(descriptor.action),
       spec: {
         name: descriptor.name,
         description:
@@ -546,6 +640,7 @@ export class BrowserController {
                     name: descriptor.name,
                   });
                   started = true;
+                  this.sessionThreads.set(owner,thread);
                   const output = await driver.execute(request.action!, context.signal);
                   context.signal.throwIfAborted();
                   const fullContent = this.options.redact(
@@ -579,14 +674,19 @@ export class BrowserController {
                   });
                   return result;
                 } catch (error) {
+                  const privateBlocked = ["private_sign_in_pending", "private_sign_in_cleanup_failed"].includes(errorCode(error));
                   const readOnly = started && this.options.allowModelAnswers && request.action &&
                     (/^get_/.test(request.action.action) || ["snapshot", "title", "url", "tab_list", "is_visible", "is_enabled", "is_checked"].includes(request.action.action) ||
                      (request.action.action === "wait" && "selector" in request.action && errorCode(error) === "element_not_found"));
                   // A failed read/selector has no uncertain mutation to replay. Keep the page for a narrower read.
-                  if (!readOnly || context.signal.aborted) await this.closeSession(owner).catch(() => {});
+                  if ((!readOnly && !privateBlocked) || context.signal.aborted) await this.closeSession(owner).catch(() => {});
                   const result = receipt(
-                    started && !readOnly ? "unknown" : "blocked",
-                    readOnly
+                    started && !readOnly && !privateBlocked ? "unknown" : "blocked",
+                    privateBlocked
+                      ? errorCode(error) === "private_sign_in_pending"
+                        ? "An active private sign-in is holding the browser. Finish or cancel that sign-in before browsing. No requested interaction was executed."
+                        : "Expired private sign-in cleanup failed. Browser access remains locked to protect the sign-in. No requested interaction was executed."
+                      : readOnly
                       ? "This browser read did not return usable evidence. Do not invent its contents; inspect the page or use a narrower selector. Successful earlier reads are still available."
                       : started
                       ? `Browser outcome is unconfirmed (${errorCode(error)}). Do not retry a potentially completed interaction without independent verification.`
@@ -594,6 +694,7 @@ export class BrowserController {
                         ? "Browser allocation requires operator reconciliation after an uncertain provider response. This is a persistent infrastructure blocker: stop browser attempts and report it. Changing the URL will not resolve it. No requested interaction was executed."
                         : `Browser unavailable (${errorCode(error)}). No requested interaction was executed.`,
                   );
+                  result.reason = errorCode(error);
                   if (started)
                     await emit({
                       type: "AikoBrowserActionFinished",
@@ -640,6 +741,8 @@ export class BrowserController {
   }
   private requestMemoryTools(owner: string, thread: string): NativeTool<Self | EventLog>[] {
     return ["search", "hydrate"].map(operation => ({
+      // Hydration executes only indexed read requests, through the existing owner gate.
+      speculativeRead: true,
       spec: {
         name: `request_memory_${operation}`,
         description: operation === "search" ? "Semantically search previously observed browser response pointers. Returns request DAG references and required inputs, never stored response values. Browse first to index requests." : "Recompute an owned observed read-request pointer and its dependency DAG. Fresh response is transient context, not saved memory. Supply only explicit non-secret required inputs; no writes or credentials.",
@@ -673,6 +776,7 @@ export class BrowserController {
             }
             if (!driver.requestRehydrate) return receipt("blocked","Request-pointer hydration is unavailable.");
             if (typeof args.pointerId !== "string") return receipt("blocked","Hydration requires pointerId from search and all required inputs. Internal request handles are not tool inputs.");
+            this.sessionThreads.set(owner,thread);
             const result = await driver.requestRehydrate(args.pointerId,args.inputs??{},context.signal);
             if (result.status !== "completed" || !result.hydration) return receipt("blocked",`Request DAG could not produce a fresh response (${result.code}). Check the search result's required inputs or browse again.`);
             const observation=randomUUID(); this.observations.set(observation,{owner,id:observation,action:"request_memory_hydrate",content:this.options.redact(JSON.stringify(result.hydration)).slice(0,16000),expires:Date.now()+900000});
@@ -705,6 +809,7 @@ export class BrowserController {
     this.idleTimers.delete(owner);
     const session = this.sessions.get(owner);
     this.sessions.delete(owner);
+    this.sessionThreads.delete(owner);
     if (session) await (await session).close();
   }
   async close() {

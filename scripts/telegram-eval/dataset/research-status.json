@@ -1,0 +1,92 @@
+{
+  "date": "2026-09-08",
+  "status": "completed_initial_web_search_corpus",
+  "unbrowse_version": "11.4.1",
+  "provider": "web_search",
+  "skill": "/home/deck/.agents/skills/unbrowse.retired-node-skill/SKILL.md",
+  "intent": "Find Reddit discussions where people describe tasks they want a virtual or personal assistant to handle; return tasks, pain points, titles and direct thread links, distinguishing help-seekers from service advertising.",
+  "attempted_url": "https://www.reddit.com/search/?q=what%20tasks%20virtual%20assistant",
+  "attempts": [
+    "front_door",
+    "capture_fallback",
+    "front_door_retry"
+  ],
+  "latest_front_door_result": "After native binary repair, the final retry returned 3 endpoint definitions with no post results.",
+  "latest_capture_result": "Native Kuri built from pinned upstream source, installed, started and completed Reddit capture: 3 endpoints; 603900 HTML bytes and 9247 text bytes reported, but no thread content returned to the research caller.",
+  "attempt_history": [
+    {
+      "version": "prior installed binary",
+      "result": "NoSession on front door, capture and retry"
+    },
+    {
+      "version": "11.4.1",
+      "result": "Endpoint definition only; capture failed due to missing linux-x64 Kuri binary; final retry still returned endpoint definition only"
+    },
+    {
+      "version": "npm 11.4.1 with source-built Kuri 1498812",
+      "result": "Capture completed successfully; final front-door retry still returned endpoint definitions only."
+    },
+    {
+      "version": "local source front-door experiment",
+      "result": "14 focused regression checks passed; read execution attempted, received HTTP 403; source capture missing obscura-capture; restored npm runtime, retained native Kuri repair."
+    },
+    {
+      "version": "standard web search, user authorised",
+      "result": "25 distinct source threads, 50 normalized intent prompts, 50 explicitly generated follow-up variants; 100 earlier synthetic cases retained."
+    }
+  ],
+  "verified_sources": 25,
+  "synthetic_questions": 100,
+  "note": "Initial purposive sample collected through user-authorised standard web search. Provenance reviewed against accessible search excerpts; not full-thread retrieval, representative sampling or independently verified personal accounts. No live scenarios enabled.",
+  "native_build_record": "/home/deck/work/unbrowse-linux-build/dist/native-build.json",
+  "alternate_retrieval_permission": "approved_by_user",
+  "previous_unbrowse_status": "blocked_unbrowse_replay_403",
+  "reddit_paraphrases": 50,
+  "reddit_derived_variants": 50,
+  "total_questions": 200,
+  "sampled_communities": [
+    "ADHD",
+    "ADHDthriving",
+    "TechForAgingParents",
+    "adhdwomen",
+    "fatFIRE",
+    "productivity",
+    "smallbusiness",
+    "workingmoms"
+  ],
+  "unbrowse_error": "Source-patched read replay received HTTP 403; source capture requires missing obscura-capture binary",
+  "direct_open_result": "Six sampled Reddit thread opens failed with Cache miss; indexed excerpts provided research text. All sources are labelled web_search_excerpt.",
+  "excluded_examples": [
+    {
+      "url": "https://www.reddit.com/r/smallbusiness/comments/1p7der7/",
+      "reason": "Hypothetical market-research solicitation; not counted as independent demand."
+    },
+    {
+      "url": "https://www.reddit.com/r/ADHD/comments/1tltzyh/",
+      "reason": "Aspiring provider researching a service; not counted as a help-seeker."
+    },
+    {
+      "url": "https://www.reddit.com/r/ADHD/comments/17dbrce/",
+      "reason": "Explicit repost of included 16tr3p9; excluded as duplicate demand."
+    },
+    {
+      "url": "https://www.reddit.com/r/ProductivityApps/comments/1degqmt/",
+      "reason": "Product-promotion post; not used as requester evidence."
+    }
+  ],
+  "coverage_gaps": [
+    "Representative demand or frequency estimates",
+    "Full-thread retrieval and human provenance review",
+    "Broader communities beyond business and organisation-related samples",
+    "Evidence-backed local food, job search, media generation and browser-failure requests",
+    "Fictional scenario fixtures and executable objective assertions"
+  ],
+  "search_query_examples": [
+    "site:reddit.com/r/smallbusiness virtual assistant tasks",
+    "site:reddit.com/r/ADHD virtual assistant appointments",
+    "site:reddit.com/r/workingmoms \"personal assistant\" tasks",
+    "site:reddit.com/r/fatFIRE \"assistant\" \"travel\" scheduling",
+    "site:reddit.com/r/Parenting \"virtual assistant\"",
+    "site:reddit.com/r/fatFIRE/comments/pydcxw \"travel\""
+  ]
+}

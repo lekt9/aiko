@@ -1,4 +1,6 @@
+import { parseCodingRepositories, type CodingRepositoryGrant } from "./coding-workspace.ts";
 import { parseManagerProviders, type ManagerProvider } from "./password-manager-mcp.ts";
+import { parseFallbackVerbosity } from "./fallback-verbosity.ts";
 import { parseModelRouting, type ModelRoutingConfig } from "./model-routing.ts";
 import {
   parseConnectorVault,
@@ -10,13 +12,23 @@ import { join, isAbsolute } from "node:path";
 import { normalizeAgentBrowserAllowedDomains } from "@unbrowse/browser-harness/client";
 
 import { parsePlaneCredentials, type PlaneCredential } from "./plane-auth.ts";
-import { DEFAULT_MODEL_LIMITS, type ModelLimits } from "./model-budget.ts";
+import { DEFAULT_MODEL_LIMITS, type ModelLimits } from "./model-budget-policy.ts";
+import { parseMcpServers, type ConfiguredMcpServers } from "./general-mcp-config.ts";
 import { safeUserId } from "./security.ts";
 import {
   parseManagerKey,
 } from "./password-managers.ts";
 
 export { parseManagerKey };
+
+export function parseDatabaseWriteOwners(enabled?: string, owners?: string): readonly string[] | undefined {
+  if (enabled !== undefined && !["true", "false"].includes(enabled)) throw Error("AIKO_DATABASES must be true or false");
+  if (enabled === "false") return [];
+  if (owners === undefined) return undefined;
+  const values = owners.split(",").map(v => v.trim()).filter(Boolean);
+  if (values.some(v => !safeUserId(v))) throw Error("Invalid database owner allowlist");
+  return [...new Set(values)];
+}
 
 export const PERSONA = "3c36e929-50ac-4971-919f-70e6fc6273b7";
 export type AikoConfig = {
@@ -38,11 +50,20 @@ export type AikoConfig = {
   };
   cerebrasKey?: string;
   modelRouting?: ModelRoutingConfig;
+  /** Host-configured supported reasoning efforts by provider/model. */
+  modelEfforts?: string;
+  modelCapabilities?: string;
+  codingRepositories?: Readonly<Record<string,CodingRepositoryGrant[]>>;
+  mcpServers?: ConfiguredMcpServers;
+  /** Only secrets explicitly named by MCP header references; never published to tools. */
+  mcpSecrets?: Readonly<Record<string,string|undefined>>;
   arcadeKey?: string;
   cartesiaKey?: string;
   cartesiaVoiceId?: string;
   cartesiaModel?: string;
   codeMode?: boolean;
+  /** Undefined permits local database writes for valid owners; [] keeps retained data read-only. */
+  databaseWriteOwners?: readonly string[];
   connectorVault?: ConnectorVaultConfig;
   /** Selected by the host's loaded configuration, never inferred from ambient
    * process state when constructing an isolated service. */
@@ -54,6 +75,8 @@ export type AikoConfig = {
   persona: string;
   voiceEnabled: boolean;
   replyStyle?: "thinkfeel" | "direct";
+  verboseFallbacks?: boolean;
+  verboseFallbacksSince?: number;
   botToken?: string;
   webhookSecret?: string;
   allowedUsers: ReadonlySet<string>;
@@ -321,6 +344,9 @@ export async function loadConfig(
       ),
     };
   }
+  const mcpServers = parseMcpServers(get("AIKO_MCP_SERVERS"));
+  const mcpSecrets = Object.fromEntries([...new Set(Object.values(mcpServers).flatMap(servers =>
+    servers.flatMap(server => Object.values(server.headerRefs ?? {}))))].map(ref => [ref, get(ref)]));
   return {
     mode,
     connectorStorage: mode === "live" && get("DATABASE_URL") ? "postgres" : "file",
@@ -336,6 +362,11 @@ export async function loadConfig(
     modelKey,
     memoryEmbedding,
     cerebrasKey: get("CEREBRAS_API_KEY"),
+    modelEfforts: get("AIKO_MODEL_EFFORTS"),
+    modelCapabilities: get("AIKO_MODEL_CAPABILITIES"),
+    codingRepositories: parseCodingRepositories(get("AIKO_CODING_REPOSITORIES")),
+    mcpServers,
+    mcpSecrets,
     modelRouting: parseModelRouting(
       Object.fromEntries(
         [
@@ -357,6 +388,8 @@ export async function loadConfig(
     cartesiaVoiceId: get("AIKO_CARTESIA_VOICE_ID"),
     cartesiaModel: get("AIKO_CARTESIA_MODEL"),
     codeMode: get("AIKO_CODE_MODE") === "true",
+    databaseWriteOwners: parseDatabaseWriteOwners(get("AIKO_DATABASES"), get("AIKO_DATABASE_WRITE_OWNERS")),
+    ...parseFallbackVerbosity(get("AIKO_VERBOSE_FALLBACKS"), get("AIKO_VERBOSE_FALLBACKS_SINCE")),
     connectorVault: parseConnectorVault(get("AIKO_CONNECTOR_VAULT_JSON")),
     managerKey: parseManagerKey(get("AIKO_MANAGER_KEY")),
     managerProviders: parseManagerProviders(get("AIKO_MANAGER_PROVIDERS_JSON")),

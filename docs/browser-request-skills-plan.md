@@ -1,8 +1,17 @@
 # Browser requests, reusable skills, and live memory
 
+The consolidated actor, sandbox, registry and passive skill-derivation plan is
+[Self-composing actor harness](self-composing-harness-plan.md).
+
 Planning draft, 2026-09-07. Based on the current Unlock working tree, sibling
 `../entity-learn`, and Tardigrade source. This document proposes changes; it does
 not establish deployed behavior or verified Instagram/TikTok support.
+
+Implementation update: [Request lab](request-lab.md) now provides executable
+controlled checks and a visual dashboard. The authenticated HTTP transport defect
+described below has been repaired and tested against a controlled endpoint.
+Live subscriptions, generated skills and durable scheduled skill execution remain
+planned; the lab labels its fixed example workflow and synthetic I/O explicitly.
 
 The target is to learn an operation from browser activity, compile it into a
 callable capability, compose capabilities into tested code, and execute that

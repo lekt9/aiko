@@ -1,3 +1,4 @@
+import {loginObservationEvent,type NativeLoginObservation} from "./native-login-observation.ts";
 import { connectionMiniAppUrl } from "./telegram-mini-app.ts";
 import type { SecureBrowserAdapter } from "./connectors-browser.ts";
 import type { BrowserDriverFactory } from "./browser-driver.ts";
@@ -16,7 +17,12 @@ export function nativeBrowserConnector(
     const driver = await factory({
       owner,
       domains: ["*"],
-      emit: async () => {},
+      emit: async event => {
+        // Only allowlisted outcome metadata leaves the private operation. The
+        // VM journal acknowledges an observation only after the host commits it.
+        if((event as {type?:unknown}).type==="AikoPrivateLoginObserved")
+          await emit(loginObservationEvent(owner,event as NativeLoginObservation));
+      },
       signal,
     }).catch((error) => {
       console.warn("private_browser_allocation_failed");

@@ -1,0 +1,265 @@
+{
+  "status": "registered-fresh-native-evidence",
+  "scope": "S16.C01/C03/C04/C05/C06/P registered after explicit runtime freeze; all 187 check scopes and 25 parents preserved",
+  "fixture": "scripts/fixtures/self-composing-gepa-joined.ts",
+  "command": "TMPDIR=/tmp bun scripts/fixtures/self-composing-gepa-joined.ts prepare <private-existing-directory> <fresh-nonce>",
+  "evidence": "/tmp/independent-gepa-joined-final",
+  "observed": {
+    "physicalInfer": 2,
+    "freshChildren": 16,
+    "jobs": 20,
+    "requests": 49,
+    "prepare": 16,
+    "verifier": 20,
+    "outcome": "promoted"
+  },
+  "provenInJoinedRun": [
+    "immutable brief and conflicting restart request refusal",
+    "eligible baseline parent after failed candidate",
+    "development-only native Infer transport",
+    "exact focused source diff",
+    "failed candidate witnesses in subsequent reflection",
+    "baseline and surviving candidate held-out comparison",
+    "ordinary invocation with no additional model proposal",
+    "exact fresh-child digest/input/witness mapping"
+  ],
+  "remaining": [
+    "169 full-goal requirements remain blocked; 24 section parents remain open. No global completion or general production/provider/actor-source optimization claim."
+  ],
+  "sourceReview": "Controller proposal records artifact and diff directly; no explicit build call in experiment/trials. Whether sandbox execution admission fulfills separate isolated build clause requires retained build evidence; no new runtime defect asserted from absence alone. Optional merge/actor-source paths are not exercised or claimed.",
+  "S16.C05": {
+    "status": "whole-child-proposed-unregistered-source-stable-matrix-passed",
+    "fixtureMode": "stop-cancel | stop-time | stop-run | stop-cost | stop-hypothesis",
+    "results": "/tmp/independent-c05-final-freeze/matrix-results.json",
+    "passes": [
+      "physical-child cancellation and native unknown return; no repeated effects",
+      "actual elapsed deadline plus AlarmFired cancels physical child; single settlement",
+      "12-run reservation cap, no thirteenth dispatch",
+      "measured preparation cost reaches limit before child dispatch",
+      "strict no-hypothesis stop now has four development trials only (7 total jobs/21 requests)",
+      "process cut after no-hypothesis receipt recovers metadata-only with deleted private brief and all counters zero",
+      "one-proposal call cap makes exactly one physical Infer call; no retry/recall",
+      "101 reported tokens versus 100 requested cap immediately settles budget-exhausted/proposal-token-limit-exceeded; measured tokens retained, no additional candidate/promotion/trial/call",
+      "cut immediately after actual ProposalMeasured before reflection/experiment terminal receipts: second process metadata-only recovery with deleted brief and zero work"
+    ],
+    "remaining": [
+      "Final source freeze, reviewed transitive dependency-tree pins and registration only; no currently reproduced C05 semantic failure in this matrix."
+    ],
+    "previousFailure": {
+      "evidence": "/tmp/gepa-stop-hypothesis-strict/stop-evidence.json",
+      "assertion": "No new trial after ProposalSettled no-hypothesis",
+      "actual": 2,
+      "expected": 0,
+      "source": "apps/agent/src/harness-experiment.ts:330-334 calls closeSearch; advance then runs baseline held-out trials",
+      "resolvedEvidence": "/tmp/gepa-hypothesis-fixed-independent/stop-evidence.json"
+    },
+    "recoveryEvidence": "/tmp/gepa-hypothesis-cut-independent/stop-recovered.json",
+    "tokenFailureHistorical": {
+      "evidence": "/tmp/gepa-cap-tokens-strict/token-boundary.json",
+      "assertion": "Exceeded recorded token cap settles budget-exhausted immediately",
+      "actual": "status projection pending; advance returns unknown existing-proposal-needs-retained-evidence",
+      "expected": "budget-exhausted",
+      "wireMaxTokens": 100,
+      "controlledReportedCompletionTokens": 101,
+      "physicalCalls": 1,
+      "repeatedWork": 0,
+      "source": "harness-reflection.ts rejects excess completion as generic unknown; harness-experiment.ts uncertain reservation awaits retained evidence/deadline",
+      "resolvedEvidence": "/tmp/gepa-token-fixed-strict-final/token-boundary.json"
+    },
+    "tokenRecoveryEvidence": "/tmp/gepa-token-cut-measured/stop-recovered.json",
+    "sourceReview": "/tmp/independent-c05-final-freeze/review-rationale.json",
+    "freshPassingModes": [
+      "cancel",
+      "time",
+      "run",
+      "preparationcost",
+      "nohypothesis",
+      "one-proposal-cap",
+      "token101-vs100",
+      "physical-hostcap50-vsbrief100-reported51",
+      "promotion",
+      "nohypothesis-process-cut",
+      "tokenMeasured-process-cut"
+    ],
+    "fullGate": {
+      "satisfied": 12,
+      "blocked": 175,
+      "parentsBlocked": 25,
+      "fullCompletion": false,
+      "fullGateExit": 1,
+      "fullGateReport": "/tmp/independent-c05-final-freeze/full-gate.json",
+      "nativeEvidenceRoot": "/tmp/unlock-self-composing-evidence-1mDVlN",
+      "validate": {
+        "checks": 187,
+        "sections": 25
+      },
+      "selfTestAssertions": 22,
+      "existingVerifiersRefreshed": 8,
+      "newCriteriaRegistered": [],
+      "matrixResults": "/tmp/independent-c05-final-freeze/matrix-results.json",
+      "C05Failure": "/tmp/independent-c05-final-freeze/daily-calls/daily-call-boundary.json",
+      "manifestSha256": "343babbb408be00666370af753a6f0b6f3f00a613bbf80b97745b99d3daed4e4",
+      "planSha256": "bfa1ced3429b27ba06f0649ec5921ebe6af00e7da8d3c5f57143a293704d0192",
+      "gateSha256": "3c46d8421bc35810962a1c078636e26d3fc73de421b258ca27a86e64c98bbcdc",
+      "sourceException": "/tmp/independent-c05-final-freeze/outside-proof-source-changes.json"
+    },
+    "dailyFailureHistorical": {
+      "evidence": "/tmp/independent-c05-final-freeze/daily-calls/daily-call-boundary.json",
+      "assertion": "S16.C05: exhausted account call budget must settle without waiting for deadline",
+      "expected": "budget-exhausted",
+      "actual": "pending",
+      "physicalCalls": 1,
+      "extraWorkAfterRetry": 0,
+      "resolvedEvidence": "/tmp/gepa-daily-fixed-independent/daily-call-boundary.json"
+    },
+    "entry": "scripts/verify-self-composing-gepa-stops.ts",
+    "graphEntrypoints": [
+      "scripts/verify-self-composing-gepa-stops.ts",
+      "scripts/fixtures/self-composing-gepa-joined.ts"
+    ],
+    "report": "/tmp/gepa-c05-protected-current/report.json",
+    "scopeRationale": "Fixed whole literal tested through recorded run cap, elapsed native alarm, measured preparation-cost admission, absent-cost conservative native token/physical/daily-call caps, owner cancellation with physically executing child and exact denial/terminal commit races, verified promotion and no-supported-hypothesis, plus retained-stop metadata process recovery. Each stopped scenario checks no repeated work and one terminal; started cancelled child retains unknown outcome.",
+    "cases": 12,
+    "processCuts": 3,
+    "cancellationReview": "Real EventLog append wrapper commits cancellation immediately before ReflectionSettled budget denial or ExperimentSettled daily terminal; host harnessLibraryAppendAllowed rejects losing append. Cancellation wins, historical denial allowed only if admitted before cancellation; no extra physical calls."
+  },
+  "moduleNativeProposal": {
+    "status": "prepared-unregistered-source-stable-semantic-entry-passed",
+    "entry": "scripts/verify-self-composing-gepa-joined.ts",
+    "fixture": "scripts/fixtures/self-composing-gepa-joined.ts",
+    "graphEntrypoints": [
+      "scripts/verify-self-composing-gepa-joined.ts",
+      "scripts/fixtures/self-composing-gepa-joined.ts"
+    ],
+    "proposedWholeChildren": [
+      "S16.C01",
+      "S16.C03",
+      "S16.C04"
+    ],
+    "report": "/tmp/gepa-joined-protected-retry/report.json",
+    "nativeEvidence": "/tmp/gepa-joined-protected-retry/joined/module-native-evidence.json",
+    "counts": {
+      "physicalInfer": 2,
+      "freshChildTrials": 16,
+      "jobsAndBuildsIncludingOrdinary": 20,
+      "prepare": 16,
+      "verifier": 20,
+      "networkRequests": 0,
+      "explicitAdvanceCalls": 0
+    },
+    "scopeRationale": {
+      "S16.C01": "Retained native brief digest checked against baseline, mutable module, exact contract/verifier/evaluator/dataset split pins, repeats, budgets and policy; conflicting same-ID request refused.",
+      "S16.C03": "Native Infer receives only development feedback including failed first candidate; records retained concrete hypothesis and exact helper-only diff; nonempty exact module/source dependency lock and built-artifact digest linked to each checked child witness; failed candidate private output retained and used for second reflection.",
+      "S16.C04": "Exact baseline/candidate development and heldout matrix, failed candidate excluded from survivors, recorded policy comparison and actual generation-2 promotion. Optional merge not exercised or claimed; no actor-source changes."
+    },
+    "sourceGap": "Network executor explicitly refuses dependencies/multiple files, so original network scenario cannot supply nonempty lock evidence. Module mode uses its own truthful local projection contract; no extra S19 network criterion credit.",
+    "remaining": [
+      "S16.C05 daily-ledger first-stop fix awaits independent notified recheck; original strict assertions unchanged",
+      "S16.C06 ordinary library invocation has no new optimizer but full default ordinary CodeHarness/trigger scope is not proved by this mode",
+      "S16.P remains unregistered; do not assemble parent credit from children or separate stop scenarios",
+      "final frozen transitive dependency-tree review and registration still deferred"
+    ],
+    "sourceRaceRetained": "/tmp/gepa-joined-protected-proposal; semantic fixture passed but entry rejected harness-experiment-log.ts mutation; bounded retry passed source stability"
+  },
+  "defaultProductionPreparation": {
+    "status": "unregistered-native-factory-and-tools-proof-passed",
+    "fixture": "scripts/fixtures/self-composing-default-gepa.ts",
+    "evidence": "/tmp/gepa-default-native-final/observed.json",
+    "trace": "/tmp/gepa-default-native-final/native-trace.json",
+    "counts": {
+      "code": 4,
+      "sandbox": 8,
+      "foregroundDriver": 2,
+      "physicalNativeInfer": 1,
+      "provider": 0,
+      "freshChildren": 4,
+      "explicitAdvance": 0
+    },
+    "actualProductionSeams": [
+      "createAikoActor",
+      "defaultRegistryBinding with optimization",
+      "CodeHarness actual harness_acquire/harness_run/harness_experiment_start",
+      "registryTrialActor native lineage routing",
+      "harnessExperimentComponent automatic native effects",
+      "production builtin checker and local sandbox"
+    ],
+    "driverLimit": "Foreground Infer is deterministic controlled code-entry driver; reflection is actual native Infer with controlled physical fetch. This does not claim paid provider or ordinary production model-routing budget coverage.",
+    "scopeAssertions": [
+      "ordinary exact checked output precedes explicit experiment registration",
+      "foreground turn settles before fresh child dispatch",
+      "one ordinary invocation produces zero automatic experiment triggers",
+      "native no-hypothesis settlement and subsequent recover without repeated work"
+    ],
+    "parentGap": "Default policy admits fixed stateless builtin single-entry/no-dependency artifacts and one proposal. Custom module failed-candidate/promotion scenario uses separate trusted binding; these proofs cannot be aggregated into S16.P.",
+    "initialFixtureError": "First input omitted required typed envelope; corrected to actual value/schema/correlation without changing runtime or assertion outcome."
+  },
+  "parentLiteralReview": {
+    "outcome": "S16.P remains unregistered; no default-policy/two-proposal/nonempty-lock requirement invented",
+    "interpretation": "S16 permits configurable native actor methods/effects and artifact-only mutation; optional merge and actor-source clauses remain conditional. Default registry policy is one supported configuration, not a mandate for the complete section witness.",
+    "actualEvidenceGap": "Resolved as a preparation witness by the new standalone parent entry; final frozen-source registration review remains. No aggregation of separate child reports.",
+    "sourceLimitationNotParentBlocker": "Default registry only admits fixed builtin dependency-free JavaScript and one candidate; custom trusted module binding demonstrates broader artifact composition. This distinction is current scope, not by itself a violation of S16.P."
+  },
+  "parentProposal": {
+    "status": "unregistered-single-causal-native-run-source-stable-passed",
+    "entry": "scripts/verify-self-composing-gepa-parent.ts",
+    "graphEntrypoints": [
+      "scripts/verify-self-composing-gepa-parent.ts",
+      "scripts/fixtures/self-composing-gepa-joined.ts"
+    ],
+    "proposedWholeClaims": [
+      "S16.C06",
+      "S16.P"
+    ],
+    "report": "/tmp/gepa-parent-protected-independent/report.json",
+    "joinedTrace": "/tmp/gepa-parent-protected-independent/joined-native-trace.json",
+    "noChildReportAggregation": true,
+    "scopeRationale": {
+      "S16.C06": "One ordinary invocation after native terminal promotion has exactly RunStarted and Checked, one real sandbox/build and one fixed verifier call, model/token/network/browser measurements zero, no prepare/propose increments or new experiment, and transparent fetch/Bun/node subprocess observers record zero. Artifact-only mutation retains actual aiko actor; actor-source conditional is not exercised.",
+      "S16.P": "Same nonce/native parent trace links immutable brief, 16 fresh child trials with exact build/input/witness pins, development-only native Infer reflection, failed archive and eligible-parent selection, exact focused module diff/nonempty locks, unchanged baseline plus survivor heldout comparisons, recorded policy promotion before deadline, and ordinary lightweight invocation after terminal. No child reports or default fixture results are read."
+    },
+    "observationLimit": "Runtime observers plus reviewed current run\u2192sandbox\u2192fixed-checker code path support no recommendation/training/inference on this ordinary invocation; not a universal OS or arbitrary future-code assertion. All sources remain subject to future frozen pin review.",
+    "conditionals": {
+      "merge": "not performed; no merge capability claimed",
+      "actorSource": "unchanged stable aiko; harness artifact only"
+    },
+    "remaining": [
+      "Final source freeze and independent transitive graph/runtime/dependency pin review before registration. Full goal remains open; no acceptance status assigned."
+    ]
+  },
+  "frozenRegistrationCheckpoint": {
+    "checks": 187,
+    "sections": 25,
+    "allCheckTextKindsConditionsPreserved": true,
+    "allOldVerifierAssertionsCommandsTimeoutsPreserved": true,
+    "docsMetadataHistoryPreserved": true,
+    "gateByteIdentical": true,
+    "beforeManifestSha256": "96c0401dd8876e9474598133ea7e9eaa88754bf53c675d3c34e1fdab7a21dc05",
+    "afterManifestSha256": "fda29c286af4510bebb58cc21bba3df638a4677f1c6fb5a9a590808d3df4329b",
+    "planSha256": "fedd68a916e51b80021265ebaab64e8c0c53b8d1c92fd6d5292b53f5a1ccb78a",
+    "addedAssignments": [
+      "S16.C01",
+      "S16.C03",
+      "S16.C04",
+      "S16.C05",
+      "S16.C06",
+      "S16.P"
+    ],
+    "freezeMarker": "/tmp/unlock-native-source-and-budget-freeze-ready.json",
+    "fullGoalComplete": false,
+    "fullGateExit": 1,
+    "satisfied": 18,
+    "blocked": 169,
+    "parentsSatisfied": 1,
+    "parentsOpen": 24,
+    "fullCompletion": false,
+    "evidenceRoot": "/tmp/unlock-self-composing-evidence-42DYcE",
+    "allRegisteredFilePinsUnchangedAfterGate": true
+  },
+  "historicalRemainingAtInitialPreparation": [
+    "S16.C03 nonempty dependency lock and isolated pre-evaluation build evidence",
+    "S16.C05 run/time/cost/call/token/cancel/pending settlement boundary matrix in integrated scope",
+    "S16.C06 default ordinary native entry/trigger assembly rather than direct library invocation",
+    "S16.P autonomous native controller scheduling: this fixture explicitly advances the real controller",
+    "process-boundary replay for this extended two-proposal scenario"
+  ]
+}

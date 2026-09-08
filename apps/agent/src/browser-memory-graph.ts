@@ -43,6 +43,15 @@ export function browserMemoryGraph(rows: readonly { seq: number; event: Event }[
         edge(id,child,"depends_on");
       }
     }
+    if(e.type==="AikoCodeDataRetained"&&digest(e.ref)) {
+      const id=`artifact:${e.ref}`;
+      add({id,kind:"working-data",label:"Retained working data",status:"private handle",details:{digest:e.ref,bytes:Number(e.bytes),availability:"recheck current source authority"}});
+      if(Array.isArray(e.dependencies))for(const dependency of e.dependencies.slice(0,32))if(dependency&&digest(dependency.digest)) {
+        const source=`artifact:${dependency.digest}`;
+        add({id:source,kind:"tool-definition",label:String(dependency.tool).slice(0,128),status:"referenced",details:{digest:dependency.digest}});
+        edge(id,source,"derived_from");
+      }
+    }
     if (e.type === "AikoNetworkRequestSettled" && digest(e.requestDigest) && digest(e.definitionDigest)) {
       const id = `artifact:${e.requestDigest}`, parent = `artifact:${e.definitionDigest}`;
       add({id:parent,kind:"request-definition",label:"Request DAG",status:"referenced",details:{digest:e.definitionDigest}});
@@ -104,5 +113,5 @@ export function browserMemoryGraph(rows: readonly { seq: number; event: Event }[
 
 /** Keep only native structural events; never recursively mine model messages/tool returns for authority. */
 export function browserGraphEvent(event: Event): boolean {
-  return ["AikoToolDefinitionRecorded", "AikoCodeWorkflowSaved", "AikoNetworkRequestSettled", "NetworkFactObserved", "NetworkGraphCheckpointPrepared", "BrowserNetworkToolPrepared", "AikoRequestMemoryIndexed", "AikoRequestMemoryIndexUnavailable", "AikoBrowserLearningPending"].includes(event.type) || event.type.startsWith("Har");
+  return ["AikoToolDefinitionRecorded", "AikoCodeWorkflowSaved", "AikoCodeDataRetained", "AikoNetworkRequestSettled", "NetworkFactObserved", "NetworkGraphCheckpointPrepared", "BrowserNetworkToolPrepared", "AikoRequestMemoryIndexed", "AikoRequestMemoryIndexUnavailable", "AikoBrowserLearningPending"].includes(event.type) || event.type.startsWith("Har");
 }

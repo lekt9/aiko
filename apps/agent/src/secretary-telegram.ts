@@ -1,4 +1,5 @@
 import { boundedText, type HttpFetch } from "./security.ts";
+import { telegramText } from "./telegram-format.ts";
 import type {
   TelegramInbound,
   TelegramInboundPolicy,
@@ -230,7 +231,7 @@ export function secretaryTelegram(token: string, transport: HttpFetch = fetch) {
           {
             business_connection_id: c.id,
             chat_id: m.chat,
-            text,
+            ...telegramText(text),
             link_preview_options: { is_disabled: true },
           },
           signal,

@@ -27,6 +27,7 @@ export type ConnectorConnection = {
 export type ConnectorConnect = ConnectorConnection;
 
 export type ManagerKind =
+  | "zoho-vault"
   | "bitwarden"
   | "remote-mcp"
   | "onepassword"
@@ -42,7 +43,7 @@ export type ManagerEntry = {
 export type ManagerProvider = { id: string; name: string; kind: ManagerKind };
 export type PasswordManager = {
   providerId?: string;
-  status: "connected" | "authorization_required";
+  status: "connected" | "authorization_required" | "unlock_required";
   id: string;
   kind: ManagerKind;
   name: string;
@@ -50,6 +51,7 @@ export type PasswordManager = {
   createdAt: number;
 };
 export const managerKindLabels: Record<ManagerKind, string> = {
+  "zoho-vault": "Zoho Vault",
   bitwarden: "Bitwarden",
   "remote-mcp": "Password manager",
   onepassword: "1Password",
@@ -59,6 +61,7 @@ export const managerKindLabels: Record<ManagerKind, string> = {
   doppler: "Doppler",
 };
 export const managerKindHints: Record<ManagerKind, string> = {
+  "zoho-vault": "Authorize your Zoho account, unlock your vault, then choose saved logins.",
   onepassword: "Use a saved login reference such as op://Vault/Item/password.",
   "onepassword-connect": "Use a reference supported by your connected vault.",
   bitwarden: "Use the saved item's identifier from your connected vault.",
@@ -174,10 +177,10 @@ export async function connectorRequest<T>(
     "/browser",
     "/password-managers/fill",
   ].includes(path);
-  const timeout = AbortSignal.timeout(privateSignIn ? 120_000 : 20_000);
+  const timeout = AbortSignal.timeout(privateSignIn ? 120_000 : path.startsWith("/password-managers") ? 40_000 : 20_000);
   const settled = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const response = await fetch(
-    path.startsWith("/secretary") || path.startsWith("/approvals")
+    path.startsWith("/secretary") || path.startsWith("/approvals") || path === "/messages" || path.startsWith("/databases") || path === "/observed-actions/approval"
       ? `/api${path}`
       : `/api/connectors${path}`,
     {
@@ -193,6 +196,10 @@ export async function connectorRequest<T>(
     if (response.status === 401 || response.status === 403) {
       clearMiniAppSession();
       throw new MiniAppAuthenticationError(reopenMessage);
+    }
+    if (path.startsWith("/databases") || path === "/observed-actions/approval") {
+      const error = new Error(response.status === 409 ? "This record changed. Reload it before saving again." : response.status === 404 ? "This table or record is no longer available." : "The database request could not be completed. Try again.");
+      Object.assign(error, { status: response.status }); throw error;
     }
     if (path.startsWith("/password-managers") || path.startsWith("/imports")) {
       const detail = (await response.json().catch(() => ({}))) as {

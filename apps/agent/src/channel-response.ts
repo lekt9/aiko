@@ -4,6 +4,8 @@ import { Infer, type InferRequest } from "tardie";
 import { Self } from "tardie/core/runtime";
 import { EventLog } from "tardie/core/log";
 import type { NativeTool } from "tardie/component/tool";
+import { artifactReferences, replyArtifacts } from "./database-artifacts.ts";
+import type { DatabaseBinding } from "./database-component.ts";
 
 export const RESPONSE_INSTRUCTIONS =
   "Every foreground user request must end with a response tool. Use respond(text) for the final answer; the host routes it to the originating chat, API or console using the existing persona and durable outbox. There is no destination argument. A final send_message, telegram_send, telegram_voice or telegram_screenshot also satisfies this for Telegram. Progress, reactions and connection recommendations are not final answers. After the final response tool, do no more work. Queued means accepted for delivery, not confirmed delivered. Never resend an unknown delivery. Report actual blockers without claiming unfinished work succeeded.";
@@ -13,16 +15,18 @@ export function responseTool(
   owner: string,
   thread: string,
   redact: (text: string) => string,
+  databases?: DatabaseBinding,
 ): NativeTool<Self | EventLog> {
   return {
     spec: {
       name: "respond",
       description:
-        "Finish this user request with a reply on its original channel. The host owns the destination and persona rendering. This queues exactly one durable response; queued is not proof of external delivery.",
+        "Finish this user request with a reply on its original channel. Attach committed database views with artifacts:[{artifactId}]; only references are sent, and access is checked again when opened. The host owns the destination and persona rendering. This queues exactly one durable response; queued is not proof of external delivery.",
       inputSchema: {
         type: "object",
         properties: {
           text: { type: "string", minLength: 1, maxLength: 12000 },
+          artifacts: { type: "array", maxItems: 8, items: { type: "object", properties: { artifactId: { type: "string" } }, required: ["artifactId"], additionalProperties: false } },
           outcome: {
             type: ["string", "null"],
             enum: ["answer", "blocked", null],
@@ -37,7 +41,7 @@ export function responseTool(
         const self = yield* Self,
           log = yield* EventLog,
           events = yield* log.read;
-        const args = input as { text?: unknown; outcome?: unknown } | null;
+        const args = input as { text?: unknown; outcome?: unknown; artifacts?: unknown } | null;
         const message = events.find(
           (e) => e.type === "MessageReceived" && e.id === context.turn,
         );
@@ -56,7 +60,7 @@ export function responseTool(
           !call ||
           message.source === "background" ||
           !args ||
-          Object.keys(args).some((k) => k !== "text" && k !== "outcome") ||
+          Object.keys(args).some((k) => !["text", "outcome", "artifacts"].includes(k)) ||
           (args.outcome != null &&
             !["answer", "blocked"].includes(String(args.outcome))) ||
           typeof args.text !== "string" ||
@@ -98,6 +102,13 @@ export function responseTool(
         const text = previous
           ? String(previous.output)
           : redact(args.text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim());
+        const artifacts = yield* Effect.tryPromise({ try: async () => {
+          const refs = artifactReferences(previous ? previous.artifacts : args.artifacts);
+          if (refs.length && (!databases || databases.owner !== owner || databases.thread !== thread)) return undefined;
+          const checked = await replyArtifacts(databases, refs, context.signal);
+          return checked.some(ref => ref.state !== "available") ? undefined : refs;
+        }, catch: () => undefined }).pipe(Effect.catch(() => Effect.succeed(undefined)));
+        if (!artifacts) return { kind: "channel-response", owner, turn: context.turn, status: "rejected", code: "artifact_unavailable" };
         if (!text.trim())
           return {
             kind: "channel-response",
@@ -113,6 +124,7 @@ export function responseTool(
               turn: context.turn,
               epoch,
               output: text,
+              ...(artifacts.length ? { artifacts } : {}),
               outcome: args.outcome ?? "answer",
               channel: telegram ? "telegram" : String(message.source ?? "api"),
               at: Date.now(),
@@ -203,6 +215,12 @@ export function withRequiredResponse(
                 ? { kind: "fail" as const, error: final.error }
                 : { kind: "complete" as const, output: final.output };
             const action = yield* binding.react(request, key, signal);
+            if (action.kind === "calls") return {
+              ...action,
+              calls: action.calls.map(call => call.name === "respond" && typeof (call.arguments as any)?.text === "string"
+                ? { ...call, arguments: { ...(call.arguments as object), text: redact((call.arguments as any).text) } }
+                : call),
+            };
             if (
               action.kind === "call" &&
               action.name === "respond" &&

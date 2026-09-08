@@ -1,8 +1,239 @@
+diff --git a/src/core/effect.ts b/src/core/effect.ts
+--- a/src/core/effect.ts
++++ b/src/core/effect.ts
+@@ -46,6 +46,7 @@
+  */
+ export const effect = <Input, Requirements = never>(work: {
+   readonly key: string
++  readonly concurrent?: boolean
+   readonly invocation?: ActorInvocation
+   readonly input: Input
+   readonly interrupts?: (input: Input, event: Event) => boolean
 diff --git a/src/agent/component/compaction.ts b/src/agent/component/compaction.ts
-index 050780c8cfbbab2c9da07343485a9fd2c51f331a..1b8590c9edf1db41cbdc733c44e928e46d60c1fe 100644
 --- a/src/agent/component/compaction.ts
 +++ b/src/agent/component/compaction.ts
-@@ -486,10 +486,11 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
+@@ -1,8 +1,9 @@
+-import { Clock, Effect, HashSet } from "effect"
++import { Cause, Clock, Effect, HashSet } from "effect"
+ import { effect, Self, type Transition } from "tardie/core/runtime"
+ import type { CompleteTransitionDerivation } from "tardie/core/transition"
+ import { compactionCompleted } from "../log/events"
+ import type { Event } from "tardie/core/log/event"
++import { EventLog } from "tardie/core/log"
+ import { turnOf, turnView } from "tardie/code/execution/turns"
+ import {
+   initialTurnProjection,
+@@ -204,16 +205,19 @@
+ 
+ // checkpointOf returns the last checkpoint: the identity the next span starts from, and the
+ // summary to date.
+-export const checkpointOf = (log: ReadonlyArray<Event>): { readonly keepFrom: string; readonly summary: string } => {
+-  let keepFrom = ""
+-  let summary = ""
+-  for (const e of log) {
+-    if (e.type === "CompactionCompleted") {
+-      keepFrom = String((e as { keepFrom?: unknown }).keepFrom ?? "")
+-      summary = String((e as { summary?: unknown }).summary ?? "")
+-    }
+-  }
+-  return { keepFrom, summary }
++export interface CompactionCheckpoint {
++  readonly keepFrom: string
++  readonly summary: string
++  readonly providerState?: unknown
++  readonly model?: ModelRef
++}
++export const checkpointOf = (log: ReadonlyArray<Event>): CompactionCheckpoint => {
++  const event = log.findLast(event => event.type === "CompactionCompleted")
++  return event === undefined ? { keepFrom: "", summary: "" } : {
++    keepFrom: String(event.keepFrom ?? ""), summary: String(event.summary ?? ""),
++    ...(event.providerState === undefined ? {} : { providerState: event.providerState }),
++    ...(modelRefOf(event.model) === undefined ? {} : { model: modelRefOf(event.model) })
++  }
+ }
+ 
+ // keepFromIndex resolves a checkpoint identity in one sequence: the first index holding the
+@@ -273,6 +277,14 @@
+ ): { readonly keepFrom: string; readonly index: number } | undefined => {
+   const priorIndex = keepFromIndex(log, checkpointOf(log).keepFrom)
+   const served = knownServed ?? new Set(log.map(turnOf).filter((t): t is string => t !== undefined))
++  // A cut cannot start inside any concurrently issued group of tool calls.
++  const awaiting = new Set<string>(), boundaries = new Set<number>()
++  for (let index = 0; index < log.length; index++) {
++    const event = log[index]!
++    if (awaiting.size === 0) boundaries.add(index)
++    if (event.type === "ToolCalled") awaiting.add(String(event.callId))
++    if (event.type === "ToolReturned") awaiting.delete(String(event.callId))
++  }
+   let tokens = 0
+   let raw = priorIndex
+   for (let i = log.length - 1; i >= priorIndex; i--) {
+@@ -283,11 +295,11 @@
+     }
+   }
+   for (let i = Math.min(raw, log.length - 1); i > priorIndex; i--) {
+-    const id = boundaryIdOf(log[i]!, served)
++    const id = boundaries.has(i) ? boundaryIdOf(log[i]!, served) : undefined
+     if (id !== undefined) return { keepFrom: id, index: i }
+   }
+   for (let i = Math.max(raw + 1, priorIndex + 1); i < log.length; i++) {
+-    const id = boundaryIdOf(log[i]!, served)
++    const id = boundaries.has(i) ? boundaryIdOf(log[i]!, served) : undefined
+     if (id !== undefined) return { keepFrom: id, index: i }
+   }
+   return undefined
+@@ -350,69 +362,60 @@
+ const compactionTransition = (
+   resolved: ContextPolicy,
+   model: ModelRef | undefined,
+-  summary: string,
++  prior: CompactionCheckpoint,
+   keepFrom: string,
+   span: ReadonlyArray<Event>
+ ): ReadonlyArray<Transition<never, Infer | Self>> => [
+-    effect({
+-      key: `cc:${keepFrom}`,
+-      input: {
+-        keepFrom,
+-        summary,
+-        span,
+-        ...(model === undefined ? {} : { model }),
+-        contextWindowTokens: resolved.contextWindowTokens,
+-        fireTokens: resolved.fireTokens,
+-        keepTokens: resolved.keepTokens
+-      },
+-      act: (input) =>
+-        Effect.gen(function* () {
+-          const self = yield* Self
+-          const at = yield* Clock.currentTimeMillis
+-          const lines = input.span.map((e) => lineOf(e, resolved)).filter((l): l is string => l !== null)
+-          if (lines.length === 0) {
+-            return [compactionCompleted({
+-              keepFrom: input.keepFrom,
+-              summary: input.summary,
+-              contextWindowTokens: input.contextWindowTokens,
+-              fireTokens: input.fireTokens,
+-              keepTokens: input.keepTokens,
+-              at
+-            })]
+-          }
+-          const brief = [
+-            "Summarize this agent history in a compact paragraph. Keep every fact a future turn could need: names, ids, decisions, unfinished work.",
+-            input.summary === "" ? "" : `Summary so far: ${input.summary}`,
+-            lines.join("\n")
+-          ].join("\n\n")
+-          // A summarize attempt offers no tools: the only sane action is a completion.
+-          const infer = yield* Infer
+-          const summaryModel = input.model === undefined
+-            ? undefined
+-            : infer.resolve?.(input.model).model ?? input.model
+-          const action = yield* infer.react(
+-            {
+-              trajectory: [{ type: "MessageReceived", id: `compact-${input.keepFrom}`, text: brief, at }],
+-              identity: { ...self, turn: `compact-${input.keepFrom}` },
+-              ...(summaryModel === undefined ? {} : { model: summaryModel }),
+-              system: "",
+-              tools: []
+-            },
+-            `compact-${input.keepFrom}`
+-          )
+-          const summary = action.kind === "complete" ? action.output : input.summary
+-          return [compactionCompleted({
+-            keepFrom: input.keepFrom,
+-            summary,
+-            contextWindowTokens: input.contextWindowTokens,
+-            fireTokens: input.fireTokens,
+-            keepTokens: input.keepTokens,
+-            ...(summaryModel === undefined ? {} : { model: summaryModel }),
+-            at
+-          })]
+-        })
+-    })
+-  ]
++  effect({
++    key: `cc:${keepFrom}`,
++    input: { keepFrom, prior, span, ...(model === undefined ? {} : { model }),
++      contextWindowTokens: resolved.contextWindowTokens, fireTokens: resolved.fireTokens, keepTokens: resolved.keepTokens },
++    act: input => Effect.scoped(Effect.gen(function* () {
++      const self = yield* Self, infer = yield* Infer
++      const at = yield* Clock.currentTimeMillis
++      const controller = new AbortController()
++      yield* Effect.addFinalizer(() => Effect.sync(() => controller.abort()))
++      const selected = infer.resolve?.(input.model).model ?? input.model
++      const available = yield* Effect.serviceOption(EventLog)
++      const full = available._tag === "Some" ? projectedOutput(yield* available.value.read) : undefined
++      const fullSpan = full?.slice(0, keepFromIndex(full, input.keepFrom))
++      const compatible = selected !== undefined && input.prior.model?.provider === selected.provider && input.prior.model.model_id === selected.model_id
++      const previous = compatible ? input.prior.providerState : undefined
++      const turn = full?.findLast(event => event.type === "MessageReceived")?.id
++      const stamp = { contextWindowTokens: input.contextWindowTokens, fireTokens: input.fireTokens, keepTokens: input.keepTokens,
++        ...(typeof turn === "string" ? { turn } : {}), at }
++      const recover = <A>(work: Effect.Effect<A>): Effect.Effect<A | undefined> => work.pipe(Effect.catchCause(cause =>
++        Cause.hasInterrupts(cause) ? Effect.failCause(cause) : Effect.succeed(undefined)))
++      if (infer.compact !== undefined && selected !== undefined) {
++        const compacted = yield* recover(infer.compact({
++          trajectory: previous === undefined ? (fullSpan ?? input.span).filter(event => event.type !== "CompactionCompleted" || event.providerState === undefined) : input.span,
++          identity: { ...self, turn: `compact-${input.keepFrom}` }, model: selected,
++          system: "", tools: [], ...(previous === undefined ? {} : { previous })
++        }, `compact-${input.keepFrom}`, controller.signal))
++        if (compacted?.state !== undefined) return [compactionCompleted({ ...stamp, keepFrom: input.keepFrom,
++          summary: "", providerState: compacted.state, model: selected,
++          ...(compacted.usage === undefined ? {} : { usage: compacted.usage }) })]
++      }
++      // A portable summary must include the raw prefix behind any opaque checkpoint.
++      const summarySpan = input.prior.providerState === undefined ? input.span : fullSpan
++      const lines = summarySpan?.map(event => lineOf(event, resolved)).filter((line): line is string => line !== null)
++      const brief = ["Summarize this agent history in a compact paragraph. Keep every fact a future turn could need: names, ids, decisions, unfinished work.",
++        input.prior.providerState !== undefined || input.prior.summary === "" ? "" : `Summary so far: ${input.prior.summary}`,
++        lines?.join("\n") ?? ""].join("\n\n")
++      const action = lines === undefined ? undefined : lines.length === 0 ? { kind: "complete" as const, output: input.prior.summary } :
++        yield* recover(infer.react({ trajectory: [{ type: "MessageReceived", id: `compact-${input.keepFrom}`, text: brief, at }],
++          identity: { ...self, turn: `compact-${input.keepFrom}` }, ...(selected === undefined ? {} : { model: selected }), system: "", tools: []
++        }, `compact-${input.keepFrom}`, controller.signal))
++      if (action?.kind === "complete" && action.output.trim() !== "") return [compactionCompleted({ ...stamp,
++        keepFrom: input.keepFrom, summary: action.output, ...(selected === undefined ? {} : { model: selected }),
++        ...(action.usage === undefined ? {} : { usage: action.usage }) })]
++      // Receipt the failed attempt at its proposed boundary; retain the prior checkpoint.
++      // This prevents both a tight retry loop and silent loss of unsummarized history.
++      return [compactionCompleted({ ...stamp, ...input.prior, attemptKeepFrom: input.keepFrom,
++        error: "Compaction failed; prior context retained", ...(action?.usage === undefined ? {} : { usage: action.usage }) })]
++    }))
++  })
++]
+ 
+ export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): CompleteTransitionDerivation<Infer | Self> => (log) => {
+   const model = policy.model ?? selectedModelOf(log)
+@@ -426,7 +429,7 @@
+   if (cut === undefined) return []
+   const prior = checkpointOf(view)
+   const span = view.slice(keepFromIndex(view, prior.keepFrom), cut.index)
+-  return compactionTransition(resolved, model, prior.summary, cut.keepFrom, span)
++  return compactionTransition(resolved, model, prior, cut.keepFrom, span)
+ }
+ 
+ // compaction derives one resolved context contribution and the transitions governed by the same
+@@ -436,7 +439,7 @@
+     readonly turns: TurnProjectionState
+     readonly transcript: TranscriptProjectionState
+     readonly served: HashSet.HashSet<string>
+-    readonly checkpoint: { readonly keepFrom: string; readonly summary: string }
++    readonly checkpoint: CompactionCheckpoint
+     readonly fires: number
+     readonly passes: number
+     readonly lastModel?: ModelRef
+@@ -460,10 +463,7 @@
+     const completed = event.type === "CompactionCompleted"
+     const projected = transcript.step(state.transcript, event)
+     const nextCheckpoint = completed
+-      ? {
+-          keepFrom: String((event as { readonly keepFrom?: unknown }).keepFrom ?? ""),
+-          summary: String((event as { readonly summary?: unknown }).summary ?? "")
+-        }
++      ? checkpointOf([event])
+       : state.checkpoint
+     const projectedEvents = completed ? transcript.output(projected).events : undefined
+     const retained = completed
+@@ -486,15 +486,16 @@
      }
    }
    const transitions = (state: State, resolved: ContextPolicy, model: ModelRef | undefined) => {
@@ -16,4 +247,1092 @@ index 050780c8cfbbab2c9da07343485a9fd2c51f331a..1b8590c9edf1db41cbdc733c44e928e4
 +    const suffix = transcript.output(state.transcript).events
      const cut = cutOf(suffix, resolved, new Set(state.served))
      if (cut === undefined) return []
-     const prior = checkpointOf(suffix)
+-    const prior = checkpointOf(suffix)
++    const prior = state.checkpoint
+     const span = suffix.slice(keepFromIndex(suffix, prior.keepFrom), cut.index)
+-    return compactionTransition(resolved, model, prior.summary, cut.keepFrom, span)
++    return compactionTransition(resolved, model, prior, cut.keepFrom, span)
+   }
+   return component({
+     name: "compaction",
+diff --git a/src/agent/component/tool.ts b/src/agent/component/tool.ts
+--- a/src/agent/component/tool.ts
++++ b/src/agent/component/tool.ts
+@@ -1,4 +1,4 @@
+-import { Clock, Effect } from "effect"
++import { Cause, Clock, Effect } from "effect"
+ import { effect } from "tardie/core/runtime"
+ import { component, legacyComponent } from "tardie/core/actor"
+ import type { Event } from "tardie/core/log/event"
+@@ -8,6 +8,10 @@
+ 
+ // NativeTool describes one named tool whose effect returns its model-visible result.
+ export interface NativeTool<R = never> {
++  // Explicit trusted opt-in for provisional generation-time reads.
++  readonly speculativeRead?: boolean
++  // Recheck input-specific source authority before a retained private result is read.
++  readonly authorizeRetained?: (input: unknown) => Promise<boolean>
+   readonly spec: ToolSpec
+   readonly run: (input: unknown, context: { readonly callId: string; readonly turn?: string; readonly signal: AbortSignal }) => Effect.Effect<unknown, never, R>
+ }
+@@ -39,11 +43,13 @@
+                 input: { callId: call.callId, arguments: call.arguments, turn: call.turn },
+                 act: (input, signal) =>
+                   Effect.gen(function* () {
+-                    const result = yield* tool.run(input.arguments, {
++                    const result = yield* Effect.suspend(() => tool.run(input.arguments, {
+                       callId: input.callId,
+                       ...(input.turn === undefined ? {} : { turn: input.turn }),
+                       signal
+-                    })
++                    })).pipe(Effect.catchCause((cause) => Cause.hasInterruptsOnly(cause)
++                      ? Effect.failCause(cause)
++                      : Effect.succeed({ error: String(Cause.squash(cause)) })))
+                     const at = yield* Clock.currentTimeMillis
+                     return [toolReturned({ callId: input.callId, result, ...stamp, at })]
+                   })
+diff --git a/src/agent/inference/contract.ts b/src/agent/inference/contract.ts
+--- a/src/agent/inference/contract.ts
++++ b/src/agent/inference/contract.ts
+@@ -17,7 +17,20 @@
+ export const DEFAULT_INFER_POLICY: InferPolicy = { giveUpAfter: 3, models: DEFAULT_MODEL_POLICY_OVERRIDE }
+ 
+ // InferRequest is one attempt's trajectory and model-facing surface. The actor derives the surface so a binding holds no tool, context, or output policy.
++export interface ToolCallProgress {
++  readonly logicalAttempt: string
++  readonly physicalAttempt: string
++  readonly callId: string
++  readonly name: string
++  readonly argumentsText: string
++}
++
++export type NativeCodeServices = import("tardie/core/log").EventLog | import("tardie/core/runtime").Self | import("effect/unstable/persistence").KeyValueStore.KeyValueStore
+ export interface InferRequest {
++  // Host capability, never a model-facing field. The model adapter strips it.
++  readonly nativeCode?: { readonly run: <A>(work: Effect.Effect<A, never, NativeCodeServices>, signal?: AbortSignal) => Promise<A> }
++  // A trusted authority seam: lossless, backpressured, and separate from telemetry.
++  readonly onToolCallProgress?: (progress: ToolCallProgress, signal: AbortSignal) => Promise<void>
+   readonly trajectory: ReadonlyArray<Event>
+   readonly identity: InferenceIdentity
+   readonly model?: ModelRef
+@@ -33,11 +46,25 @@
+   readonly models?: ModelPolicy
+ }
+ 
++export interface CompactionRequest {
++  readonly trajectory: ReadonlyArray<Event>
++  readonly identity: InferenceIdentity
++  readonly model?: ModelRef
++  readonly system: string
++  readonly tools: ReadonlyArray<import("./request").ToolSpec>
++  readonly previous?: unknown
++}
++export interface ProviderCompaction {
++  readonly state: unknown
++  readonly usage?: import("./usage").Usage
++}
++
+ // Infer provides one model action for one inference request. key is the ModelCalled attempt identity and may be forwarded as a provider idempotency key. Action call ids must be fresh across turns because recorded tool pairs deduplicate by call id.
+ export class Infer extends Context.Service<
+   Infer,
+   {
+     readonly react: (request: InferRequest, key?: string, signal?: AbortSignal) => Effect.Effect<Action>
++    readonly compact?: (request: CompactionRequest, key?: string, signal?: AbortSignal) => Effect.Effect<ProviderCompaction | undefined>
+     readonly resolve?: (reference?: ModelRef) => ModelResolution
+   }
+ >()("agent/Infer") {}
+diff --git a/src/agent/inference/machine.ts b/src/agent/inference/machine.ts
+--- a/src/agent/inference/machine.ts
++++ b/src/agent/inference/machine.ts
+@@ -1,5 +1,6 @@
+-import { Cause, Clock, Effect } from "effect"
++import { Cause, Clock, Context, Effect } from "effect"
+ import { EventLog } from "tardie/core/log"
++import { KeyValueStore } from "effect/unstable/persistence"
+ import { HashMap, Option } from "effect"
+ import { intent, effect, Self } from "tardie/core/runtime"
+ import { transitionProjection, type CompleteTransitionDerivation, type TransitionProjection } from "tardie/core/transition"
+@@ -90,8 +91,10 @@
+   readonly contract: OutputContract | undefined
+ }
+ 
+-const stampOf = (action: Action): { readonly endpoint?: unknown } =>
+-  action.endpoint === undefined ? {} : { endpoint: action.endpoint }
++const stampOf = (action: Action): { readonly endpoint?: unknown; readonly physicalAttempt?: string } => ({
++  ...(action.endpoint === undefined ? {} : { endpoint: action.endpoint }),
++  ...(action.physicalAttempt === undefined ? {} : { physicalAttempt: action.physicalAttempt })
++})
+ 
+ // completionOf judges one `complete` action against the turn's declared contract. An undeclared
+ // turn ends in prose. A declared one is validated here whatever the provider promised, so a
+@@ -171,7 +174,7 @@
+ // usageIn reads the spend as unknown rather than absent (usage.test.ts, "unknown is sticky").
+ // `endpoint` is separate from spend on purpose: an endpoint that reports no tokens still has to
+ // be named in the log (events.ts, Endpoint).
+-const consequenceOf = (action: Action, ctx: Consequence): Event => {
++const consequenceOf = (action: Exclude<Action, { readonly kind: "calls" }>, ctx: Consequence): Event => {
+   const usage = action.usage ?? {}
+   if (action.kind === "call" && ctx.contract !== undefined && action.mode === undefined) {
+     return {
+@@ -191,6 +194,7 @@
+     ? ({
+         type: "ToolCalled",
+         callId: action.callId,
++        ...(action.providerCallId === undefined ? {} : { providerCallId: action.providerCallId }),
+         name: action.name,
+         arguments: action.arguments,
+         usage,
+@@ -222,6 +226,46 @@
+         } as Event)
+ }
+ 
++// Native batches commit all asks together. Reject a malformed batch before any
++// sibling can run; a reused call id could otherwise receive an unrelated old result.
++const consequencesOf = (action: Action, ctx: Consequence, history: ReadonlyArray<Event>): ReadonlyArray<Event> => {
++  if (action.kind !== "calls") return [consequenceOf(action, ctx)]
++  const seen = new Set(history.filter((event) => event.type === "ToolCalled")
++    .map((event) => String((event as { readonly callId?: unknown }).callId)))
++  let error: string | undefined
++  if (!Array.isArray(action.calls) || action.calls.length === 0) error = "a native tool batch must contain at least one call"
++  else for (const call of action.calls) {
++    if (call === null || typeof call !== "object" || typeof call.callId !== "string" || call.callId.trim() === "" || seen.has(call.callId)) {
++      error = "a native tool batch has a missing, duplicate, or previously used call id"
++      break
++    }
++    seen.add(call.callId)
++    if (typeof call.name !== "string" || call.name.trim() === "" || !("arguments" in call)) {
++      error = `native tool call ${call.callId} is malformed`
++      break
++    }
++  }
++  if (ctx.contract !== undefined && action.mode === undefined) {
++    error = `the model binding answered a turn declaring "${ctx.contract.name}" with tool calls but did not state the output mode it ran in`
++  }
++  if (error !== undefined) return [consequenceOf({
++    ...action, kind: "fail", error, failure: { cause: "inference_error", attempts: 1 }
++  }, ctx)]
++  return action.calls.map((call, index) => ({
++    type: "ToolCalled",
++    ...call,
++    batchId: ctx.attempt,
++    attemptKey: ctx.attempt,
++    // An attempt spent once, regardless of the number of calls it produced.
++    ...(index === 0 ? { usage: action.usage ?? {} } : {}),
++    ...(action.mode === undefined ? {} : { mode: action.mode }),
++    ...stampOf(action),
++    turn: ctx.turn,
++    ...epochStamp(ctx.epoch),
++    at: ctx.at
++  } as Event))
++}
++
+ const failureMessage = (cause: Cause.Cause<never>): string => {
+   const error = Cause.squash(cause)
+   return error instanceof Error ? error.message : String(error)
+@@ -308,7 +352,11 @@
+   // A rejected response is a spent logical attempt: the next ask must not reuse the idempotency
+   // key, or a deduping provider answers the correction with the response it just refused.
+   const rejected = rejectionsIn(slice).length
+-  const logicalAttempt = slice.filter((e) => e.type === "ToolCalled").length + modelFailures + rejected
++  const toolAttempts = new Set(slice.filter((e) => e.type === "ToolCalled").map((event) => {
++    const value = event as { readonly callId?: unknown; readonly batchId?: unknown }
++    return value.batchId === undefined ? `call:${String(value.callId)}` : `batch:${String(value.batchId)}`
++  })).size
++  const logicalAttempt = toolAttempts + modelFailures + rejected
+   const attempt = `${turn}/infer/${logicalAttempt}`
+   const rendered = derived.rendered
+   const fallback = rendered.output?.fallback
+@@ -426,6 +474,12 @@
+         Effect.gen(function* () {
+           const events = yield* EventLog
+           const self = yield* Self
++          const workspace = yield* Effect.serviceOption(KeyValueStore.KeyValueStore)
++          const ambientContext = yield* Effect.context<never>()
++          const nativeCode = Option.isNone(workspace) ? undefined : {
++            run: <A>(work: Effect.Effect<A, never, import("./contract").NativeCodeServices>, signal?: AbortSignal) =>
++              Effect.runPromiseWith(ambientContext.pipe(Context.add(EventLog, events), Context.add(Self, self), Context.add(KeyValueStore.KeyValueStore, workspace.value)))(work, { signal })
++          }
+           const at = yield* Clock.currentTimeMillis
+           const binding = yield* Infer
+           const selection = yield* Effect.try({
+@@ -473,6 +527,7 @@
+             .react({
+               trajectory,
+               identity: { ...self, turn: input.turn },
++              ...(nativeCode === undefined ? {} : { nativeCode }),
+               model: selected,
+               ...actualRender
+             }, input.attempt, signal)
+@@ -488,14 +543,14 @@
+               )
+             )
+           const after = yield* Clock.currentTimeMillis
+-          const consequence = consequenceOf(action, {
++          const consequences = consequencesOf(action, {
+             turn: input.turn,
+             epoch: input.epoch,
+             attempt: input.attempt,
+             at: after,
+             contract: input.contract
+-          })
+-          const repaired = consequence.type === "TurnCompleted"
++          }, trajectory)
++          const repaired = consequences.some((event) => event.type === "TurnCompleted")
+             ? trajectory.filter((event) => {
+                 if (event.type !== "OutputRejected") return false
+                 const value = event as { readonly turn?: unknown; readonly epoch?: unknown; readonly mode?: unknown }
+@@ -507,7 +562,7 @@
+               })
+             : []
+           return [
+-            ...(action.kind === "call" && action.text !== undefined && action.text !== ""
++            ...((action.kind === "call" || action.kind === "calls") && action.text !== undefined && action.text !== ""
+               ? [textReturned({ text: action.text, turn: input.turn, at: after })]
+               : []),
+             ...repaired.map((event) => outputRepaired({
+@@ -517,7 +572,7 @@
+               ...epochStamp(input.epoch),
+               at: after
+             })),
+-            consequence
++            ...consequences
+           ]
+         })
+     })
+diff --git a/src/agent/inference/request.ts b/src/agent/inference/request.ts
+--- a/src/agent/inference/request.ts
++++ b/src/agent/inference/request.ts
+@@ -46,6 +46,7 @@
+ export interface ModelRequest {
+   readonly system: string
+   readonly messages: ReadonlyArray<AgentMessage>
++  readonly providerState?: unknown
+   readonly tools: ReadonlyArray<ToolSpec>
+   // Present when the turn declared a contract. Absent turns end in prose.
+   readonly output?: OutputRequest
+@@ -71,17 +72,26 @@
+   trajectory: ReadonlyArray<Event>,
+   render: {
+     readonly system: string
++    readonly model?: import("./reference").ModelRef
+     readonly tools: ReadonlyArray<ToolSpec>
+     readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
+   },
+   context: Partial<ContextPolicy> = {}
+ ): ModelRequest => {
++  // Opaque state belongs to the exact serving model. Other models receive raw history.
++  const compatible = trajectory.filter(event => {
++    if (event.type !== "CompactionCompleted" || event.providerState === undefined) return true
++    const model = event.model as import("./reference").ModelRef | undefined
++    return model !== undefined && render.model !== undefined && model.provider === render.model.provider && model.model_id === render.model.model_id
++  })
++  const checkpoint = compatible.findLast(event => event.type === "CompactionCompleted")
+   const declared = declaredOutputOf(trajectory)
+   const fallback = render.output
+   const base = SYSTEM(render.system)
+   return {
+     system: base,
+-    messages: renderMessages(trajectory, context),
++    messages: renderMessages(compatible, context),
++    ...(checkpoint?.providerState === undefined ? {} : { providerState: checkpoint.providerState }),
+     tools: render.tools,
+     ...(declared.kind === "none"
+       ? {}
+diff --git a/src/agent/log/events.ts b/src/agent/log/events.ts
+--- a/src/agent/log/events.ts
++++ b/src/agent/log/events.ts
+@@ -48,6 +48,11 @@
+   callId: Schema.String,
+   name: Schema.String,
+   arguments: Schema.Unknown,
++  // Siblings from one native model response share a batch and attempt identity.
++  batchId: Schema.optional(Schema.String),
++  providerCallId: Schema.optional(Schema.String),
++  physicalAttempt: Schema.optional(Schema.String),
++  attemptKey: Schema.optional(Schema.String),
+   // The spend of the attempt this call answered (packages/agent/src/inference/usage.ts). An empty object
+   // is an attempt with unreported spend; an absent field is an event no attempt produced.
+   usage: Schema.optional(Schema.Unknown),
+@@ -373,13 +378,22 @@
+ // declared one must state it: the reactor records it and reads it back on replay, and it refuses
+ // to invent one (inference/machine.ts, completionOf).
+ type Served = {
++  readonly physicalAttempt?: string
+   readonly usage?: Usage
+   readonly endpoint?: AttemptEndpoint
+   readonly mode?: import("../output/contract").OutputMode
+ }
+ 
++export interface ActionCall {
++  readonly providerCallId?: string
++  readonly callId: string
++  readonly name: string
++  readonly arguments: unknown
++}
++
+ export type Action =
+-  | ({ readonly kind: "call"; readonly callId: string; readonly name: string; readonly arguments: unknown; readonly text?: string } & Served)
++  | ({ readonly kind: "calls"; readonly calls: ReadonlyArray<ActionCall>; readonly text?: string } & Served)
++  | ({ readonly kind: "call"; readonly providerCallId?: string; readonly callId: string; readonly name: string; readonly arguments: unknown; readonly text?: string } & Served)
+   | ({ readonly kind: "complete"; readonly output: string } & Served)
+   | ({
+       readonly kind: "fail"
+@@ -437,7 +451,7 @@
+         return `op:${String(v.replaced)}/${String(v.replacement)}`
+       case "CompactionCompleted":
+         // The checkpoint's occurrence is the identity it keeps from.
+-        return `cc:${String(v.keepFrom)}`
++        return `cc:${String(v.attemptKeepFrom ?? v.keepFrom)}`
+       default:
+         return undefined
+     }
+@@ -587,7 +601,12 @@
+ export const compactionCompleted = (
+   fields: {
+     readonly keepFrom: string
++    readonly attemptKeepFrom?: string
+     readonly summary: string
++    readonly providerState?: unknown
++    readonly usage?: Usage
++    readonly turn?: string
++    readonly error?: string
+     readonly contextWindowTokens: number
+     readonly fireTokens: number
+     readonly keepTokens: number
+diff --git a/src/agent/packages/agents.ts b/src/agent/packages/agents.ts
+--- a/src/agent/packages/agents.ts
++++ b/src/agent/packages/agents.ts
+@@ -270,7 +270,7 @@
+ // name derived from the parent run and call. Thread placement remains a separate host decision
+ // (agents.test.ts, "the default address is the host's own sibling").
+ const sibling = (parentRunId: string, callId: string, self: ThreadAddress): ThreadAddress =>
+-  threadAddressOf(self.actor, self.instance, `ag.${childThreadId(parentRunId, callId)}`)
++  threadAddressOf(self.actor, self.instance, `ag.${self.thread.length}:${self.thread}${childThreadId(parentRunId, callId)}`)
+ 
+ // parentRunOf resolves the run a package call serves: its turn id and execution epoch. A call
+ // outside any run has no child to name, so the dispatch dies rather than guessing.
+diff --git a/src/agent/projection/messages.ts b/src/agent/projection/messages.ts
+--- a/src/agent/projection/messages.ts
++++ b/src/agent/projection/messages.ts
+@@ -72,7 +72,12 @@
+   )
+   if (openHead !== -1 && openHead < from) messages.push(userMessageOf(projected[openHead]!, resolved))
+   if (checkpoint.summary !== "") messages.push({ role: "user", content: `Summary of earlier work:\n${checkpoint.summary}` })
++  const providerCallIds = new Map(projected.filter((event) => event.type === "ToolCalled").map((event) => {
++    const value = event as { readonly callId?: unknown; readonly providerCallId?: unknown }
++    return [String(value.callId), String(value.providerCallId ?? value.callId)]
++  }))
+   let pendingText: string | null = null
++  let pendingBatch: string | undefined
+   for (const event of projected.slice(from)) {
+     const value = event as Record<string, unknown>
+     switch (event.type) {
+@@ -82,23 +87,22 @@
+       case "TextReturned":
+         pendingText = String(value.text ?? "")
+         break
+-      case "ToolCalled":
+-        messages.push({
+-          role: "assistant",
+-          content: pendingText,
+-          toolCalls: [{
+-            id: String(value.callId),
+-            name: String(value.name),
+-            arguments: JSON.stringify(value.arguments ?? {})
+-          }]
+-        })
++      case "ToolCalled": {
++        const batch = typeof value.batchId === "string" ? value.batchId : undefined
++        const call = { id: String(value.providerCallId ?? value.callId), name: String(value.name), arguments: JSON.stringify(value.arguments ?? {}) }
++        const last = messages.at(-1)
++        if (batch !== undefined && batch === pendingBatch && last?.role === "assistant" && last.toolCalls !== undefined) {
++          messages[messages.length - 1] = { ...last, toolCalls: [...last.toolCalls, call] }
++        } else messages.push({ role: "assistant", content: pendingText, toolCalls: [call] })
++        pendingBatch = batch
+         pendingText = null
+         break
++      }
+       case "ToolReturned": {
+         const body = JSON.stringify(value.result ?? null)
+         messages.push({
+           role: "tool",
+-          toolCallId: String(value.callId),
++          toolCallId: providerCallIds.get(String(value.callId)) ?? String(value.callId),
+           content: body.length > resolved.resultRenderCap
+             ? `${body.slice(0, resolved.resultRenderCap)}…[truncated at ${resolved.resultRenderCap} of ${body.length} chars]`
+             : body
+diff --git a/src/agent/runtime/tools.ts b/src/agent/runtime/tools.ts
+--- a/src/agent/runtime/tools.ts
++++ b/src/agent/runtime/tools.ts
+@@ -38,11 +38,11 @@
+ const str = (v: unknown): string => String(v ?? "")
+ 
+ // pendingCall returns the earliest unanswered ToolCalled event by time and call ID.
+-const pendingCall = (log: ReadonlyArray<Event>): PendingCall | undefined => {
++const pendingCalls = (log: ReadonlyArray<Event>): ReadonlyArray<PendingCall> => {
+   const answered = new Set(
+     log.filter((e) => e.type === "ToolReturned").map((e) => str((e as { callId?: unknown }).callId))
+   )
+-  const head = log
++  const pending = log
+     .filter((e) => {
+       if (e.type !== "ToolCalled" || answered.has(str((e as { callId?: unknown }).callId))) return false
+       const turn = (e as { turn?: unknown }).turn
+@@ -53,15 +53,14 @@
+       const ai = str((a as { callId?: unknown }).callId)
+       const bi = str((b as { callId?: unknown }).callId)
+       return d !== 0 ? d : ai < bi ? -1 : 1
+-    })[0] as { callId?: unknown; name?: unknown; arguments?: unknown; turn?: unknown; epoch?: unknown } | undefined
+-  if (head === undefined) return undefined
+-  return {
++    }) as ReadonlyArray<{ callId?: unknown; name?: unknown; arguments?: unknown; turn?: unknown; epoch?: unknown }>
++  return pending.map((head) => ({
+     callId: str(head.callId),
+     name: str(head.name),
+     arguments: head.arguments,
+     ...(head.turn === undefined ? {} : { turn: str(head.turn) }),
+     ...(typeof head.epoch === "number" ? { epoch: head.epoch } : {})
+-  }
++  }))
+ }
+ 
+ const unknownToolError = (name: string, offered: ReadonlyArray<{ readonly name: string }>): string => {
+@@ -76,9 +75,7 @@
+ export const toolsReactorFrom = <R = never>(
+   serve: Serve<R>,
+   toolsFor: (log: ReadonlyArray<Event>, call: PendingCall) => ReadonlyArray<{ readonly name: string }>
+-): CompleteTransitionDerivation<R> => (log) => {
+-  const call = pendingCall(log)
+-  if (call === undefined) return []
++): CompleteTransitionDerivation<R> => (log) => pendingCalls(log).flatMap((call) => {
+   const stamp = call.turn === undefined ? {} : { turn: call.turn }
+   const answering = (result: unknown): Intent<never> =>
+     intent({
+@@ -94,8 +91,8 @@
+   if (served === undefined) {
+     return [answering({ error: unknownToolError(call.name, toolsFor(log, call)) })]
+   }
+-  return served
+-}
++  return served.map((transition) => transition.kind === "effect" ? { ...transition, concurrent: true } : transition)
++})
+ 
+ // cancelTools settles every open tool call owned by the cancelled message invocation.
+ const toolCancellationTransitions = (
+@@ -273,12 +270,8 @@
+     return toolCancellationTransitions(calls, cancellation)
+   },
+   output: (state) => {
+-    let current: PendingRecord<R> | undefined
+-    for (const record of HashMap.values(state.pending)) {
+-      if (current === undefined || record.order < current.order) current = record
+-    }
+-    if (current === undefined) return { view: empty, transitions: [] }
+-    const tool = current.offered.find((candidate) => candidate.spec.name === current!.call.name)
++    const transitions = [...HashMap.values(state.pending)].sort((a, b) => a.order - b.order).flatMap((current) => {
++    const tool = current.offered.find((candidate) => candidate.spec.name === current.call.name)
+     const log = Chunk.toReadonlyArray(current.log)
+     const stamp = current.call.turn === undefined ? {} : { turn: current.call.turn }
+     const answering = (result: unknown): Intent<never> => intent({
+@@ -289,10 +282,10 @@
+       input: { callId: current.call.callId, result },
+       events: (input, at) => [toolReturned({ callId: input.callId, result: input.result, ...stamp, at })]
+     })
+-    const transitions = tool?.serve(current.call, log, answering)
+-    return {
+-      view: empty,
+-      transitions: transitions ?? [answering({ error: unknownToolError(current.call.name, current.offered.map((tool) => tool.spec)) })]
+-    }
++    const served = tool?.serve(current.call, log, answering)
++    return (served ?? [answering({ error: unknownToolError(current.call.name, current.offered.map((tool) => tool.spec)) })])
++      .map((transition) => transition.kind === "effect" ? { ...transition, concurrent: true } : transition)
++    })
++    return { view: empty, transitions }
+   }
+ })
+diff --git a/src/bun/host.ts b/src/bun/host.ts
+--- a/src/bun/host.ts
++++ b/src/bun/host.ts
+@@ -67,6 +67,8 @@
+   // threadDatabase selects the physical database for a thread. The default is bunThreadDatabasePath(database, thread).
+   readonly threadDatabase?: (thread: string) => string
+   readonly defaultChildPlacement?: ChildPlacement
++  // Independent lineage/world scope may use this account host and its isolated thread databases.
++  readonly allowIndependentChildren?: boolean
+   readonly telemetry?: Layer.Layer<never>
+   readonly workspace?: Layer.Layer<KeyValueStore.KeyValueStore, never, SqlClient.SqlClient>
+   readonly workspaceSql?: false | Layer.Layer<never, never, SqlClient.SqlClient>
+@@ -81,6 +83,7 @@
+   readonly alarm?: BunAlarmScheduler
+   readonly pick?: (dirty: ReadonlySet<string>) => string
+   readonly keyOf?: (event: Event) => string | undefined
++  readonly canAppend?: (thread: string, events: ReadonlyArray<Event>, read: () => ReadonlyArray<Event>) => boolean
+   readonly commitObserverFor?: (context: { readonly actorInstance: string; readonly thread: string }) => CommitObserver
+ } & LayersFor<R>
+ 
+@@ -254,7 +257,7 @@
+   const actorName = options.actorName ?? "bun"
+   const actorInstance = options.actorInstance ?? "default"
+   const defaultChildPlacement = options.defaultChildPlacement ?? DEFAULT_BUN_CHILD_PLACEMENT
+-  if (!BUN_CHILD_PLACEMENTS.includes(defaultChildPlacement as "colocated")) {
++  if (!BUN_CHILD_PLACEMENTS.includes(defaultChildPlacement as "colocated") && !(options.allowIndependentChildren && defaultChildPlacement === "independent")) {
+     throw new Error(`Bun host does not support ${JSON.stringify(defaultChildPlacement)} thread placement`)
+   }
+   const pathOf = options.threadDatabase ?? ((thread: string) => bunThreadDatabasePath(options.database, thread))
+@@ -424,6 +427,10 @@
+       return sql.withTransaction(Effect.gen(function* () {
+         const rows = yield* sql<{ seq: number }>`SELECT COALESCE(MAX(seq), 0) AS seq FROM events`
+         const currentHead = Number(rows[0]?.seq ?? 0)
++        if (options.canAppend !== undefined) {
++          const history = yield* read
++          if (!options.canAppend(thread, events, () => history)) return { appended: 0, head: currentHead }
++        }
+         let seq = currentHead + 1
+         let appended = 0
+         for (const event of events) {
+@@ -528,7 +535,7 @@
+     name: "colocated",
+     send: (_destination, envelope) => {
+       const placement = envelope.lineage?.placement ?? defaultChildPlacement
+-      if (placement !== "colocated") return Effect.die(new Error(`Bun host does not support ${JSON.stringify(placement)} thread placement`))
++      if (placement !== "colocated" && !(options.allowIndependentChildren && placement === "independent")) return Effect.die(new Error(`Bun host does not support ${JSON.stringify(placement)} thread placement`))
+       const lineage = envelope.lineage === undefined ? undefined : { ...envelope.lineage, placement }
+       return commitEffect(envelope.link.target, envelope.event, lineage, envelope.link, envelope.call)
+     }
+diff --git a/src/code/execution/events.ts b/src/code/execution/events.ts
+--- a/src/code/execution/events.ts
++++ b/src/code/execution/events.ts
+@@ -14,6 +14,33 @@
+   code: Schema.String,
+   epoch: Schema.optional(Schema.Finite),
+   at: Schema.Finite
++})
++
++// The first attempt pins the sandbox replay protocol before any package effect.
++export const CodeExecutionStarted = Schema.Struct({
++  type: Schema.Literal("CodeExecutionStarted"),
++  execId: Schema.String,
++  replayVersion: Schema.String,
++  at: Schema.Finite
++})
++
++// Speculation has separate progress and terminal evidence; it never settles final source.
++export const CodeSpeculationStarted = Schema.Struct({
++  type: Schema.Literal("CodeSpeculationStarted"), execId: Schema.String,
++  turn: Schema.String, epoch: Schema.Finite, attempt: Schema.String,
++  physicalAttempt: Schema.String, providerCallId: Schema.String, prefix: Schema.String, at: Schema.Finite
++})
++export const CodeSpeculationReadAuthorized = Schema.Struct({
++  type: Schema.Literal("CodeSpeculationReadAuthorized"), execId: Schema.String,
++  callId: Schema.String, name: Schema.String, turn: Schema.String, epoch: Schema.Finite, at: Schema.Finite
++})
++export const CodeSpeculationSettled = Schema.Struct({
++  type: Schema.Literal("CodeSpeculationSettled"), execId: Schema.String,
++  turn: Schema.String, epoch: Schema.Finite, error: Schema.optional(Schema.String), at: Schema.Finite
++})
++export const CodeSpeculationAdopted = Schema.Struct({
++  type: Schema.Literal("CodeSpeculationAdopted"), execId: Schema.String,
++  turn: Schema.String, epoch: Schema.Finite, code: Schema.String, at: Schema.Finite
+ })
+ 
+ // PackageCalled records one package call from inside a code body. `callId` is `{execId}.{n}`
+@@ -64,6 +91,11 @@
+ 
+ export const CodeEvent = Schema.Union([
+   CodeDispatched,
++  CodeExecutionStarted,
++  CodeSpeculationStarted,
++  CodeSpeculationReadAuthorized,
++  CodeSpeculationSettled,
++  CodeSpeculationAdopted,
+   BlockedOn,
+   PackageCalled,
+   PackageReturned,
+@@ -75,12 +107,22 @@
+ // execution; pr names the call's recorded pair. A key names the scope its id is unique in, and
+ // no wider (execId and callId are minted per thread by the recorded machinery).
+ export const codeKeys: KeyFragment = {
+-  prefixes: ["cd:", "cs:", "pr:", "bk:"],
++  prefixes: ["cd:", "code-start:", "code-spec:", "code-spec-done:", "code-spec-adopt:", "code-spec-read:", "cs:", "pr:", "bk:"],
+   keyOf: (e) => {
+     const v = e as Record<string, unknown>
+     switch (e.type) {
+       case "CodeDispatched":
+         return `cd:${String(v.execId)}`
++      case "CodeSpeculationReadAuthorized":
++        return `code-spec-read:${String(v.callId)}`
++      case "CodeSpeculationStarted":
++        return `code-spec:${String(v.execId)}`
++      case "CodeSpeculationSettled":
++        return `code-spec-done:${String(v.execId)}`
++      case "CodeSpeculationAdopted":
++        return `code-spec-adopt:${String(v.execId)}`
++      case "CodeExecutionStarted":
++        return `code-start:${String(v.execId)}`
+       case "CodeSettled":
+         return `cs:${String(v.execId)}`
+       case "PackageReturned":
+diff --git a/src/code/execution/reactor.ts b/src/code/execution/reactor.ts
+--- a/src/code/execution/reactor.ts
++++ b/src/code/execution/reactor.ts
+@@ -1,13 +1,14 @@
+-import { Clock, Deferred, Effect, Fiber } from "effect"
++import { Clock, Deferred, Effect, Exit, Fiber } from "effect"
+ import type { KeyValueStore } from "effect/unstable/persistence"
+ import { EventLog } from "tardie/core/log"
++import { cancellationRequestedOf } from "tardie/core/method/cancellation"
+ import type { Event } from "tardie/core/log/event"
+ import { effect } from "tardie/core/effect"
+ import { transitionProjection, type TransitionProjection } from "tardie/core/transition"
+ import { annotationsOf, type Package, type PackageRequirements } from "../package/definition"
+ import { checkInput, renderSignature } from "./contract"
+ import { Sandbox, sandboxParked, sandboxReturned, type Bindings, type SandboxCall } from "../sandbox/service"
+-import { eventEpochOf, turnHead, turnOf } from "./turns"
++import { eventEpochOf, turnEpochOf, turnHead, turnOf } from "./turns"
+ import {
+   initialTurnProjection,
+   reduceTurnProjection,
+@@ -98,7 +99,8 @@
+   packages: ReadonlyArray<Package<R>>,
+   turn?: string,
+   epoch = 0,
+-  dispatchedAt?: number
++  dispatchedAt?: number,
++  speculative = false
+ ): Effect.Effect<ReadonlyArray<Event>, never, EventLog | KeyValueStore.KeyValueStore | R> =>
+   Effect.gen(function* () {
+     const stamp = turn === undefined ? {} : { turn, ...(epoch === 0 ? {} : { epoch }) }
+@@ -107,13 +109,34 @@
+     // The shadow reading rides the turn's own brief, folded once here: it never changes
+     // mid-turn, and every package call below reads the same value.
+     const shadow = (turnHead(events) as { shadow?: unknown } | undefined)?.shadow === true
++    const adoption = events.find((event) => event.type === "CodeSpeculationAdopted" &&
++      String((event as { readonly execId?: unknown }).execId) === execId) as { readonly code?: unknown } | undefined
++    if (!speculative && adoption !== undefined && adoption.code !== code) {
++      return [codeSettled({ execId, error: "final source differs from the adopted speculative source", ...stamp, at: yield* Clock.currentTimeMillis })]
++    }
+     const sandbox = yield* Sandbox
++    const priorStart = events.find((event) => event.type === "CodeExecutionStarted" &&
++      String((event as { readonly execId?: unknown }).execId) === execId) as { readonly replayVersion?: string } | undefined
++    const priorCalls = events.some((event) => {
++      const id = String((event as { readonly callId?: unknown }).callId ?? "")
++      return event.type === "PackageCalled" && id.startsWith(`${execId}.`) && /^\d+$/.test(id.slice(execId.length + 1))
++    })
++    // An unfinished pre-upgrade sandbox keeps its old promise delivery semantics.
++    const replayVersion = priorStart?.replayVersion ?? (priorCalls && sandbox.replayVersion?.startsWith("aiko-code/")
++      ? "aiko-code/1" : sandbox.replayVersion)
++    if (priorStart === undefined && replayVersion !== undefined) {
++      yield* log.append([{ type: "CodeExecutionStarted", execId, replayVersion, ...stamp, at: yield* Clock.currentTimeMillis }])
++    }
+     // The proxy runs each call as its own promise, so it carries the attempt's context. The spill
+     // store is in it: a call's own hydrate and spill run under the same store the attempt was
+     // provided. So is `R`: a method that reaches for a service reaches into this same context,
+     // which is why the requirement rides the reactor's type (execute.test.ts, "a package method
+     // reads its service through the funnel").
+     const context = yield* Effect.context<KeyValueStore.KeyValueStore | R>()
++    // Calls are promises crossing an isolate boundary, but their effects still
++    // belong to this attempt. Closing or interrupting it aborts every open call.
++    const attemptController = new AbortController()
++    yield* Effect.addFinalizer(() => Effect.sync(() => attemptController.abort()))
+     // Park bookkeeping. inFlight counts proxy calls from synchronous invoke to committed pair
+     // or park; parkGate completes when every open call settled or parked and at least one
+     // parked: the cue to stop waiting on the body.
+@@ -130,13 +153,13 @@
+     // (tla/runtime/Execution.tla, ParkedAttemptReleases).
+     const finishCall = Effect.gen(function* () {
+       inFlight--
+-      if (parked && inFlight === 0) yield* Deferred.succeed(parkGate, undefined)
++      if (parked && inFlight === 0 && !sandbox.managesParking) yield* Deferred.succeed(parkGate, undefined)
+     })
+     const bindings: Record<string, Record<string, SandboxCall>> = {}
+     for (const pkg of packages) {
+       const methods: Record<string, SandboxCall> = {}
+       for (const [method, fn] of Object.entries(pkg.methods)) {
+-        methods[method] = (args: unknown, ordinal: number) => {
++        methods[method] = (args: unknown, ordinal: number, signal?: AbortSignal) => {
+           const callId = callIdOf(execId, ordinal)
+           inFlight++
+           return Effect.runPromiseWith(context)(
+@@ -202,6 +225,12 @@
+               // an unannotated method is refused too, same as `annotationsOf` defaults it. A
+               // refusal never parks: it is a host-side answer, not a call to `fn`.
+               const annotations = annotationsOf(pkg, method)
++              if (speculative && !annotations.readOnlyHint && pkg.authorizeSpeculation?.(method, args) !== true) {
++                drifted = `speculative execution refused ${pkg.name}.${method}: no current read-only authority`
++                yield* Deferred.succeed(parkGate, undefined)
++                return yield* Effect.never
++              }
++              if (speculative) yield* log.append([{ type: "CodeSpeculationReadAuthorized", execId, callId, name: `${pkg.name}.${method}`, ...stamp, at: yield* Clock.currentTimeMillis }])
+               const refused = shadow && !annotations.readOnlyHint && annotations.openWorldHint
+               if (refused) {
+                 const result = { error: `shadow run: ${pkg.name}.${method} is an open-world write and does not execute in a shadow run` }
+@@ -287,7 +316,18 @@
+               Effect.ensuring(finishCall),
+               Effect.withSpan("package.call", { attributes: { name: `${pkg.name}.${method}`, callId } })
+             )
+-          ).then((outcome) => outcome.parked ? sandboxParked : sandboxReturned(outcome.result))
++            , { signal: signal === undefined ? attemptController.signal : AbortSignal.any([attemptController.signal, signal]) }
++          ).then(async (outcome) => {
++            if (outcome.parked) return sandboxParked
++            const history = await Effect.runPromise(log.read)
++            const returned = history.filter((event) => {
++              if (event.type !== "PackageReturned") return false
++              const id = String((event as { readonly callId?: unknown }).callId ?? "")
++              return id.startsWith(`${execId}.`) && /^\d+$/.test(id.slice(execId.length + 1))
++            })
++            const rank = returned.findIndex((event) => (event as { readonly callId?: unknown }).callId === callId)
++            return sandboxReturned(outcome.result, rank < 0 ? undefined : rank)
++          })
+         }
+       }
+       bindings[pkg.name] = methods
+@@ -304,7 +344,7 @@
+           // The ambient pins the body's clock to the dispatch's own recorded instant and its
+           // randomness to the execId: every attempt sees the same values, so a body may read
+           // both without drifting (packages/code/src/sandbox/service.ts, Ambient).
+-          { at: dispatchedAt ?? 0, seed: execId }
++          { at: dispatchedAt ?? 0, seed: execId, ...(replayVersion === undefined ? {} : { replayVersion }) }
+         )
+         .pipe(Effect.withSpan("code.run", { attributes: { execId } }))
+     )
+@@ -357,7 +397,7 @@
+       return [codeSettled({ execId, result: outcome.result, ...logs, ...stamp, at })]
+     }
+     return [{ type: "CodeSettled", execId, error: outcome.error, ...logs, ...stamp, at }]
+-  })
++  }).pipe(Effect.scoped)
+ 
+ // CodePolicy bounds live package calls and where a result stops fitting in an agent's context
+ // (reactor.test.ts, "package call failure policy"; spill.ts, SpillPolicy).
+@@ -365,6 +405,74 @@
+   readonly spill: Partial<SpillPolicy>
+   readonly call: Partial<PackageCallPolicy>
+ }
++
++export interface CodeSpeculation {
++  readonly execId: string
++  readonly turn: string
++  readonly epoch: number
++  readonly attempt: string
++  readonly physicalAttempt: string
++  readonly providerCallId: string
++  readonly prefix: string
++  readonly at: number
++}
++
++const speculationIsCurrent = (history: ReadonlyArray<Event>, input: CodeSpeculation): boolean =>
++  turnEpochOf(history, input.turn) === input.epoch &&
++  history.some(event => event.type === "ModelCalled" && event.callId === input.attempt && event.turn === input.turn && eventEpochOf(event) === input.epoch) &&
++  !history.some(event => {
++    const cancellation = cancellationRequestedOf(event)
++    return cancellation?.invocation.method === "message" && cancellation.invocation.id === input.turn && cancellation.invocation.epoch === input.epoch ||
++      ["TurnCancelled", "TurnFailed", "TurnCompleted"].includes(event.type) && event.turn === input.turn && eventEpochOf(event) === input.epoch
++  })
++
++// Only the trusted streaming authority calls this. Prefix execution never emits
++// CodeDispatched or CodeSettled: those belong to the final, fully validated source.
++export const speculateCodePrefix = <R>(
++  input: CodeSpeculation,
++  packages: ReadonlyArray<Package<R>>,
++  policy: Partial<CodePolicy> = {}
++): Effect.Effect<void, never, EventLog | KeyValueStore.KeyValueStore | R> => Effect.gen(function* () {
++  const log = yield* EventLog
++  const history = yield* log.read
++  if (!speculationIsCurrent(history, input)) return yield* Effect.die(new Error("speculation has no current native inference authority"))
++  const prior = history.find((event) => event.type === "CodeSpeculationStarted" && (event as { readonly execId?: unknown }).execId === input.execId)
++  if (prior !== undefined && ["turn", "epoch", "attempt", "physicalAttempt", "providerCallId", "prefix", "at"].some((key) =>
++    (prior as unknown as Record<string, unknown>)[key] !== (input as unknown as Record<string, unknown>)[key])) {
++    return yield* Effect.die(new Error("speculation identity was reused with different authority"))
++  }
++  if (history.some((event) => event.type === "CodeSpeculationSettled" && (event as { readonly execId?: unknown }).execId === input.execId)) return
++  yield* log.append([{ type: "CodeSpeculationStarted", ...input }])
++  const outcome = yield* executeRecorded(input.execId, input.prefix, spillPolicyOf({ ...policy.spill, note: policy.spill?.note ?? BARE_SPILL_NOTE }),
++    packageCallPolicyOf(policy.call), packages, input.turn, input.epoch, input.at, true)
++  const result = outcome.find((event) => event.type === "CodeSettled") as { readonly error?: string } | undefined
++  yield* log.append([{ type: "CodeSpeculationSettled", execId: input.execId, turn: input.turn, epoch: input.epoch,
++    ...(result === undefined ? { error: "speculative prefix did not finish" } : result.error === undefined ? {} : { error: result.error }), at: yield* Clock.currentTimeMillis }])
++}).pipe(Effect.onExit(exit => Exit.isFailure(exit) ? Effect.gen(function* () {
++  const log = yield* EventLog
++  if (!(yield* log.read).some(event => event.type === "CodeSpeculationStarted" && event.execId === input.execId)) return
++  yield* log.append([{ type: "CodeSpeculationSettled", execId: input.execId, turn: input.turn, epoch: input.epoch,
++    error: "speculative prefix interrupted", at: yield* Clock.currentTimeMillis }])
++}) : Effect.void))
++
++// Preserve the execution id and therefore private-result custody. The provider id
++// remains on ToolCalled.providerCallId and is used only when rendering its transcript.
++export const adoptSpeculativePrefix = (
++  input: CodeSpeculation & { readonly code: string }
++): Effect.Effect<boolean, never, EventLog> => Effect.gen(function* () {
++  const log = yield* EventLog
++  const history = yield* log.read
++  if (!speculationIsCurrent(history, input)) return false
++  const started = history.find((event) => event.type === "CodeSpeculationStarted" && (event as { readonly execId?: unknown }).execId === input.execId)
++  const settled = history.find((event) => event.type === "CodeSpeculationSettled" && (event as { readonly execId?: unknown }).execId === input.execId) as { readonly error?: unknown } | undefined
++  if (started === undefined || settled === undefined || settled.error !== undefined || !input.code.startsWith(input.prefix)) return false
++  if (["turn", "epoch", "attempt", "physicalAttempt", "providerCallId", "prefix", "at"].some((key) =>
++    (started as unknown as Record<string, unknown>)[key] !== (input as unknown as Record<string, unknown>)[key])) return false
++  const prior = history.find((event) => event.type === "CodeSpeculationAdopted" && (event as { readonly execId?: unknown }).execId === input.execId) as { readonly code?: unknown } | undefined
++  if (prior !== undefined) return prior.code === input.code
++  yield* log.append([{ type: "CodeSpeculationAdopted", ...input }])
++  return true
++})
+ 
+ export interface CodeProjectionState {
+   readonly turns: TurnProjectionState
+@@ -476,28 +584,27 @@
+         const time = Number((left as { readonly at?: unknown }).at ?? 0) - Number((right as { readonly at?: unknown }).at ?? 0)
+         return time !== 0 ? time : leftId < rightId ? -1 : 1
+       })
+-      let selected: { readonly execId: string; readonly dispatch: Event } | undefined
++      const selected: Array<{ readonly execId: string; readonly dispatch: Event }> = []
+       for (const [execId, dispatch] of ordered) {
+         const turn = turnOf(dispatch)
+         if (state.settled.has(execId) || (turn !== undefined && turnTerminalFrom(state.turns, turn) !== undefined)) continue
+         const owned = [...state.calls.entries()].filter(([, call]) => call.execId === execId)
+         const open = owned.filter(([callId, call]) => call.awaiting !== undefined && !state.returned.has(callId))
+         const home = open.some(([, call]) => state.replies.has(call.awaiting!))
+-        if (owned.length === 0 || home || open.length === 0) selected = { execId, dispatch }
+-        break
++        if (owned.length === 0 || home || open.length === 0) selected.push({ execId, dispatch })
+       }
+-      if (selected === undefined) return []
+-      const owed = { execId: selected.execId }
+-      const dispatch = selected.dispatch
++      return selected.map((ready) => {
++      const owed = { execId: ready.execId }
++      const dispatch = ready.dispatch
+     const d = dispatch as { code?: unknown; at?: unknown }
+     const turn = turnOf(dispatch)
+     const epoch = eventEpochOf(dispatch)
+-      return [
+-      effect<
++      return effect<
+         { execId: string; code: string; turn: string | undefined; epoch: number; at: number | undefined },
+         KeyValueStore.KeyValueStore | R
+       >({
+         key: `cs:${owed.execId}`,
++        concurrent: true,
+         ...(turn === undefined ? {} : { invocation: { method: "message", id: turn, epoch } }),
+         input: {
+           execId: owed.execId,
+@@ -508,7 +615,7 @@
+         },
+         act: (input) => executeRecorded<R>(input.execId, input.code, spill, callPolicy, mounted, input.turn, input.epoch, input.at)
+       })
+-      ]
++      })
+     }
+   })
+ }
+diff --git a/src/code/package/definition.ts b/src/code/package/definition.ts
+--- a/src/code/package/definition.ts
++++ b/src/code/package/definition.ts
+@@ -139,6 +139,8 @@
+   readonly connection?: Connection
+   // MCP-style behavior hints per method; a missing entry reads as ANNOTATION_DEFAULTS.
+   readonly annotations?: Readonly<Record<string, MethodAnnotations>>
++  // Trusted dynamic classification for routers. Ordinary authorization still runs.
++  readonly authorizeSpeculation?: (method: string, args: unknown) => boolean
+   // A method's error channel carries `Park` only: the awaiting fires (`tasks.fire`,
+   // `tasks.result`) fail it when a reply has not landed yet, and every other method's `never`
+   // error is a subtype of it, so nothing else changes shape.
+diff --git a/src/code/sandbox/service.ts b/src/code/sandbox/service.ts
+--- a/src/code/sandbox/service.ts
++++ b/src/code/sandbox/service.ts
+@@ -13,17 +13,19 @@
+ }
+ 
+ export type SandboxCallOutcome =
+-  | { readonly _tag: "Returned"; readonly result: unknown }
++  | { readonly _tag: "Returned"; readonly result: unknown; readonly completionOrder?: number }
+   | { readonly _tag: "Parked" }
+ 
+-export type SandboxCall = (args: unknown, ordinal: number) => Promise<SandboxCallOutcome>
++export type SandboxCall = (args: unknown, ordinal: number, signal?: AbortSignal) => Promise<SandboxCallOutcome>
+ 
+ // Bindings carries host package calls into a sandbox. A returned call carries its value across
+ // the platform boundary. A parked call crosses that boundary as a value and becomes pending in
+ // the guest, so a remote sandbox does not hold an RPC open while durable work is away.
+ export type Bindings = Readonly<Record<string, Readonly<Record<string, SandboxCall>> | unknown>>
+ 
+-export const sandboxReturned = (result: unknown): SandboxCallOutcome => ({ _tag: "Returned", result })
++export const sandboxReturned = (result: unknown, completionOrder?: number): SandboxCallOutcome => ({
++  _tag: "Returned", result, ...(completionOrder === undefined ? {} : { completionOrder })
++})
+ export const sandboxParked: SandboxCallOutcome = { _tag: "Parked" }
+ 
+ const packageBinding = (binding: Bindings[string]): Readonly<Record<string, SandboxCall>> | undefined => {
+@@ -56,6 +58,7 @@
+ // the log, so its "now" IS its dispatch's instant); `seed` is the execId. Nothing new needs
+ // recording because the dispatch event already carries the value.
+ export interface Ambient {
++  readonly replayVersion?: string
+   readonly at: number
+   readonly seed: string
+ }
+@@ -67,6 +70,9 @@
+ // priors reach for both): Date.now, the no-argument Date constructor, and Math.random answer
+ // from `ambient`, identically on every attempt.
+ export interface SandboxService {
++  readonly replayVersion?: string
++  // A completion-driven adapter reports quiescence after guest continuations drain.
++  readonly managesParking?: boolean
+   readonly run: (code: string, bindings: Bindings, ambient?: Ambient) => Effect.Effect<SandboxResult>
+ }
+ 
+diff --git a/src/core/runtime/reconciler.ts b/src/core/runtime/reconciler.ts
+--- a/src/core/runtime/reconciler.ts
++++ b/src/core/runtime/reconciler.ts
+@@ -321,7 +321,11 @@
+         const outcome = committed
+           ? "committed"
+           : sharedSnapshot
+-            ? returned.length === 0 ? "blocked" : "wedged"
++            ? returned.length === 0 ? "blocked"
++              : returned.some((event) => {
++                  const key = a.keyOf(event)
++                  return key !== undefined && tail.some((landed) => a.keyOf(landed) === key)
++                }) ? "advanced" : "wedged"
+             : tail.length > 0
+               ? "advanced"
+               : returned.length === 0
+diff --git a/src/model/model.ts b/src/model/model.ts
+--- a/src/model/model.ts
++++ b/src/model/model.ts
+@@ -129,21 +129,31 @@
+ export const actionOf = (result: ProcessorResult): Action => {
+   const calls = result.toolCalls ?? []
+   const text = (result.content ?? "").trim()
+-  const call = calls.find((c) => c.function.name === "execute") ?? calls[0]
+-  if (call !== undefined) {
+-    let args: unknown
+-    try {
+-      args = JSON.parse(call.function.arguments)
+-    } catch {
+-      args = { code: call.function.arguments }
+-    }
+-    return {
+-      kind: "call",
+-      callId: call.id,
+-      name: call.function.name,
+-      arguments: args,
+-      ...(text === "" ? {} : { text })
+-    }
++  if (calls.length > 0) {
++    const seen = new Set<string>()
++    const decoded = calls.map((call) => {
++      if (typeof call.id !== "string" || call.id.trim() === "" || seen.has(call.id)) {
++        throw new Error("the model returned a missing or duplicate tool call id")
++      }
++      seen.add(call.id)
++      if (typeof call.function?.name !== "string" || call.function.name.trim() === "") {
++        throw new Error(`tool call ${call.id} has no tool name`)
++      }
++      let args: unknown
++      try {
++        args = JSON.parse(call.function.arguments)
++      } catch {
++        // Preserve the historical bare execute body for a single call. A batch
++        // is validated atomically: malformed siblings must never partly execute.
++        if (calls.length === 1 && call.function.name === "execute") args = { code: call.function.arguments }
++        else throw new Error(`tool call ${call.id} has malformed JSON arguments`)
++      }
++      return { callId: call.id, name: call.function.name, arguments: args }
++    })
++    const prose = text === "" ? {} : { text }
++    return decoded.length === 1
++      ? { kind: "call", ...decoded[0]!, ...prose }
++      : { kind: "calls", calls: decoded, ...prose }
+   }
+   if (text !== "") return { kind: "complete", output: text }
+   // A provider that declined leaves neither: content_filter is the finish reason that says so,
+@@ -505,6 +515,39 @@
+   )
+ }
+ 
++const toolProgress = (
++  stream: AsyncIterable<StreamChunk>,
++  accept: InferRequest["onToolCallProgress"],
++  logicalAttempt: string | undefined,
++  physicalAttempt: string,
++  signal: AbortSignal
++): AsyncIterable<StreamChunk> => ({
++  async *[Symbol.asyncIterator]() {
++    const calls = new Map<string, { name: string; argumentsText: string }>()
++    for await (const chunk of stream) {
++      signal.throwIfAborted()
++      if (accept !== undefined && (chunk.type === "TOOL_CALL_START" || chunk.type === "TOOL_CALL_ARGS" || chunk.type === "TOOL_CALL_END")) {
++        if (logicalAttempt === undefined || physicalAttempt === "") throw new Error("tool progress requires a durable attempt identity")
++        const callId = chunk.toolCallId
++        if (typeof callId !== "string" || callId === "") throw new Error("tool progress has no call identity")
++        if (chunk.type === "TOOL_CALL_START") {
++          if (calls.has(callId)) throw new Error("tool progress repeated a call identity")
++          calls.set(callId, { name: chunk.toolCallName ?? chunk.toolName, argumentsText: "" })
++        }
++        const call = calls.get(callId)
++        if (call === undefined) throw new Error("tool progress preceded its call start")
++        if (chunk.type === "TOOL_CALL_ARGS") {
++          const next = chunk.args ?? call.argumentsText + chunk.delta
++          if (!next.startsWith(call.argumentsText)) throw new Error("tool progress revised previously accepted bytes")
++          call.argumentsText = next
++        }
++        await accept({ logicalAttempt, physicalAttempt, callId, ...call }, signal)
++      }
++      yield chunk
++    }
++  }
++})
++
+ const withSpend = (action: Action, usage: Usage | undefined): Action =>
+   usage === undefined ? action : { ...action, usage }
+ 
+@@ -595,7 +638,8 @@
+     delivery: DeltaDelivery | undefined,
+     identity: InferRequest["identity"],
+     physicalAttempt: string,
+-    signal?: AbortSignal
++    signal?: AbortSignal,
++    acceptProgress?: InferRequest["onToolCallProgress"]
+   ): Promise<Action> => {
+     // Every consequence of a declared-output attempt names the mode it ran in, so replay reads a
+     // recorded fact rather than re-deciding from a capability that may have changed since
+@@ -662,7 +706,7 @@
+         physicalAttempt,
+         { provider: config.provider, model_id: config.model }
+       )
+-      const result = await new StreamProcessor().process(normalized)
++      const result = await new StreamProcessor().process(toolProgress(normalized, acceptProgress, key, physicalAttempt, attemptSignal))
+       const { usage, endpoint, wire } = await settle()
+       stats.finish = attempt.finishReason?.() ?? result.finishReason ?? "stop"
+       const stopClass = attempt.stopClass?.() ?? "ok"
+@@ -675,7 +719,7 @@
+       if (stopClass === "violation") {
+         throw failed(new ViolatedError("the provider could not produce output matching the schema it was given"), usage, endpoint)
+       }
+-      return stamped(served(withSpend(actionOf(result), usage), endpoint))
++      return stamped(served(withSpend({ ...actionOf(result), ...(physicalAttempt === "" ? {} : { physicalAttempt }) }, usage), endpoint))
+     } catch (e) {
+       attemptController.abort()
+       await sink.reader?.cancel().catch(() => undefined)
+@@ -726,7 +770,7 @@
+       }
+       // The actor decides the request, render included; the platform maps it to the wire and
+       // streams it, holding no opinion about tools (tardie, runtime/composition.ts).
+-      const req = modelRequest(request.trajectory, request, request.context ?? {})
++      const req = modelRequest(request.trajectory, { ...request, model: request.model ?? { provider: config.provider, model_id: config.model } }, request.context ?? {})
+       // The contract's preflight runs before the first socket: an endpoint that cannot promise
+       // the declared schema, or a schema outside the profile both wires send unchanged, ends
+       // the turn having spent nothing (src/output/contract.ts, outputPreflight).
+@@ -767,10 +811,10 @@
+             stats.rung = rung
+             stats.attempts += 1
+             const logicalAttempt = key ?? request.identity.turn
+-            const physicalAttempt = delivery === undefined
++            const physicalAttempt = delivery === undefined && request.onToolCallProgress === undefined
+               ? ""
+               : options.physicalAttemptId?.(logicalAttempt) ?? randomPhysicalAttemptId(logicalAttempt)
+-            const action = await attemptOnce(req, mode, key, ladder[rung]!, rung, stats, delivery, request.identity, physicalAttempt, signal)
++            const action = await attemptOnce(req, mode, key, ladder[rung]!, rung, stats, delivery, request.identity, physicalAttempt, signal, request.onToolCallProgress)
+             remember(action.usage, true)
+             return served(withSpend(action, spentOf(parts, missed)), action.endpoint ?? endpointOf(config, undefined))
+           } catch (e) {

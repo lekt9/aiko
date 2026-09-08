@@ -2,17 +2,10 @@ import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import type { HttpFetch } from "./security.ts";
 import { privateDatabaseFile } from "./accounts.ts";
+import { ModelBudgetDenied } from "./model-budget-denial.ts";
 
-export type ModelLimits = {
-  globalPerDay: number;
-  accountPerDay: number;
-  maxConcurrent: number;
-};
-export const DEFAULT_MODEL_LIMITS: ModelLimits = {
-  globalPerDay: 200,
-  accountPerDay: 40,
-  maxConcurrent: 4,
-};
+import { DEFAULT_MODEL_LIMITS, type ModelLimits } from "./model-budget-policy.ts";
+export { DEFAULT_MODEL_LIMITS, type ModelLimits } from "./model-budget-policy.ts";
 
 /** Count actual outbound inference requests, including compaction. Reserve before I/O; never refund uncertain calls. */
 export class ModelBudget {
@@ -52,11 +45,14 @@ export class ModelBudget {
     return this.db
       .transaction(() => {
         const usage = this.status(owner);
-        if (
-          usage.accountCalls >= this.limits.accountPerDay ||
-          usage.globalCalls >= this.limits.globalPerDay
-        )
-          return false;
+        if (![usage.accountCalls, usage.globalCalls, this.limits.accountPerDay, this.limits.globalPerDay]
+          .every(value => Number.isSafeInteger(value) && value >= 0) || this.db.query(
+            "SELECT 1 FROM model_usage WHERE day=? AND (typeof(calls)!='integer' OR calls<0 OR calls>9007199254740991) LIMIT 1",
+          ).get(usage.day)) throw Error("Model allowance unavailable");
+        const scope = usage.accountCalls >= this.limits.accountPerDay ? "account"
+          : usage.globalCalls >= this.limits.globalPerDay ? "global" : undefined;
+        if (scope) throw new ModelBudgetDenied({ version: 1, owner, day: usage.day, scope,
+          limit: scope === "account" ? this.limits.accountPerDay : this.limits.globalPerDay });
         this.db
           .query(
             "INSERT INTO model_usage VALUES (?, ?, 1) ON CONFLICT(day,owner) DO UPDATE SET calls=calls+1",
@@ -86,8 +82,7 @@ export class ModelBudget {
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
       init?.signal?.throwIfAborted();
-      if (!this.reserve(owner))
-        throw new Error("Daily inference allowance exhausted");
+      this.reserve(owner);
       this.active++;
       const signal = AbortSignal.any([
         init?.signal ?? new AbortController().signal,

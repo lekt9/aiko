@@ -1,4 +1,4 @@
-import { AIKO_MINI_APP_URL } from "./telegram-mini-app.ts";
+import { AIKO_MINI_APP_URL, artifactMiniAppUrl } from "./telegram-mini-app.ts";
 import { secretaryTelegram } from "./secretary-telegram.ts";
 import { telegram } from "tardie/channels/telegram";
 import { Effect } from "effect";
@@ -110,8 +110,14 @@ export function createTelegram(options: {
     };
   };
   const outbound = createTelegramOutbound({ ...options, miniAppUrl: options.miniAppUrl ?? AIKO_MINI_APP_URL });
-  const send: Sender = (chat, text, signal, context) =>
-    outbound.sendRich(chat, { kind: "text", text, ...context }, signal);
+  const send: Sender = (chat, text, signal, context) => {
+    const { artifacts = [], ...reply } = context ?? {};
+    const available = artifacts.filter(ref => ref.state === "available");
+    const unavailable = artifacts.some(ref => ref.state !== "available");
+    return outbound.sendRich(chat, { kind: "text", text: text + (unavailable ? "\n\nA table attached to this reply is no longer available." : ""), ...reply,
+      ...(available.length ? { buttons: available.map((ref, index) => [{ text: available.length === 1 ? "Open table" : `Open table ${index + 1}`, webAppUrl: artifactMiniAppUrl(ref.artifactId, options.miniAppUrl ?? AIKO_MINI_APP_URL) }]) } : {}),
+    }, signal);
+  };
   return {
     receive,
     send,

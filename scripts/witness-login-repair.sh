@@ -8,8 +8,8 @@ pnpm --filter @unlock/agent typecheck
 # which the current authorization-only manager API deliberately rejects.
 # This release gate checks the private-login surface and its real API/UI receipts.
 bun - <<'TS'
-import {privateEnv} from './apps/agent/src/config.ts';
-const env=await privateEnv('/home/deck/.config/unbrowse/aiko-cloudflare.env');
+import {cloudflareState} from './scripts/cloudflare-paths.ts';
+const env=await cloudflareState();
 if(env.AIKO_E2E_OWNER!=='acct_cloudflare_e2e02')throw Error('Wrong canary account');
 const base=env.AIKO_CLOUDFLARE_URL;
 const ready=await fetch(base+'/ready',{signal:AbortSignal.timeout(20000)});

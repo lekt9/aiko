@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createHash, createHmac } from "node:crypto";
 import { Effect, Layer } from "effect";
-import { actor } from "tardie";
+import { actor, agentMessageMethod, infer, Infer, outputValidateOnce } from "tardie";
 import { component } from "tardie/core/component";
 import { effect } from "tardie/core/effect";
 import { Router } from "tardie/core/communication/router";
@@ -13,6 +13,10 @@ import { childLineageOf, threadCreatedOf } from "tardie/core/thread";
 import { createControlActor, telegramControl } from "../src/telegram-control.ts";
 import { createVoice } from "../src/voice.ts";
 import { threadBinding } from "../src/account-binding.ts";
+import { voiceAndOutbox } from "../src/actor.ts";
+import { channelProgress } from "../src/channel-progress.ts";
+import { createToolRouterActor, routerEventKey } from "../src/tool-router.ts";
+import { createToolRouterComponent } from "../src/tool-router-tools.ts";
 import {
   createCloudflareAccountHost,
   type AccountStorage,
@@ -20,7 +24,78 @@ import {
 
 const databases: Database[] = [];
 
-test("Cloudflare control lane responds while another native effect is blocked", async () => {
+test("ingress replaces an expired recovery alarm using the native alarm policy", async () => {
+  const durable = storage();
+  await durable.setAlarm(Date.now() - 1000);
+  const definition = actor({name:"aiko",methods:{},components:[]});
+  const host = await createCloudflareAccountHost({storage:durable,actorName:"aiko",actorInstance:"test",ownsThread:t=>t==="user-123",actorFor:()=>definition,layersFor:()=>Layer.empty});
+  await host.commitRoot(host.self("user-123"),{type:"MessageReceived",id:"request",at:Date.now()});
+  expect(await durable.getAlarm()).toBeGreaterThan(Date.now());
+  await host.close();
+});
+
+test("a deadline alarm and its native cancellation commit atomically", async () => {
+  const durable = storage();
+  const definition = actor({name:"aiko",methods:{message:agentMessageMethod},components:[component<null, undefined>({
+    name:"deadline-fixture", initial:()=>null, step:state=>state,
+    keys:{prefixes:["terminal:"],keyOf:e=>e.type==="TurnCancelled"?`terminal:${e.turn}:${e.epoch ?? 0}`:undefined},
+    output:()=>({view:undefined,transitions:[]}),
+  })]});
+  const host = await createCloudflareAccountHost({storage:durable,actorName:"aiko",actorInstance:"test",ownsThread:t=>t==="user-123",actorFor:()=>definition,layersFor:()=>Layer.empty});
+  await host.commitRoot(host.self("user-123"),{type:"MessageReceived",id:"deadline",text:"Pending",at:Date.now()-20,
+    call:{invocation:{method:"message",id:"deadline",epoch:0},deadlineAt:Date.now()-10}});
+  await host.drive();
+  durable.sql.exec("CREATE TRIGGER reject_deadline BEFORE INSERT ON aiko_thread_events WHEN NEW.key LIKE 'cx:%' BEGIN SELECT RAISE(ABORT, 'reject cancellation'); END");
+  await expect(host.alarm()).rejects.toThrow("reject cancellation");
+  expect((await host.read("user-123")).filter(e=>e.type==="AlarmFired" || e.type==="CancellationRequested")).toEqual([]);
+  durable.sql.exec("DROP TRIGGER reject_deadline");
+  await host.alarm();
+  const events = await host.read("user-123");
+  expect(events.filter(e=>e.type==="AlarmFired")).toHaveLength(1);
+  expect(events.find(e=>e.type==="CancellationRequested")).toMatchObject({cause:"deadline",invocation:{method:"message",id:"deadline",epoch:0}});
+  await host.close();
+});
+
+test("alarm delivers working text before a router call and the final reply once across recovery", async () => {
+  const durable = storage(), sent: string[] = [];
+  let host: Awaited<ReturnType<typeof createCloudflareAccountHost>>;
+  const router = createToolRouterActor({ owner: "123", engine: {
+    listCatalog: async () => [], connections: async () => [],
+    describe: async () => { throw Error("not needed"); },
+    search: async () => {
+      expect(sent).toEqual(["I’ll check the catalog."]);
+      return {status: "unavailable", connectors: [], fallbackAllowed: false, message: "fixture"};
+    },
+  } });
+  const model = Layer.succeed(Infer, {
+    resolve: () => ({model: {provider: "fixture", model_id: "router-alarm"}}),
+    react: request => Effect.succeed(request.trajectory.some(e => e.type === "ToolReturned")
+      ? {kind: "complete" as const, output: "The catalog is unavailable."}
+      : {kind: "call" as const, text: "I’ll check the catalog.", callId: "discover", name: "tool_router_discover", arguments: {tasks: [{id: "mail", query: "Read email"}]}}),
+  });
+  const main = actor({name: "aiko", methods: {message: agentMessageMethod}, components: [
+    channelProgress({owner:"123",voice:createVoice({enabled:false,persona:"fixture"}),redact:text=>text,
+      send:async (_owner,text)=>{sent.push(text);return {status:"delivered"};}}),
+    infer([createToolRouterComponent({owner: "123", thread: "user-123", readRouter: () => host.read("router-123")}), outputValidateOnce]),
+    voiceAndOutbox("123", createVoice({enabled: false, persona: "fixture"}), async (_owner, text) => { sent.push(text); return {status: "delivered"}; }, {live: true, redact: text => text}),
+  ]});
+  const options = {storage: durable, actorName: "aiko", actorInstance: "test", ownsThread: (thread: string) => threadBinding(thread)?.owner === "123", keyOf: routerEventKey, actorFor: (thread: string) => thread === "router-123" ? router : main, layersFor: () => model};
+  host = await createCloudflareAccountHost(options);
+  await host.commitRoot(host.self("user-123"), {type: "MessageReceived", id: "turn", text: "Read email", source: "telegram", chat: "123", sender: "123", at: Date.now()});
+  await host.alarm();
+  const log = await host.read("user-123");
+  expect(log.some(e => e.type === "ResponseReceived")).toBe(true);
+  expect(log.some(e => e.type === "CallTimedOut")).toBe(false);
+  expect(log.some(e => e.type === "TurnCompleted")).toBe(true);
+  expect(sent).toEqual(["I’ll check the catalog.", "The catalog is unavailable."]);
+  await host.close();
+  host = await createCloudflareAccountHost(options);
+  await host.alarm();
+  expect(sent).toHaveLength(2);
+  await host.close();
+});
+
+test("Cloudflare alarm lets the control lane respond while a foreground effect is blocked", async () => {
   let release!: () => void;
   const pending = new Promise<void>(resolve => { release = resolve; });
   let started = false;
@@ -42,7 +117,7 @@ test("Cloudflare control lane responds while another native effect is blocked", 
     ownsThread:t=>threadBinding(t)?.owner==="123",actorFor:t=>t==="control-123"?control:foreground,layersFor:()=>Layer.empty,
   });
   await host.commitRoot(host.self("user-123"),{type:"MessageReceived",id:"work",at:Date.now()});
-  const driving = host.drive();
+  const driving = host.alarm();
   try {
     for(let i=0;!started&&i<100;i++)await Bun.sleep(5);
     expect(started).toBe(true);
@@ -341,7 +416,7 @@ test("fresh-account history and native memory sidecar import atomically without 
   await source.close();
 });
 
-test("alarm settles one unrested thread per invocation and re-arms remaining work", async () => {
+test("alarm recovers all pending threads without starving background work", async () => {
   const durable = storage();
   const calls: string[] = [];
   const makeActor = (label: string) =>
@@ -405,15 +480,34 @@ test("alarm settles one unrested thread per invocation and re-arms remaining wor
   calls.length = 0;
   host = await createCloudflareAccountHost(options);
   await host.alarm();
-  expect(calls).toEqual(["fg:fg"]);
+  expect(calls).toEqual(["fg:fg", "idx:idx"]);
   expect((await host.read("user-123")).some((e) => e.type === "Done")).toBe(true);
   expect(
     (await host.read("background-123-indexer")).some((e) => e.type === "Done"),
-  ).toBe(false);
-  const next = await durable.getAlarm();
-  expect(next).toBeGreaterThan(0);
+  ).toBe(true);
+  expect(await durable.getAlarm()).toBeNull();
   await host.alarm();
   expect(calls).toEqual(["fg:fg", "idx:idx"]);
+  await host.close();
+});
+
+test("alarm replays a cold settled history once and reuses its projection on later wakes", async () => {
+  const durable = storage();
+  let steps = 0;
+  const definition = actor({name: "aiko", methods: {}, components: [component<number, undefined>({
+    name: "replay-cost", initial: () => 0,
+    step: state => { steps++; return state + 1; },
+    output: () => ({view: undefined, transitions: []}),
+  })]});
+  const options = {storage: durable, actorName: "aiko", actorInstance: "test", ownsThread: (t: string) => t === "user-123", actorFor: () => definition, layersFor: () => Layer.empty};
+  let host = await createCloudflareAccountHost(options);
+  await host.seed("user-123", Array.from({length: 1000}, (_, id) => ({type: "Archived", id: String(id), at: 1})));
+  await host.close();
+  host = await createCloudflareAccountHost(options);
+  await host.alarm();
+  expect(steps).toBe(1001);
+  await host.alarm();
+  expect(steps).toBe(1001);
   await host.close();
 });
 
@@ -759,4 +853,20 @@ test("Secretary Mode uses the Cloudflare native host for persistent permissions 
   expect(deliveries).toEqual(["123:456:sure, tell me more"]);
   expect((await host.read("secretary-123")).some(e => e.type === "AikoSecretarySettled" && e.status === "delivered")).toBe(true);
   expect(await host.read("user-123")).toHaveLength(0);
+});
+
+test("actual Worker routes receive-only capabilities without constructing an owner principal",async()=>{
+ const f=attestationFixture(),calls:{owner:string;request:Request}[]=[];
+ f.env.AIKO_CHANNEL_INGRESS=async(route:string,token:string)=>route==="fixture-route"&&token==="receive-only"?{owner:"123",scope:"receive",expiresAt:Date.now()+60000}:undefined;
+ f.env.AIKO_ACCOUNTS={getByName:()=>({handle:()=>{throw Error("Broad owner admission forbidden");},receiveChannel:async(...args:[string,Request])=>{expect(args).toHaveLength(2);calls.push({owner:args[0],request:args[1]});return Response.json({status:"retained-fixture"},{status:202});}})};
+ const worker=await workerForAttestation();
+ const request=(headers:Record<string,string>={},method="POST")=>worker.fetch(new Request("https://fixture.workers.dev/v1/channel-ingress/fixture-route",{method,headers,...(method==="POST"?{body:'{"owner":"456"}'}:{})}),f.env);
+ expect((await request({authorization:`Bearer ${f.operator}`})).status).toBe(401);
+ expect((await request({"x-channel-receive-capability":"invalid"})).status).toBe(403);
+ expect((await request({"x-channel-receive-capability":"receive-only"},"GET")).status).toBe(405);
+ expect(calls).toHaveLength(0);
+ expect((await request({"x-channel-receive-capability":"receive-only"})).status).toBe(202);
+ expect(calls).toHaveLength(1);expect(calls[0]!.owner).toBe("123");expect(await calls[0]!.request.text()).toBe('{"owner":"456"}');
+ f.env.AIKO_CHANNEL_INGRESS=async()=>({owner:"456",scope:"receive",expiresAt:Date.now()+60000});
+ expect((await request({"x-channel-receive-capability":"receive-only"})).status).toBe(403);expect(calls).toHaveLength(1);
 });

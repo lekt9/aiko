@@ -345,3 +345,5 @@ export const serviceInfo = z
     mode: z.literal("vault"),
   })
   .strict();
+export { deriveZohoVaultKey, decryptZohoVaultField, type ZohoUnlockParameters } from "./zoho-vault-crypto.js";
+export * from "./database.js";

@@ -1,198 +1,103 @@
-import { mkdir, writeFile, rename } from "node:fs/promises";
+import { mkdir, writeFile, rename, mkdtemp, rm } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
-import { fileURLToPath } from "node:url";
-import { join } from "node:path";
-import { loadConfig, privateEnv } from "../apps/agent/src/config.ts";
-import { credentialDigest } from "../apps/agent/src/plane-auth.ts";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { credentialDigest, parsePlaneCredentials } from "../apps/agent/src/plane-auth.ts";
 import { redactor } from "../apps/agent/src/security.ts";
+import { buildCloudflare, agentDirectory, wranglerConfig } from "./build-aiko-cloudflare.ts";
+import { cloudflareState, cloudflareStatePath, cloudflareSecrets } from "./cloudflare-paths.ts";
 
-// Deployment never changes Telegram's webhook or stops the previous host.
+// Build needs no credentials, native state, Telegram bot, or local service.
 process.umask(0o077);
-const config = await loadConfig();
-if (
-  config.mode !== "live" ||
-  !config.modelKey ||
-  !config.botToken ||
-  !config.webhookSecret
-)
-  throw new Error("The private live configuration is incomplete");
-const path = "/home/deck/.config/unbrowse/aiko-cloudflare.env";
-let state: Record<string, string>;
-try {
-  state = await privateEnv(path);
-} catch (error) {
-  if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  await mkdir("/home/deck/.config/unbrowse", { recursive: true, mode: 0o700 });
-  state = {
-    AIKO_E2E_OWNER: "acct_cloudflare_e2e02",
-    AIKO_E2E_TOKEN: randomBytes(32).toString("base64url"),
-  };
-  await writeFile(
-    path,
-    Object.entries(state)
-      .map(([key, value]) => `${key}=${value}`)
-      .join("\n") + "\n",
-    { flag: "wx", mode: 0o600 },
-  );
+const args = process.argv.slice(2);
+if (args.some(arg => arg !== "--deploy")) throw new Error("Usage: bun scripts/deploy-aiko-cloudflare.ts [--deploy]");
+await buildCloudflare();
+if (!args.includes("--deploy")) {
+  console.log("Cloud build passed. Use --deploy to publish.");
+  process.exit(0);
 }
-if (
-  state.AIKO_E2E_OWNER !== "acct_cloudflare_e2e02" ||
-  !/^[A-Za-z0-9_-]{40,}$/.test(state.AIKO_E2E_TOKEN ?? "")
-)
-  throw new Error("Invalid deployment canary binding");
-// Retain the independent recovery key before publishing any encrypted backup.
-// Re-deployments reuse it; replacing it would orphan existing R2 snapshots.
-if (!state.AIKO_BACKUP_KEY) {
-  state.AIKO_BACKUP_KEY = randomBytes(32).toString("base64");
-  const pending = `${path}.${process.pid}.pending`;
-  await writeFile(
-    pending,
-    Object.entries(state)
-      .map(([key, value]) => `${key}=${value}`)
-      .join("\n") + "\n",
-    { flag: "wx", mode: 0o600 },
-  );
+const source = await cloudflareSecrets();
+const get = (key: string) => process.env[key] ?? source[key];
+const operator = get("AIKO_OPERATOR_TOKEN");
+if (!operator || operator.length < 32 || !get("CODEGRAFF_API_KEY"))
+  throw new Error("Set AIKO_OPERATOR_TOKEN (at least 32 characters) and CODEGRAFF_API_KEY for live deployment");
+if (!!get("AIKO_BOT_TOKEN") !== !!get("AIKO_WEBHOOK_SECRET"))
+  throw new Error("Set both Telegram credentials, or neither for web-only deployment");
+const path = cloudflareStatePath();
+const state = await cloudflareState();
+state.AIKO_E2E_OWNER ??= "acct_cloudflare_e2e02";
+state.AIKO_E2E_TOKEN ??= randomBytes(32).toString("base64url");
+state.AIKO_BACKUP_KEY ??= get("AIKO_BACKUP_KEY")!;
+if (!state.AIKO_BACKUP_KEY) throw new Error("Set AIKO_BACKUP_KEY from your recovery secret store. For a NEW deployment, generate a 32-byte base64 key once and retain it before deploying.");
+if (!/^[A-Za-z0-9_-]{40,}$/.test(state.AIKO_E2E_TOKEN) || Buffer.from(state.AIKO_BACKUP_KEY, "base64").length !== 32)
+  throw new Error("Invalid deployment canary token or backup recovery key");
+const configuredCredentials = get("AIKO_PLANE_CREDENTIALS");
+if (configuredCredentials === undefined) throw new Error("Set the complete AIKO_PLANE_CREDENTIALS list; use [] explicitly for a new deployment with only the canary account");
+const credentials = parsePlaneCredentials(configuredCredentials);
+const digest = credentialDigest(state.AIKO_E2E_TOKEN);
+const existing = credentials.find(entry => entry.digest === digest);
+if (existing && (existing.account !== state.AIKO_E2E_OWNER || !existing.scopes.includes("read") || !existing.scopes.includes("write")))
+  throw new Error("Canary credential conflicts with configured account");
+if (!existing) credentials.push({ account: state.AIKO_E2E_OWNER, digest, scopes: ["read", "write"] });
+parsePlaneCredentials(JSON.stringify(credentials));
+const secrets: Record<string, string> = {
+  AIKO_OPERATOR_TOKEN: operator,
+  CODEGRAFF_API_KEY: get("CODEGRAFF_API_KEY")!,
+  AIKO_BACKUP_KEY: state.AIKO_BACKUP_KEY,
+  AIKO_PLANE_CREDENTIALS: JSON.stringify(credentials),
+};
+for (const key of [
+  "CEREBRAS_API_KEY", "ARCADE_API_KEY", "AIKO_BOT_TOKEN", "AIKO_WEBHOOK_SECRET",
+  "AIKO_ALLOWED_USERS", "AIKO_MANAGER_KEY", "AIKO_MANAGER_PROVIDERS_JSON",
+  "AIKO_CONNECTOR_VAULT_JSON", "AIKO_CODE_MODE", "AIKO_VOICE_KEY",
+  "AIKO_CARTESIA_KEY", "AIKO_CARTESIA_VOICE_ID", "AIKO_CARTESIA_MODEL", "AIKO_PERSONA",
+]) {
+  const value = get(key);
+  if (value !== undefined) secrets[key] = value;
+}
+// Retain only deployment recovery material, never unrelated CI environment secrets.
+async function saveState() {
+  const keys = ["AIKO_E2E_OWNER", "AIKO_E2E_TOKEN", "AIKO_BACKUP_KEY", "AIKO_CLOUDFLARE_URL"];
+  const content = keys.filter(key => state[key] !== undefined).map(key => {
+    if (/[\r\n]/.test(state[key]!)) throw new Error("Invalid deployment state value");
+    return `${key}=${state[key]}`;
+  }).join("\n") + "\n";
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const pending = `${path}.${randomBytes(8).toString("hex")}.pending`;
+  await writeFile(pending, content, { flag: "wx", mode: 0o600 });
   await rename(pending, path);
 }
-if (Buffer.from(state.AIKO_BACKUP_KEY, "base64").length !== 32)
-  throw Error("Invalid backup recovery key");
-const credentials = [
-  ...(config.planeCredentials ?? []),
-  {
-    account: state.AIKO_E2E_OWNER,
-    digest: credentialDigest(state.AIKO_E2E_TOKEN),
-    scopes: ["read", "write"],
-  },
-];
-const secrets = {
-  AIKO_BACKUP_KEY: state.AIKO_BACKUP_KEY,
-  AIKO_CODE_MODE: String(config.codeMode === true),
-  ...(config.arcadeKey ? { ARCADE_API_KEY: config.arcadeKey } : {}),
-  ...(config.cerebrasKey ? { CEREBRAS_API_KEY: config.cerebrasKey } : {}),
-  AIKO_OPERATOR_TOKEN: config.operatorToken,
-  CODEGRAFF_API_KEY: config.modelKey,
-  AIKO_BOT_TOKEN: config.botToken,
-  AIKO_WEBHOOK_SECRET: config.webhookSecret,
-  AIKO_ALLOWED_USERS: [...config.allowedUsers].join(","),
-  AIKO_PLANE_CREDENTIALS: JSON.stringify(credentials),
-  ...(config.managerKey ? { AIKO_MANAGER_KEY: config.managerKey } : {}),
-  ...(config.hashicorpVault
-    ? {
-        AIKO_HASHICORP_VAULT_ADDRESS: config.hashicorpVault.address,
-        ...(config.hashicorpVault.namespace
-          ? { AIKO_HASHICORP_VAULT_NAMESPACE: config.hashicorpVault.namespace }
-          : {}),
-      }
-    : {}),
-  ...(config.onePasswordConnectUrl
-    ? { AIKO_ONEPASSWORD_CONNECT_URL: config.onePasswordConnectUrl }
-    : {}),
-  ...(config.voiceKey ? { AIKO_VOICE_KEY: config.voiceKey } : {}),
-  ...(config.cartesiaKey ? { AIKO_CARTESIA_KEY: config.cartesiaKey } : {}),
-  ...(config.cartesiaVoiceId
-    ? { AIKO_CARTESIA_VOICE_ID: config.cartesiaVoiceId }
-    : {}),
-  ...(config.cartesiaModel
-    ? { AIKO_CARTESIA_MODEL: config.cartesiaModel }
-    : {}),
-};
+// Persist the recovery key before publishing a deployment that can write backups.
+await saveState();
 const redact = redactor([...Object.values(secrets), state.AIKO_E2E_TOKEN]);
-const agentDirectory = fileURLToPath(new URL("../apps/agent/", import.meta.url));
-async function run(args: string[], input?: string) {
-  const process = Bun.spawn(args, {
-    cwd: agentDirectory,
-    stdin: input ? "pipe" : "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
+async function run(args: string[]) {
+  const child = Bun.spawn(["pnpm", "exec", "wrangler", ...args, "--config", wranglerConfig], {
+    cwd: agentDirectory, stdin: "ignore", stdout: "pipe", stderr: "pipe",
   });
-  if (input) {
-    (process.stdin as import("bun").FileSink).write(input);
-    (process.stdin as import("bun").FileSink).end();
-  }
-  const [out, err, code] = await Promise.all([
-    new Response(process.stdout).text(),
-    new Response(process.stderr).text(),
-    process.exited,
-  ]);
+  const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   console.log(redact(out + err));
   if (code !== 0) throw new Error(`Deployment step failed (${code})`);
   return out;
 }
-const runner = await Bun.build({
-  entrypoints: [join(agentDirectory, "src/sandbox-runner.ts")],
-  target: "bun",
-  external: ["@huggingface/transformers"],
-  minify: true,
-});
-if (!runner.success) throw new Error("Trusted browser runner build failed");
-await Bun.write(
-  join(agentDirectory, "assets/runner.txt"),
-  runner.outputs[0]!,
-);
-await run([
-  "pnpm",
-  "--filter",
-  "@unlock/web",
-  "exec",
-  "vite",
-  "build",
-  "--config",
-  "vite.connectors.config.ts",
-]);
-await run([
-  "pnpm",
-  "exec",
-  "tsc",
-  "--noEmit",
-  "-p",
-  "tsconfig.cloudflare.json",
-]);
-await run(["pnpm", "exec", "wrangler", "deploy", "--dry-run"]);
-if (!process.argv.includes("--deploy")) {
-  console.log(
-    "Dry run passed; use --deploy to publish. Telegram is unchanged.",
-  );
-  process.exit(0);
-}
-// This existing deployment can receive the new provider secret before role vars change.
-if (config.cerebrasKey)
-  await run(
-    ["pnpm", "exec", "wrangler", "secret", "put", "CEREBRAS_API_KEY"],
-    config.cerebrasKey,
-  );
-// First publish creates the namespaced SQLite DOs; config fails closed until secrets arrive.
-const output = await run(["pnpm", "exec", "wrangler", "deploy"]);
-await run(
-  ["pnpm", "exec", "wrangler", "secret", "bulk"],
-  JSON.stringify(secrets),
-);
-const url = output.match(
-  /https:\/\/aiko-agent\.[A-Za-z0-9_-]+\.workers\.dev/,
-)?.[0];
-if (!url) throw new Error("Deployment URL missing; verify Wrangler output");
-await writeFile(
-  path,
-  Object.entries({ ...state, AIKO_CLOUDFLARE_URL: url })
-    .map(([key, value]) => `${key}=${value}`)
-    .join("\n") + "\n",
-  { mode: 0o600 },
-);
+// Publish code and secrets in one version; no intermediate live secret update.
+const secretDir = await mkdtemp(join(tmpdir(), "aiko-deploy-"));
+let output: string;
+try {
+  const secretFile = join(secretDir, "secrets.json");
+  await writeFile(secretFile, JSON.stringify(secrets), { mode: 0o600, flag: "wx" });
+  output = await run(["deploy", "--secrets-file", secretFile]);
+} finally { await rm(secretDir, { recursive: true, force: true }); }
+const url = output.match(/https:\/\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.workers\.dev/)?.[0] ?? state.AIKO_CLOUDFLARE_URL;
+if (!url || new URL(url).protocol !== "https:") throw new Error("Set AIKO_CLOUDFLARE_URL for deployments using only a custom domain");
+state.AIKO_CLOUDFLARE_URL = url;
+await saveState();
 let ready = false;
 for (let attempt = 0; attempt < 20 && !ready; attempt++) {
-  const response = await fetch(`${url}/ready`, {
-    signal: AbortSignal.timeout(10000),
-  });
-  ready =
-    response.ok &&
-    ((await response.json()) as any).storage === "durable-object";
+  try {
+    const response = await fetch(`${url}/ready`, { signal: AbortSignal.timeout(10000) });
+    ready = response.ok && ((await response.json()) as { storage?: string }).storage === "durable-object";
+  } catch { /* Allow propagation before declaring deployment health unknown. */ }
   if (!ready) await Bun.sleep(1000);
 }
-if (!ready)
-  throw new Error("Cloudflare readiness failed; Telegram remains unchanged");
-console.log(
-  JSON.stringify({
-    deployed: url,
-    control: `${url}/control`,
-    telegramCutover: false,
-  }),
-);
+if (!ready) throw new Error("Cloudflare readiness failed; inspect the deployment before retrying");
+console.log(JSON.stringify({ deployed: url, control: `${url}/control`, telegramCutover: false }));

@@ -104,10 +104,12 @@ async function fixture() {
 
 test("submitted credentials are saved only after verified login and survive restart as Unlock ciphertext", async () => {
   const f = await fixture();
+  const attemptId=crypto.randomUUID(),challengeId=crypto.randomUUID();
+  f.dependencies.save({...f.dependencies.read(),attemptId,challenge:{id:challengeId,revision:1,expiresAt:Date.now()+60000}});
   await f.run("credentials", {
     username: "fixture-user",
     password: "fixture-password",
-    code: "fixture-otp",
+    code: "fixture-otp",attemptId,challengeId,expectedRevision:1,submissionId:crypto.randomUUID(),
   });
   expect(f.db.query("SELECT * FROM native_vault").all()).toEqual([]);
   await expect(f.run("finish")).rejects.toThrow("could not be verified");
@@ -483,7 +485,10 @@ test("password manager fills persist the reference and session without copying t
   const credentialReference = { managerId: id, reference: "op://Vault/Item/password" };
   await f.run("credentials", { username: "fixture-user", password: "external-password", credentialReference });
   // A subsequent OTP submission must retain the external-source binding.
-  await f.run("credentials", { code: "123456" });
+  const pending=f.dependencies.read();
+  const attemptId=crypto.randomUUID(),challengeId=crypto.randomUUID();
+  f.dependencies.save({...pending,attemptId,challenge:{id:challengeId,revision:1,expiresAt:Date.now()+60000}});
+  await f.run("credentials", {code:"123456",attemptId,challengeId,expectedRevision:1,submissionId:crypto.randomUUID()});
   f.authenticate();
   expect(await f.run("finish")).toMatchObject({ status: "connected", credentialsSaved: false });
   const row = f.db.query("SELECT envelope FROM native_vault WHERE id=?").get(id) as { envelope: string };

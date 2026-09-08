@@ -277,37 +277,39 @@ export class WorkflowController {
                 const workflowTurn=request.trajectory.some(e=>e.type==="ToolReturned"&&e.turn===request.identity.turn&&(e.result as any)?.kind==="workflow-receipt");
                 if(action.kind==="complete"&&workflowTurn)return {...action,output:typeof action.output==="string"?c.redact(action.output):JSON.parse(c.redact(JSON.stringify(action.output)))};
                 if(action.kind==="fail"&&workflowTurn)return {...action,error:c.redact(String(action.error)),failure:undefined};
-                if(action.kind==="call"&&workflowTurn)action={...action,text:undefined};
-                if (
-                  action.kind !== "call" ||
-                  !action.name.startsWith("workflow_")
-                )
-                  return action;
+                if((action.kind==="call"||action.kind==="calls")&&workflowTurn&&typeof action.text==="string")
+                  action={...action,text:c.redact(action.text)};
+                const seal=<C extends {callId:string;name:string;arguments:unknown}>(call:C):C=>{
+                if(!call.name.startsWith("workflow_"))return call;
                 let args: unknown = {};
                 try {
-                  const encoded = JSON.stringify(action.arguments);
+                  const encoded = JSON.stringify(call.arguments);
                   if (
                     !encoded ||
                     encoded.length > 32768 ||
                     c.redact(encoded) !== encoded
                   )
                     throw new Error();
-                  validateRouterInput(action.arguments);
-                  args = action.arguments;
+                  validateRouterInput(call.arguments);
+                  args = call.arguments;
                 } catch {}
                 const id = randomUUID();
                 c.calls.set(id, {
                   turn: request.identity.turn,
-                  name: action.name,
+                  name: call.name,
                   args,
                   expires: Date.now() + 900000,
                 });
                 return {
-                  ...action,
-                  callId: `workflow_${digest(`${request.identity.turn}:${action.callId}`).slice(0, 32)}`,
+                  ...call,
+                  callId: `workflow_${digest(`${request.identity.turn}:${call.callId}`).slice(0, 32)}`,
                   arguments: { request: id },
                   text: undefined,
                 };
+                };
+                if(action.kind==="call")return seal(action);
+                if(action.kind==="calls")return {...action,calls:action.calls.map(seal)};
+                return action;
               }),
             );
           },

@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { KeyRound, LoaderCircle, Plus, Trash2 } from "lucide-react";
+import {
+  deriveZohoVaultKey,
+  type ZohoUnlockParameters,
+} from "@unlock/protocol";
 import { MiniAppScreen } from "./mini-app-screen";
 import {
   managerKindHints,
@@ -7,9 +11,216 @@ import {
   websiteDomain,
   type ManagerProvider,
   type PasswordManager,
+  type ManagerEntry,
 } from "../lib/connectors";
 
 type EntryDraft = { label: string; website: string; reference: string };
+
+function ZohoVaultPicker({
+  manager,
+  request,
+  onChanged,
+}: {
+  manager: PasswordManager;
+  request: <T>(path: string, body?: object, signal?: AbortSignal) => Promise<T>;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [unlocking, setUnlocking] = useState(
+    manager.status === "unlock_required",
+  );
+  const [listing, setListing] = useState<ManagerEntry[]>();
+  const [nextPage, setNextPage] = useState<number>();
+  const [selected, setSelected] = useState(
+    () => new Set(manager.entries.map((entry) => entry.reference)),
+  );
+  async function run(work: () => Promise<void>) {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await work();
+    } catch (failure) {
+      setError(
+        failure instanceof Error
+          ? failure.message
+          : "Could not use your vault. Try again.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function browse(page = 1) {
+    const result = await request<{
+      entries: ManagerEntry[];
+      nextPage?: number;
+    }>("/password-managers/browse", { managerId: manager.id, page });
+    setListing((current) =>
+      page === 1
+        ? result.entries
+        : [
+            ...(current ?? []),
+            ...result.entries.filter(
+              (entry) =>
+                !current?.some((old) => old.reference === entry.reference),
+            ),
+          ],
+    );
+    setNextPage(result.nextPage);
+  }
+  return (
+    <div className="manager-vault-picker">
+      {unlocking ? (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            let master = String(
+              new FormData(event.currentTarget).get("master") ?? "",
+            );
+            event.currentTarget.reset();
+            void run(async () => {
+              try {
+                const params = await request<ZohoUnlockParameters>(
+                  "/password-managers/unlock-parameters",
+                  { managerId: manager.id },
+                );
+                let key = await deriveZohoVaultKey(master, params);
+                master = "";
+                try {
+                  await request("/password-managers/unlock", {
+                    managerId: manager.id,
+                    key,
+                  });
+                } finally {
+                  key = "";
+                }
+                setUnlocking(false);
+                onChanged();
+              } finally {
+                master = "";
+              }
+            });
+          }}
+        >
+          <div className="credential-field">
+            <label htmlFor={`vault-master-${manager.id}`}>
+              Zoho Vault master password
+            </label>
+            <input
+              id={`vault-master-${manager.id}`}
+              name="master"
+              type="password"
+              autoComplete="current-password"
+              required
+              maxLength={4096}
+              disabled={busy}
+            />
+          </div>
+          <p className="aiko-fineprint">
+            Your browser derives the vault key. Your master password stays in
+            this page; Unlock seals the key for private sign-in.
+          </p>
+          <button className="button primary" disabled={busy}>
+            {busy ? "Unlocking…" : "Unlock vault"}
+          </button>
+        </form>
+      ) : (
+        <>
+          <button
+            type="button"
+            className="text-button"
+            disabled={busy}
+            onClick={() => void run(() => browse())}
+          >
+            Choose saved logins
+          </button>
+          <button
+            type="button"
+            className="text-button"
+            disabled={busy}
+            onClick={() => setUnlocking(true)}
+          >
+            Unlock again
+          </button>
+        </>
+      )}
+      {listing && (
+        <fieldset disabled={busy}>
+          <legend>Logins Unlock can use ({selected.size}/50)</legend>
+          {!listing.length && (
+            <p className="aiko-fineprint">
+              No logins with an HTTPS website on this page.
+            </p>
+          )}
+          <ul className="manager-entries">
+            {listing.map((entry) => (
+              <li key={entry.reference}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(entry.reference)}
+                    disabled={
+                      !selected.has(entry.reference) && selected.size >= 50
+                    }
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setSelected((current) => {
+                        const next = new Set(current);
+                        if (checked) next.add(entry.reference);
+                        else next.delete(entry.reference);
+                        return next;
+                      });
+                    }}
+                  />{" "}
+                  {entry.label}{" "}
+                  <span className="manager-entry-domain">{entry.website}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          {nextPage && (
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => void run(() => browse(nextPage))}
+            >
+              Load more logins
+            </button>
+          )}
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => setSelected(new Set())}
+          >
+            Clear selection
+          </button>
+          <button
+            type="button"
+            className="button primary"
+            onClick={() =>
+              void run(async () => {
+                await request("/password-managers/select", {
+                  managerId: manager.id,
+                  references: [...selected],
+                });
+                setListing(undefined);
+                onChanged();
+              })
+            }
+          >
+            Save selected logins
+          </button>
+        </fieldset>
+      )}
+      {error && (
+        <p className="credential-error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
 
 /** Connect a password manager once; sign-ins can then be filled from it.
  * OAuth grants stay sealed server-side; only references reach the app. */
@@ -101,11 +312,16 @@ export function PasswordManagerPanel({
         kind,
         name: name.trim(),
         providerId: provider!.id,
-        entries: trimmed.map((entry) => ({
-          label: entry.label.trim(),
-          reference: entry.reference.trim(),
-          ...(entry.website.trim() ? { website: entry.website.trim() } : {}),
-        })),
+        entries:
+          kind === "zoho-vault"
+            ? []
+            : trimmed.map((entry) => ({
+                label: entry.label.trim(),
+                reference: entry.reference.trim(),
+                ...(entry.website.trim()
+                  ? { website: entry.website.trim() }
+                  : {}),
+              })),
       });
       if (result.authorizationUrl)
         setPending({ id: result.id, url: result.authorizationUrl });
@@ -145,12 +361,19 @@ export function PasswordManagerPanel({
     setFormError("");
     setResponseUrl("");
     try {
-      await request("/password-managers/callback", {
-        managerId: pending.id,
-        code: data.code,
-        state: data.state,
-      });
-      setNotice("Connected. Your saved references can now fill sign-ins.");
+      const connected = await request<PasswordManager>(
+        "/password-managers/callback",
+        {
+          managerId: pending.id,
+          code: data.code,
+          state: data.state,
+        },
+      );
+      setNotice(
+        connected.status === "unlock_required"
+          ? "Zoho authorized. Unlock your vault to choose saved logins."
+          : "Connected. Your saved references can now fill sign-ins.",
+      );
       onChanged?.();
     } catch {
       setFormError(
@@ -271,7 +494,11 @@ export function PasswordManagerPanel({
               </button>
             </div>
             {manager.status !== "connected" && (
-              <p className="aiko-fineprint">Authorization required</p>
+              <p className="aiko-fineprint">
+                {manager.status === "unlock_required"
+                  ? "Vault unlock required"
+                  : "Authorization required"}
+              </p>
             )}
             {manager.providerId ? (
               <button
@@ -297,6 +524,18 @@ export function PasswordManagerPanel({
                 </li>
               ))}
             </ul>
+            {manager.kind === "zoho-vault" &&
+              manager.status !== "authorization_required" && (
+                <ZohoVaultPicker
+                  key={`${manager.id}:${manager.status}`}
+                  manager={manager}
+                  request={request}
+                  onChanged={() => {
+                    void refresh();
+                    onChanged?.();
+                  }}
+                />
+              )}
           </article>
         ))}
         {managers && !managers.length && !loadError && (
@@ -408,67 +647,68 @@ export function PasswordManagerPanel({
             </div>
           </div>
           <p className="aiko-fineprint">{managerKindHints[kind]}</p>
-          {entries.map((entry, index) => (
-            <fieldset className="manager-entry" key={index}>
-              <legend>Saved login {index + 1}</legend>
-              <div className="credential-fields">
-                <div className="credential-field">
-                  <label htmlFor={`entry-label-${index}`}>Label</label>
-                  <input
-                    id={`entry-label-${index}`}
-                    type="text"
-                    maxLength={60}
-                    placeholder="GitHub login"
-                    value={entry.label}
-                    onChange={(event) =>
-                      setEntry(index, { label: event.target.value })
-                    }
-                  />
+          {kind !== "zoho-vault" &&
+            entries.map((entry, index) => (
+              <fieldset className="manager-entry" key={index}>
+                <legend>Saved login {index + 1}</legend>
+                <div className="credential-fields">
+                  <div className="credential-field">
+                    <label htmlFor={`entry-label-${index}`}>Label</label>
+                    <input
+                      id={`entry-label-${index}`}
+                      type="text"
+                      maxLength={60}
+                      placeholder="GitHub login"
+                      value={entry.label}
+                      onChange={(event) =>
+                        setEntry(index, { label: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="credential-field">
+                    <label htmlFor={`entry-website-${index}`}>
+                      Website (optional)
+                    </label>
+                    <input
+                      id={`entry-website-${index}`}
+                      type="text"
+                      inputMode="url"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                      maxLength={253}
+                      placeholder="github.com"
+                      value={entry.website}
+                      onChange={(event) =>
+                        setEntry(index, { website: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="credential-field">
+                    <label htmlFor={`entry-reference-${index}`}>
+                      Secret reference
+                    </label>
+                    <input
+                      id={`entry-reference-${index}`}
+                      type="text"
+                      required={index === 0}
+                      autoComplete="off"
+                      spellCheck={false}
+                      maxLength={500}
+                      placeholder={
+                        kind === "onepassword"
+                          ? "op://Vault/Item/password"
+                          : "secret reference"
+                      }
+                      value={entry.reference}
+                      onChange={(event) =>
+                        setEntry(index, { reference: event.target.value })
+                      }
+                    />
+                  </div>
                 </div>
-                <div className="credential-field">
-                  <label htmlFor={`entry-website-${index}`}>
-                    Website (optional)
-                  </label>
-                  <input
-                    id={`entry-website-${index}`}
-                    type="text"
-                    inputMode="url"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    maxLength={253}
-                    placeholder="github.com"
-                    value={entry.website}
-                    onChange={(event) =>
-                      setEntry(index, { website: event.target.value })
-                    }
-                  />
-                </div>
-                <div className="credential-field">
-                  <label htmlFor={`entry-reference-${index}`}>
-                    Secret reference
-                  </label>
-                  <input
-                    id={`entry-reference-${index}`}
-                    type="text"
-                    required={index === 0}
-                    autoComplete="off"
-                    spellCheck={false}
-                    maxLength={500}
-                    placeholder={
-                      kind === "onepassword"
-                        ? "op://Vault/Item/password"
-                        : "secret reference"
-                    }
-                    value={entry.reference}
-                    onChange={(event) =>
-                      setEntry(index, { reference: event.target.value })
-                    }
-                  />
-                </div>
-              </div>
-            </fieldset>
-          ))}
-          {entries.length < 50 && (
+              </fieldset>
+            ))}
+          {kind !== "zoho-vault" && entries.length < 50 && (
             <button
               type="button"
               className="text-button"

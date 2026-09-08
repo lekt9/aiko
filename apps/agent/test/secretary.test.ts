@@ -173,6 +173,7 @@ test("native connection + approval + owner history produce automatic replies; ap
       business_connection_id: connectionId,
       chat_id: chat,
       text: "yep, what's up?",
+      parse_mode: "HTML",
       link_preview_options: { is_disabled: true },
     },
   ]);
@@ -184,6 +185,10 @@ test("native connection + approval + owner history produce automatic replies; ap
     "hey! yep yep",
   );
   expect(f.prompts[0].tools).toHaveLength(0);
+  const request = JSON.stringify(f.prompts[0]);
+  expect(request).toContain("A genuine question within a thank-you still needs an answer");
+  expect(request).toContain("never claim to be a human");
+  expect(request).not.toContain("Use commitment_list");
   expect(
     (await f.events()).some((e) => /Approval|ControlReply/.test(e.type)),
   ).toBe(false);
@@ -424,7 +429,7 @@ test("Bun service exposes secretary API with account credentials and isolates bu
       })
     ).status,
   ).toBe(200);
-  expect(await service.host.read("user-123")).toHaveLength(0);
+  expect((await service.host.read("user-123")).filter(e => e.type === "MessageReceived")).toHaveLength(0);
   const api = (token: string, body?: object) =>
     service.fetch(
       new Request(`http://127.0.0.1/api/secretary${body ? "/contact" : ""}`, {
@@ -444,6 +449,20 @@ test("Bun service exposes secretary API with account credentials and isolates bu
   ).toBe(200);
   const state = (await (await api("fixture-owner-token")).json()) as any;
   expect(state.chats[0].enabled).toBe(true);
+  const work = (token: string, body?: object) => service.fetch(new Request("http://127.0.0.1/api/secretary/work", {
+    method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${token}` },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  }));
+  const capture = { action: "capture", id: "owner-review", operationId: "capture-owner-review",
+    outcome: "Prepare the review", successCondition: "Owner confirms the preparation", accountableParty: "You",
+    nextAction: "Gather the material", dueAt: null, timeZone: "Asia/Singapore" };
+  expect((await work("wrong-token")).status).toBe(401);
+  expect((await work("fixture-reader-token", capture)).status).toBe(403);
+  expect((await work("fixture-owner-token", capture)).status).toBe(200);
+  const ledger = await (await work("fixture-reader-token")).json() as any;
+  expect(ledger.commitments).toHaveLength(1);
+  expect(ledger.commitments[0].dueAt).toBeNull();
+  expect(ledger.commitments[0].owner).toBe(owner);
 });
 
 test("the same Telegram message cannot get a second reply through a new update ID", async () => {

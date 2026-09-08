@@ -40,6 +40,8 @@ import {
   type ActorMethods,
 } from "tardie/core/method";
 import { createThreadDriver } from "tardie/host/driver";
+import { armAt, scheduledAlarmAt } from "tardie/cloudflare/alarm";
+import { methodDeadlineCancellationDerivation } from "tardie/core/method/timeout";
 import type { HostPorts } from "tardie/host/host";
 import { createHash } from "node:crypto";
 
@@ -70,6 +72,9 @@ export interface CloudflareAccountHostOptions<R> {
   ownsThread(thread: string): boolean;
   /** Only authenticated internal deliveries with a durable parent claim may create these children. */
   allowChild?(parent: string, child: string): boolean;
+  /** Preserve independent native lineage/workspace while physically inside this account DO. */
+  allowIndependentChildren?: boolean;
+  onClose?(): Promise<void>;
   actorFor(thread: string): Actor<R> | undefined;
   layersFor(
     thread: string,
@@ -211,9 +216,9 @@ export async function createCloudflareAccountHost<R>(
     options.keyOf?.(event) ??
     options.actorFor(thread)?.keyOf?.(event);
   const arm = async () => {
-    const at = Date.now() + delay;
     const current = await storage.getAlarm();
-    if (current === null || current > at) await storage.setAlarm(at);
+    const at = armAt(current, Date.now(), delay);
+    if (at !== null) await storage.setAlarm(at);
   };
   function appendSync(thread: string, events: readonly Event[], guarded = false, inTransaction = false) {
     const operation = () => {
@@ -244,7 +249,11 @@ export async function createCloudflareAccountHost<R>(
       }
       if (appended) {
         revision++;
-        runtimes.get(thread)?.interruptions.interrupt(events);
+        const runtime = runtimes.get(thread);
+        if (runtime) {
+          runtime.settled = false;
+          runtime.interruptions.interrupt(events);
+        }
       }
       return { appended, head };
     };
@@ -371,8 +380,10 @@ export async function createCloudflareAccountHost<R>(
     const { target, source } = envelope.link;
     if (target.actor !== options.actorName || target.instance !== options.actorInstance)
       throw new Error("Delivery is outside its actor instance");
+    // Trial cancellation and witness joins trust the Router source, never a
+    // link supplied inside another actor's event payload.
     const landed =
-      envelope.event.type === "MessageReceived" || envelope.call !== undefined
+      envelope.event.type === "MessageReceived" || envelope.call !== undefined || envelope.event.type.startsWith("AikoHarnessTrial")
         ? linkedEventOf({
             link: envelope.link,
             event: envelope.event,
@@ -387,9 +398,9 @@ export async function createCloudflareAccountHost<R>(
           (e.address as ThreadAddress)?.thread === target.thread &&
           (e.address as ThreadAddress)?.actor === target.actor &&
           (e.address as ThreadAddress)?.instance === target.instance &&
-          e.depth === envelope.lineage?.depth && e.callId === envelope.event.id);
+          e.depth === envelope.lineage?.depth && (e.placement??"colocated") === (envelope.lineage?.placement??"colocated") && e.callId === envelope.event.id);
         if (!options.allowChild?.(source.thread,target.thread) || !parent || !claim || !envelope.lineage ||
-            envelope.lineage.depth !== parent.depth+1 || envelope.lineage.placement === "independent")
+            envelope.lineage.depth !== parent.depth+1 || (envelope.lineage.placement === "independent" && !options.allowIndependentChildren))
           throw new Error("Child lacks an owned durable parent claim");
         storage.sql.exec("INSERT INTO aiko_child_threads(thread,parent,root) VALUES(?,?,?)",target.thread,source.thread,rootThread(source.thread)!);
       }
@@ -410,9 +421,9 @@ export async function createCloudflareAccountHost<R>(
         if (
           !parent ||
           envelope.lineage.depth !== parent.depth + 1 ||
-          envelope.lineage.placement === "independent"
+          (envelope.lineage.placement === "independent" && !options.allowIndependentChildren)
         )
-          throw new Error("Child lineage does not match its colocated parent");
+          throw new Error("Child lineage does not match its owned parent");
       }
       const at = envelope.event.at;
       if (!creation && (typeof at !== "number" || !Number.isFinite(at)))
@@ -433,31 +444,14 @@ export async function createCloudflareAccountHost<R>(
             new Error("No provider route is mounted on this account host"),
           ),
   });
-  const sliceStop = Object.freeze({ slice: true as const });
-  let sliceBudget = Infinity;
-  let sliceThread: string | undefined;
   const driver = createThreadDriver({
     policy: { maxConcurrentThreads: 3 },
     pick: (dirty) => {
       const pool = [...dirty];
-      if (!Number.isFinite(sliceBudget))
-        return pool.find((thread) => thread.startsWith("user-")) ?? pool[0]!;
-      const next =
-        (sliceThread !== undefined &&
-        pool.includes(sliceThread) &&
-        threadNeedsWork(sliceThread)
-          ? sliceThread
-          : undefined) ??
-        pool.find((thread) => threadNeedsWork(thread) && thread.startsWith("user-")) ??
-        pool.find((thread) => threadNeedsWork(thread)) ??
-        // A settled runtime with a freshly appended event can report resting before it
-        // reconciles; refusing to pick it here strands ingress behind a +1ms alarm loop.
-        // Serving a genuinely resting actor is a cheap no-op that clears its dirty flag.
-        pool.find((thread) => thread.startsWith("user-")) ??
-        pool[0]!;
-      if (sliceThread === undefined) sliceThread = next;
-      if (next !== sliceThread) throw sliceStop;
-      return next;
+      // A foreground settlement can await a router/child method. All dirty
+      // threads must remain eligible while it waits, including control replies.
+      return pool.find((thread) => thread.startsWith("control-")) ??
+        pool.find((thread) => thread.startsWith("user-")) ?? pool[0]!;
     },
     serve: async (thread) => {
       checkThread(thread);
@@ -518,26 +512,18 @@ export async function createCloudflareAccountHost<R>(
       deadlines.push(external);
     }
     const next = deadlines.length ? Math.min(...deadlines) : undefined;
-    if (revision !== observed || !idle) return arm();
-    if (next !== undefined)
-      await storage.setAlarm(Math.max(Date.now() + 1, next));
+    const now = Date.now();
+    const at = scheduledAlarmAt(await storage.getAlarm(), idle && revision === observed, now, delay, next);
+    if (at !== null) await storage.setAlarm(Math.max(now + 1, at));
     else await storage.deleteAlarm();
     // An ingress during the awaited alarm operation must retain recovery coverage.
     if (revision !== observed) await arm();
   }
   let tail = Promise.resolve();
-  function drive(budget = Infinity) {
+  function drive() {
     const next = tail.then(async () => {
-      sliceBudget = budget;
-      sliceThread = undefined;
-      try {
-        await driver.drain();
-      } catch (error) {
-        if (error !== sliceStop) throw error;
-      }
-      if (Number.isFinite(budget) && driver.work() > 0)
-        await storage.setAlarm(Date.now() + 1);
-      else await synchronizeAlarm();
+      await driver.drain();
+      await synchronizeAlarm();
     });
     tail = next.catch(() => undefined);
     return next;
@@ -620,42 +606,41 @@ export async function createCloudflareAccountHost<R>(
         histories.length
       )
         throw new Error("Duplicate imported thread");
-      for (const history of histories) {
-        checkThread(history.thread);
-        const created = threadCreatedOf(history.events);
-        if (!created)
-          throw new Error("Imported history requires ThreadCreated first");
-        threadCreatedForDelivery(
-          [created],
-          addressOf(history.thread),
-          undefined,
-        );
-        if (created.parent) {
-          checkAddress(created.parent);
-          const parent = histories.find(
-            (h) => h.thread === created.parent!.thread,
-          );
-          const parentCreated = parent && threadCreatedOf(parent.events);
-          if (
-            !parentCreated ||
-            created.depth !== parentCreated.depth + 1 ||
-            created.placement === "independent"
-          )
-            throw new Error("Invalid imported lineage");
-        } else if (created.depth !== 0)
-          throw new Error("Invalid imported root depth");
-        const actor = options.actorFor(history.thread);
-        if (actor && !restingActor(actor, history.events))
-          throw new Error("Import requires complete, settled histories");
-        const keys = history.events
-          .map((e) => keyOf(history.thread, e))
-          .filter((key) => key !== undefined);
-        if (new Set(keys).size !== keys.length)
-          throw new Error("Duplicate imported occurrence key");
-      }
+      const indexed=new Map(histories.map(history=>[history.thread,history]));
+      const registrations=new Map<string,{parent:string;root:string}>(),visiting=new Set<string>();
+      const verify=(thread:string):string=>{
+        if(visiting.has(thread))throw new Error("Cyclic imported lineage");
+        if(registrations.has(thread))return registrations.get(thread)!.root;
+        const history=indexed.get(thread),created=history&&threadCreatedOf(history.events);
+        if(!created)throw new Error("Imported history requires ThreadCreated first");
+        const expected={actor:options.actorName,instance:options.actorInstance,thread};
+        threadCreatedForDelivery([created],expected,undefined);
+        visiting.add(thread);
+        let root=thread;
+        if(created.parent){
+          const parent=indexed.get(created.parent.thread),parentCreated=parent&&threadCreatedOf(parent.events);
+          if(!parentCreated||created.parent.actor!==options.actorName||created.parent.instance!==options.actorInstance||created.depth!==parentCreated.depth+1||(created.placement==="independent"&&!options.allowIndependentChildren))throw new Error("Invalid imported lineage");
+          root=verify(created.parent.thread);
+          if(!options.ownsThread(thread)){
+            const claim=parent!.events.find(event=>event.type==="ChildCreated"&&(event.address as ThreadAddress)?.thread===thread&&(event.address as ThreadAddress)?.actor===options.actorName&&(event.address as ThreadAddress)?.instance===options.actorInstance&&event.depth===created.depth&&(event.placement??"colocated")===(created.placement??"colocated"));
+            const brief=claim&&history!.events.find(event=>event.type==="MessageReceived"&&event.id===claim.callId);
+            const source=(brief?.link as any)?.source,target=(brief?.link as any)?.target,invocation=(brief?.call as any)?.invocation;
+            if(!options.allowChild?.(created.parent.thread,thread)||!claim||!brief||source?.thread!==created.parent.thread||source?.actor!==created.parent.actor||source?.instance!==created.parent.instance||target?.thread!==thread||target?.actor!==options.actorName||target?.instance!==options.actorInstance||invocation&&(invocation.method!=="message"||invocation.id!==claim.callId||invocation.epoch!==0))throw new Error("Imported child lacks an owned durable parent claim");
+            registrations.set(thread,{parent:created.parent.thread,root});
+          }
+        }else if(created.depth!==0||!options.ownsThread(thread))throw new Error("Invalid imported root scope");
+        visiting.delete(thread);return root;
+      };
+      for(const history of histories)verify(history.thread);
       storage.transactionSync(() => {
-        for (const history of histories)
-          appendSync(history.thread, history.events);
+        for(const [thread,lineage] of registrations)storage.sql.exec("INSERT INTO aiko_child_threads(thread,parent,root) VALUES(?,?,?)",thread,lineage.parent,lineage.root);
+        for(const history of histories){
+          const definition=options.actorFor(history.thread);
+          if(definition&&!restingActor(definition,history.events))throw new Error("Import requires complete, settled histories");
+          const keys=history.events.map(event=>keyOf(history.thread,event)).filter(key=>key!==undefined);
+          if(new Set(keys).size!==keys.length)throw new Error("Duplicate imported occurrence key");
+          appendSync(history.thread,history.events);
+        }
         sidecar?.import();
         storage.sql.exec(
           "INSERT INTO aiko_history_import VALUES(1,?,?)",
@@ -683,20 +668,34 @@ export async function createCloudflareAccountHost<R>(
       for (const thread of threadsSync()) {
         const deadline = deadlineFor(thread);
         if (deadline !== undefined && deadline <= Date.now())
-          await append(thread, [
-            alarmFired({ scheduledFor: deadline, at: Date.now() }),
-          ]);
-        else if (threadNeedsWork(thread)) driver.mark(thread);
+          await append(thread, () => {
+            // Match upstream's atomic deadline cancellation using the installed
+            // native derivation. Resolve after arm() so an interleaved completion
+            // cannot be cancelled from a stale history snapshot.
+            const at = Date.now(), currentDeadline = deadlineFor(thread);
+            if (currentDeadline === undefined || currentDeadline > at) return [];
+            const fired = alarmFired({ scheduledFor: currentDeadline, at });
+            const actor = options.actorFor(thread);
+            const cancellations = actor && "methods" in actor
+              ? methodDeadlineCancellationDerivation(actor.methods as ActorMethods)([...readSync(thread), fired])
+                .flatMap(transition => transition.kind === "intent" ? transition.events(transition.input, at) : [])
+              : [];
+            return [fired, ...cancellations];
+          });
+        // Let the incremental reconciler decide whether work is enabled. A
+        // separate restingActor replay doubles cold-start CPU for large logs.
+        else driver.mark(thread);
       }
-      // One settlement per alarm so a long native drive cannot pin the isolate
-      // and starve Telegram webhook RPCs. Remaining unrested threads re-arm immediately.
-      await drive(1);
+      // The native driver's concurrency cap bounds work; restricting an alarm
+      // to one thread deadlocks foreground calls awaiting another local actor.
+      await drive();
     },
     resting,
     work: driver.work,
     close: async () => {
       await tail;
       closed = true;
+      await options.onClose?.();
     },
   };
 }

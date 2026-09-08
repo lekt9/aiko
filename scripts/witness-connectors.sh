@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd /home/deck/work/unlock
+cd "$(dirname "$0")/.."
 export TMPDIR=/tmp
 bun test apps/agent/test
 pnpm --filter @unlock/agent typecheck

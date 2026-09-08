@@ -1,0 +1,30 @@
+name: Hosted portability
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  cloud:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.12.1'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm aiko:cloud:build
+      - run: pnpm aiko:cloud:verify
+      - run: bun test scripts/cloudflare-paths.test.ts
+      - run: pnpm --filter @unlock/agent exec bun test test/shared-browser-library.test.ts
+      - run: bun packages/browser-harness/install-agent-browser.ts
+      - run: pnpm test:browser-client
