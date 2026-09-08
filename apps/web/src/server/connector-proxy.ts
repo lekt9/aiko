@@ -1,3 +1,5 @@
+import { LOGIN_IMPORT_MAX_BYTES, LOGIN_IMPORT_SIZE_MESSAGE } from "@unlock/protocol";
+
 const actions = new Set([
   "session",
   "connect",
@@ -26,7 +28,11 @@ export async function handleConnectorRequest(
   request: Request,
 ): Promise<Response> {
   const url = new URL(request.url);
+  const loginImport = url.pathname === "/api/connectors/imports/logins";
+  const library = url.pathname === "/api/harness/library" || url.pathname.startsWith("/api/harness/library/");
+  const watches = url.pathname === "/api/channels/browser-watches" || url.pathname.startsWith("/api/channels/browser-watches/");
   const approvals = url.pathname === "/api/approvals";
+  const promises = url.pathname === "/api/promises" || url.pathname.startsWith("/api/promises/");
   const databases = url.pathname === "/api/databases" || url.pathname.startsWith("/api/databases/");
   const observedApproval = url.pathname === "/api/observed-actions/approval";
   const messages = url.pathname === "/api/messages";
@@ -34,9 +40,12 @@ export async function handleConnectorRequest(
     url.pathname === "/api/secretary" ||
     url.pathname.startsWith("/api/secretary/");
   const action = url.pathname.slice(
-    (databases ? "/api/databases" : observedApproval ? "/api/observed-actions/approval" : messages ? "/api/messages" : approvals ? "/api/approvals" : secretary ? "/api/secretary" : "/api/connectors").length,
+    (library ? "/api/harness/library" : promises ? "/api/promises" : watches ? "/api/channels/browser-watches" : databases ? "/api/databases" : observedApproval ? "/api/observed-actions/approval" : messages ? "/api/messages" : approvals ? "/api/approvals" : secretary ? "/api/secretary" : "/api/connectors").length,
   );
-  const allowed = databases ? request.method === "GET" && (action === "" || action === "/changes" || /^\/(?:artifacts|operations|approvals)\/[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,159}$/.test(action)) || request.method === "POST" && ["/query", "/commands", "/cancel"].includes(action)
+  const allowed = library ? !url.search && (request.method === "GET" && action === "" || request.method === "POST" && ["/inspect", "/revise", "/evaluate", "/promote", "/recall", "/run", "/output", "/from-request"].includes(action))
+    : promises ? !url.search && (request.method === "GET" && action === "" || request.method === "POST" && action === "/decision")
+    : watches ? !url.search && (request.method === "GET" && ["", "/discovery"].includes(action) || request.method === "POST" && ["/configure", "/control", "/sample", "/reconcile", "/acknowledge-gap", "/renew"].includes(action))
+    : databases ? request.method === "GET" && (action === "" || action === "/changes" || action === "/sources" || /^\/(?:artifacts|operations|approvals|mappings)\/[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,159}$/.test(action)) || request.method === "POST" && ["/query", "/field", "/commands", "/cancel"].includes(action)
     : observedApproval ? request.method === "POST"
     : messages ? request.method === "GET"
     :
@@ -98,9 +107,13 @@ export async function handleConnectorRequest(
           if (chunk.done) break;
           bytes += chunk.value.byteLength;
           if (
-            bytes > (databases ? 1_048_576 : secretary && action === "/history" ? 1_000_000 : 16_384)
+            bytes > (loginImport ? LOGIN_IMPORT_MAX_BYTES : library ? 262_144 : watches ? 32_768 : databases ? 1_048_576 : secretary && action === "/history" ? 1_000_000 : 16_384)
           ) {
             await reader.cancel();
+            if (loginImport) return Response.json(
+              { error: "request_too_large", message: LOGIN_IMPORT_SIZE_MESSAGE },
+              { status: 413, headers: { "cache-control": "no-store" } },
+            );
             return json("request_too_large", 413);
           }
           chunks.push(chunk.value);

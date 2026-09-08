@@ -4,7 +4,9 @@ import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm } from "nod
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { SandboxJobJournal } from "./sandbox-job-runner.ts";
 import { sandboxCanonical, sandboxDigest, type SandboxDigest, type SandboxJobReceipt } from "./sandbox-job.ts";
-import { CODING_WORKSPACE_ABI, validateCodingWorkspaceRequest, type CodingRepositoryGrant, type CodingWorkspaceRequest } from "./coding-workspace.ts";
+import { CODING_WORKSPACE_ABI, codingWorkspaceAuthorized, validateCodingWorkspaceRequest, type CodingRepositoryGrant, type CodingWorkspaceRequest } from "./coding-workspace.ts";
+import { ProjectContext } from "./project-instructions.ts";
+import { projectFilesystemSource } from "./project-instructions-node.ts";
 
 type Image = { path: string; before: string | null; beforeHash: string | null; afterHash: string | null; mode: number };
 type Edit = { id: string; turn: string; images: Image[]; undone?: boolean };
@@ -195,7 +197,7 @@ export async function runCodingWorkspace(raw: CodingWorkspaceRequest, binding: C
   const request = validateCodingWorkspaceRequest(JSON.parse(sandboxCanonical(raw)));
   if (request.owner !== binding.owner) throw Error("Coding repository owner mismatch");
   const grant = binding.repositories.find(repository => repository.id === request.command.repository);
-  if (!grant || !grant.actions.includes(request.command.action)) throw Error("Repository action has no owner grant");
+  if (!grant || !codingWorkspaceAuthorized(grant, request.command)) throw Error("Repository action has no owner grant");
   const wallMs = binding.wallMs ?? 300000;
   if (!Number.isSafeInteger(wallMs) || wallMs < 1 || wallMs > 300000) throw Error("Invalid coding deadline");
   const signal = AbortSignal.any([...(cancellation ? [cancellation] : []), AbortSignal.timeout(wallMs)]);
@@ -215,14 +217,23 @@ export async function runCodingWorkspace(raw: CodingWorkspaceRequest, binding: C
     await mkdir(binding.stateRoot, { recursive: true, mode: 0o700 });
     const stateRoot = await realpath(binding.stateRoot);
     if (stateRoot === root || childOf(root, stateRoot) || childOf(stateRoot, root)) throw Error("Repository and private coding state must be separate");
-    const id = key([binding.owner, grant.id, request.command.workspace]);
+    const id = key([binding.owner, grant.id, request.command.workspace ?? "@repository"]);
     const manifestPath = join(stateRoot, "manifests", `${id}.json`);
     release = await lock(join(stateRoot, "locks", `${id}.lock`));
     let manifest = await json<Manifest>(manifestPath);
     const args = request.command;
     const persist = () => save(manifestPath, manifest);
     let output: unknown;
-    if (args.action === "reconcile") {
+    if (args.action === "context") {
+      let contextRoot = root;
+      if (args.workspace !== undefined) {
+        if (!manifest || manifest.owner !== binding.owner || manifest.repository !== grant.id || manifest.repositoryRoot !== root || manifest.workspace !== args.workspace ||
+            manifest.path !== join(stateRoot, "worktrees", id) || manifest.state === "closed" || await realpath(manifest.path) !== manifest.path) throw Error("Project workspace is not available under this repository grant");
+        contextRoot = manifest.path;
+      }
+      const project = new ProjectContext({ owner: request.owner, thread: request.thread, source: projectFilesystemSource(contextRoot), cwd: args.cwd, redact: text => text });
+      output = args.kind === "load" ? await project.load(args.path!, signal) : await project.collect(signal);
+    } else if (args.action === "reconcile") {
       if (manifest && (manifest.version !== 2 || manifest.owner !== binding.owner || manifest.thread !== request.thread || manifest.repository !== grant.id ||
           manifest.repositoryRoot !== root || manifest.workspace !== args.workspace || manifest.path !== join(stateRoot, "worktrees", id))) throw Error("Reconciliation requires the workspace's creating native thread and repository");
       const original = await binding.journal.read(binding.owner, operationKey(args.operation));

@@ -1,7 +1,8 @@
 import { mkdir, readFile, writeFile, rename, rm } from "node:fs/promises";
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { browserDriverFactory } from "./browser-driver.ts";
+import { browserDriverFactory, type BrowserDriver } from "./browser-driver.ts";
+import { BrowserTaskGate } from "./browser-tabs.ts";
 import { installPinnedCloakBrowser, verifyCloakBrowser, CLOAK_BROWSER_VERSION } from "@unbrowse/browser-harness/install-cloakbrowser";
 import {
   replayKeys,
@@ -10,8 +11,9 @@ import {
   PrivateOperationFence,
 } from "./codegraff.ts";
 import { BrowserEventQueue } from "./browser-event-queue.ts";
-import { runSandboxJob, sandboxEnvironment } from "./sandbox-job-runner.ts";
+import { runSandboxJob, readSandboxReceipt, sandboxEnvironment } from "./sandbox-job-runner.ts";
 import { sandboxJobJournal } from "./sandbox-job-journal.ts";
+import { createSandboxDispatch } from "./sandbox-dispatch.ts";
 import { runCodeSegment } from "./code-sandbox-runner.ts";
 import { snapshotVm, readVmSnapshot, discardVmSnapshot, writeVmRestore, verifyVmRestore, publishVmRestore } from "./vm-backup.ts";
 import {
@@ -70,8 +72,9 @@ if (mode === "install") {
   const owner = JSON.parse(await readFile(`${root}/owner.json`, "utf8")).owner;
   const environmentDigest = await sandboxEnvironment(runnerDigest);
   const jobJournal = await sandboxJobJournal(db, `${root}/sandbox-receipts.key`);
+  const guardedJobs = createSandboxDispatch({owner, environmentDigest, journal:jobJournal}, {maxPending:16});
   let closing = false;
-  let busy = false;
+  const browserGate = new BrowserTaskGate();
   const active = new Map<string, AbortController>();
   const queue = new BrowserEventQueue(db);
   const batch = () => queue.batch();
@@ -146,14 +149,15 @@ if (mode === "install") {
         });
       }
       if (url.pathname === "/capture" && request.method === "POST") {
-        if (busy || !driver.screenshot)
+        if (browserGate.busy || !driver.screenshot)
           return new Response("No capture available", { status: 409 });
         const input = (await request.json()) as { id?: unknown };
         if (typeof input?.id !== "string" || !/^[a-f0-9-]{36}$/.test(input.id))
           return new Response("Invalid operation", { status: 400 });
         const cancellation = new AbortController();
+        let release: () => void;
+        try { release = browserGate.acquire(); } catch { return new Response("busy", {status:409}); }
         active.set(input.id, cancellation);
-        busy = true;
         try {
           const bytes = await driver.screenshot(cancellation.signal);
           // The gateway's file download converts bytes through UTF-8. Keep binary
@@ -171,28 +175,34 @@ if (mode === "install") {
           });
         } finally {
           active.delete(input.id);
-          busy = false;
+          release();
         }
       }
       if (url.pathname === "/request-replay" && request.method === "POST") {
-        let ownsBrowser = false;
+        let release: (() => void) | undefined;
         try {
           const { key, value } = unwrapReplay(
             await request.json(),
             replayIdentity.privateKey,
           );
+          // Body receipt can yield while /close retires the process. Recheck
+          // before registering any new guarded future or other operation.
+          if (closing) return new Response("Runner closing", {status:503});
           privateOperations.consume(value.id);
-          if (value.operation !== "code" && value.operation !== "harness-job") {
-            if (busy || !driver.requestTransport)
-              return new Response("Unavailable", { status: 409 });
-            busy = true;
-            ownsBrowser = true;
+          if (value.operation === "tab-close" && value.tab === undefined) return new Response("Task tab required", {status:400});
+          if (value.tab !== undefined && !["execute-scoped", "authorize-inspection", "inspect-current-page", "connection-page", "search", "hydrate", "send", "tab-close"].includes(value.operation))
+            return new Response("Invalid tab operation", {status:400});
+          if (!["code", "harness-job", "harness-receipt", "guarded-start", "guarded-continue"].includes(value.operation)) {
+            try { release = browserGate.acquire(value.tab); }
+            catch { return new Response("Unavailable", {status:409}); }
           }
+          const operationDriver = value.tab === undefined ? driver : await driver.forTab!(value.tab);
           const cancellation = new AbortController();
           active.set(value.id, cancellation);
           // No operation result or plaintext request is journaled. Retrying requires a new read.
           try {
-            const output =
+            const output = await (async (driver: BrowserDriver) =>
+              value.operation === "tab-close" ? driver.close().then(() => ({closed:true})) :
               value.operation === "backup"
                 ? await (async () => {
                     if(value.action === "prepare" || value.action === "pause") {
@@ -206,10 +216,28 @@ if (mode === "install") {
                     if(value.action === "discard") return discardVmSnapshot(root,value.snapshotId).then(()=>({discarded:true}));
                     throw Error("Unknown backup action");
                   })()
+              : value.operation === "watch-context" && driver.watchContext
+                ? await driver.watchContext()
+              : value.operation === "watch-configure" && driver.watchConfigure
+                ? await driver.watchConfigure(value.lease,cancellation.signal)
+              : value.operation === "watch-pause" && driver.watchPause
+                ? await driver.watchPause(value.producer,cancellation.signal,value.lifecycleRevision)
+              : value.operation === "watch-acknowledge-gap" && driver.watchAcknowledgeGap
+                ? await driver.watchAcknowledgeGap(value.producer,value.generation,value.missed,cancellation.signal)
+              : value.operation === "watch-status" && driver.watchStatus
+                ? await driver.watchStatus()
               : value.operation === "harness-job"
                 ? await runSandboxJob(value.input, {owner, environmentDigest, journal:jobJournal}, cancellation.signal)
+              : value.operation === "harness-receipt"
+                ? await readSandboxReceipt(value.input, {owner, environmentDigest, journal:jobJournal}, cancellation.signal)
+              : value.operation === "guarded-start"
+                ? await guardedJobs.start(value.input, cancellation.signal)
+              : value.operation === "guarded-continue"
+                ? await guardedJobs.continue(value.input)
               : value.operation === "code"
                 ? await runCodeSegment(value.input, cancellation.signal)
+                  : value.operation === "execute-scoped" && driver.executeScoped
+                    ? await driver.executeScoped(agentBrowserAgentActionOf(value.action,["*"]),value.policy,cancellation.signal)
                   : value.operation === "authorize-inspection" && driver.authorizeInspection
                     ? await driver.authorizeInspection(value.policy,cancellation.signal)
                   : value.operation === "inspect-current-page" && driver.inspectCurrentPage
@@ -248,11 +276,11 @@ if (mode === "install") {
                                 )
                               : (() => {
                                   throw new Error("Unknown replay operation");
-                                })();
+                                })())(operationDriver);
             return Response.json(sealReplay({ output }, key));
-          } catch {
+          } catch (error) {
             return Response.json(
-              sealReplay({ error: "browser_replay_unavailable" }, key),
+              sealReplay({ error: value.operation==="execute-scoped" && error && typeof error==="object" && "code" in error && ["private_sign_in_pending","private_sign_in_cleanup_failed","element_not_found"].includes(String(error.code)) ? String(error.code) : "browser_replay_unavailable" }, key),
             );
           } finally {
             active.delete(value.id);
@@ -260,14 +288,18 @@ if (mode === "install") {
         } catch {
           return new Response("Invalid envelope", { status: 400 });
         } finally {
-          if (ownsBrowser) busy = false;
+          release?.();
         }
       }
       if (url.pathname === "/close" && request.method === "POST") {
-        if (busy) return new Response("busy", { status: 409 });
+        if (browserGate.busy || guardedJobs.pendingCount || active.size) return new Response("busy", { status: 409 });
+        if (await driver.hasActiveWatchLease?.()) return new Response("watching", { status: 409 });
+        // Recheck busy after awaiting the lease fence; private configure can win this race.
+        if (browserGate.busy || guardedJobs.pendingCount || active.size) return new Response("busy", { status: 409 });
         closing = true;
         let cleaned = false;
         try {
+          guardedJobs.close();
           await driver.close();
           cleaned = true;
           return Response.json({ closed: true });
@@ -290,10 +322,10 @@ if (mode === "install") {
       }
       if (url.pathname !== "/execute" || request.method !== "POST")
         return new Response("Not found", { status: 404 });
-      if (busy) return new Response("busy", { status: 409 });
       const body = (await request.json()) as {
         id: string;
         action: Record<string, unknown>;
+        tab?: string;
       };
       if (!/^[a-f0-9-]{36}$/.test(body.id))
         return new Response("Invalid operation", { status: 400 });
@@ -316,14 +348,16 @@ if (mode === "install") {
       } catch {
         return new Response("Invalid action", { status: 400 });
       }
-      busy = true;
+      let release: () => void;
+      try { release = browserGate.acquire(body.tab); } catch { return new Response("busy", {status:409}); }
       const cancellation = new AbortController();
       active.set(body.id, cancellation);
       db.query("INSERT INTO operations(id,status) VALUES(?,'started')").run(
         body.id,
       );
       try {
-        const output = await driver.execute(action, cancellation.signal);
+        const operationDriver = body.tab === undefined ? driver : await driver.forTab!(body.tab);
+        const output = await operationDriver.execute(action, cancellation.signal);
         const result = JSON.stringify({ status: "completed", output });
         db.query(
           "UPDATE operations SET status='completed',result=? WHERE id=?",
@@ -348,16 +382,16 @@ if (mode === "install") {
         );
         return Response.json({ ...outcome, ...batch() });
       } finally {
-        busy = false;
+        release();
         active.delete(body.id);
       }
     },
   });
-} else if (mode === "health") {
+} else if (mode === "health" || mode === "peek-health") {
   let ready = await fetch(`${endpoint}/health`)
     .then((r) => r.ok)
     .catch(() => false);
-  if (!ready) {
+  if (!ready && mode === "health") {
     const child = Bun.spawn([process.execPath, `${root}/runner.js`, "serve"], {
       cwd: root,
       stdin: "ignore",

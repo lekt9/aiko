@@ -1,6 +1,8 @@
-import { lstatSync, mkdirSync } from "node:fs";
+import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname } from "node:path";
-import { Memory, MemoryError, type SourceRunner } from "entity-learn";
+import { MemoryError, nodeStorage, readFileSource, type Memory, type SourceRunner } from "entity-learn";
+
+import { openGuardedMemory } from "./memory-restore.ts";
 
 /** Local host only. Worker package conditions exclude this module and its filesystem imports. */
 export function openHostMemory(path: string, scope: string, adapters: Record<string, SourceRunner>): Memory {
@@ -21,5 +23,16 @@ export function openHostMemory(path: string, scope: string, adapters: Record<str
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
-  return new Memory({ path, scope, adapters });
+  const native = nodeStorage(path);
+  // The helper reads its fence inside a native write transaction. Node SQLite
+  // cannot BEGIN a second transaction; nested reads share that same snapshot.
+  let depth = 0;
+  const inside = <T>(run: () => T): T => { depth++; try { return run(); } finally { depth--; } };
+  const storage = { ...native,
+    transaction: <T>(run: () => T): T => native.transaction(() => inside(run)),
+    read: <T>(run: () => T): T => depth ? run() : native.read(() => inside(run)),
+  };
+  try {
+    return openGuardedMemory({ storage, scope, adapters, files: { canonicalPath: realpathSync, read: readFileSource } });
+  } catch (error) { storage.close(); throw error; }
 }

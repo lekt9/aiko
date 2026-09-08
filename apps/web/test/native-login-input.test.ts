@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {nativeOtpSubmission,type NativeLoginPanelView} from "../src/lib/native-login-input";
+import {nativeLoginPageError,nativeOtpSubmission,type NativeLoginPanelView} from "../src/lib/native-login-input";
 const attemptId="11111111-1111-4111-8111-111111111111",challengeId="22222222-2222-4222-8222-222222222222",submissionId="33333333-3333-4333-8333-333333333333";
 const view=():NativeLoginPanelView=>({status:"pending",domain:"example.com",fields:["code"],attemptId,challenge:{id:challengeId,revision:2,expiresAt:5000}});
 describe("private OTP binding",()=>{
@@ -18,4 +18,16 @@ describe("private OTP binding",()=>{
       expect(()=>nativeOtpSubmission(view(),current,1000,crypto.randomUUID())).toThrow("already submitted");
     }
   });
+});
+
+describe("private page failures",()=>{
+ it("rejects opaque and non-HTTPS providers from older runners",()=>{
+  for(const requiresOrigin of ["null","chrome-error://chromewebdata","http://identity.example.com","https://user:pass@identity.example.com","https://identity.example.com/path"])
+   expect(nativeLoginPageError({...view(),requiresOrigin,currentHost:"identity.example.com"})).toContain("could not be loaded");
+  expect(nativeLoginPageError({...view(),requiresOrigin:"https://identity.example.com",currentHost:"identity.example.com"})).toBeUndefined();
+ });
+ it("distinguishes a failed load from uncertain submission",()=>{
+  expect(nativeLoginPageError({...view(),pageError:"navigation_failed"})).toContain("could not be loaded");
+  expect(nativeLoginPageError({...view(),pageError:"navigation_uncertain"})).toContain("before submitting again");
+ });
 });

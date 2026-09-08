@@ -3,8 +3,8 @@
 Unlock references `../unbrowse-playground/runtime` directly as the private
 `@unbrowse/browser-harness` package. Both `package.json` and
 `apps/agent/package.json` declare a relative `link:` dependency. pnpm creates
-symlinks to that checkout; there is no vendored `packages/browser-runtime`
-implementation or copy/sync step.
+symlinks to that checkout; there is no vendored `packages/browser-harness` or
+`packages/browser-runtime` implementation and no copy/sync step.
 
 Keep the two repositories beside each other:
 
@@ -14,10 +14,17 @@ work/
   unlock/
 ```
 
-Install the shared package's dependencies with `bun install --ignore-scripts`
-inside `unbrowse-playground/runtime`, then run `pnpm install --ignore-scripts`
-in Unlock. Native installation remains explicit (`pnpm aiko:browser:init`),
-with the pinned size/SHA-256 checks. No package lifecycle downloads a browser.
+From Unlock, install each repository's locked dependencies explicitly:
+
+```sh
+(cd ../unbrowse-playground/runtime && bun install --frozen-lockfile --ignore-scripts)
+pnpm install --frozen-lockfile --ignore-scripts
+```
+
+pnpm does not install dependencies inside a `link:` target. Native installation
+remains explicit (`pnpm aiko:browser:init`), with the pinned size/SHA-256 checks.
+No package lifecycle downloads a browser. A missing sibling fails setup; there
+is no fallback to an older local copy.
 
 Unlock imports the package's low-level `/client`, `/trace`, `/network-*`,
 `/har`, `/response-semantics`, `/harness-runtime`, `/harness-artifact`, and
@@ -28,11 +35,15 @@ The full playground controller and UI are not part of Unlock's agent loop.
 The shared client supports explicit host options for rolling trace windows,
 a required filtering proxy, a fixed private screenshot path and a relocated,
 still-verified native binary. Unlock's proxy, owner/session handling, private
-login, Codegraff lifecycle and transport remain in `apps/agent/src`. The shared
-read compiler accepts an explicit trusted browser-session requirement; no
+login, Codegraff lifecycle and transport remain in `apps/agent/src`. Unlock's
+background-event listener lives in `apps/agent/src/cdp-background-listener.ts`
+and its tests in `apps/agent/test/`; its private BackgroundService capture is
+not mounted into the playground. It uses the shared public network-listener
+socket types and endpoint validator. The shared read compiler accepts an
+explicit trusted browser-session requirement; no
 session transport or approval is mounted by importing it.
 
-Editing shared source here is visible to Unlock's next import, restart or build
+Editing shared source in the playground is visible to Unlock's next import, restart or build
 without copying, publishing, committing a submodule or reinstalling the link.
 Running Bun processes keep loaded modules until restart. Codegraff receives a
 compiled runner bundle, so production still needs its Worker rebuilt/deployed;
@@ -52,7 +63,33 @@ The live probe rebuilds current shared source, checks the dedicated Codegraff
 VM's browsing/recovery/reconnect/cancellation/stop-start behavior, then stops it.
 It incurs provider usage. `shared-browser-library.test.ts` verifies actual module
 identity and paths, checks the production bundle's source graph, and rejects a
-reintroduced vendored fallback or the playground's Tardie 0.17 agent loop.
+reintroduced vendored fallback or the playground's Tardie 0.17 agent loop. It
+also injects a temporary shared-client edit into the build loader, without
+writing source or executing the result, and requires the runner digest to
+change. Both the root tooling and agent package must resolve every public
+export to the actual sibling source.
+
+On 2026-09-08, the user requested restoration of this direct link after Unlock
+had switched to a workspace snapshot. The snapshot was removed and Unlock's
+local background listener was preserved in the agent application. Older
+snapshot provenance/evaluation receipts describe historical inputs, not the
+new linked build; rerun the relevant gates before release.
+
+Restoration checks passed: frozen offline install, 35 shared-client tests,
+50 focused Unlock tests (including import identity, bundle edit propagation,
+background listener/runner and channel source), and the package's external
+install/type/import-safety test. Opt-in live browser tests were skipped. The
+broader Unlock run and both full type gates encountered failures in other
+in-progress changes; this migration is not a full-suite or deployment pass.
+
+CI checks out `unbrowse-ai/playground` beside Unlock, installs both lockfiles
+with lifecycle scripts disabled, and builds the currently checked-out source.
+For a private playground repository, configure the read-only
+`PLAYGROUND_READ_TOKEN` Actions secret; the default job token cannot normally
+read another private repository. Secret-less fork jobs cannot access that
+checkout and do not fall back to a stale copy. Updating playground alone does
+not trigger an Unlock deployment: run Unlock's build/CI against the desired
+checkout, then deploy separately with approval.
 
 The 2026-09-06 reference migration passed 536 agent tests, both repositories'
 typechecks, the shared package's external-install check, 326 playground tests,
@@ -63,6 +100,103 @@ recovery, cross-site navigation, 1280×1000 screenshot capture, stale-bundle
 rejection, same-VM restart, private handoff reconnect and settled cancellation.
 It recorded 196 structural trace events and stopped the test VM afterward.
 These are test results; production was not deployed by this migration.
+
+## Concurrent tasks and account tabs
+
+Each Unlock account keeps its existing isolated browser/profile. Native task
+threads receive host-selected tab handles through `BrowserDriver.forTab(key)`;
+the key is derived from owner + thread, not supplied in model arguments. Up to
+16 task tabs can coexist per account, within the controller's existing eight
+account limit. Same-account tabs share that account's cookies; they are **not**
+separate website-login identities. Overlapping credential scopes still fail closed.
+
+Tasks may remain active together, including while one awaits approval. The
+pinned v0.36 client has one active-tab command channel, so **selection and the
+complete native operation are queued together**. This is concurrent task access,
+not simultaneous native command execution: a long native wait delays the next
+queued operation. Codegraff also queues dispatch plus durable event flush. Models
+cannot list/switch into another task's tab. Page inspection and read replay pin
+an exact CDP target, including when several tabs have the same origin. The
+owner's screenshot surface follows the last live task tab.
+
+Closing/cancelling a task releases its tab, not the account VM or sibling tabs.
+Account retirement still waits for active tasks and preserves watch leases.
+Private sign-in and cookie changes remain account-wide custody operations;
+owner sign-in invalidates old task handles. A task requiring native sign-in
+renewal stops for the account sign-in flow rather than changing sibling custody
+implicitly. Old handles cannot silently adopt a new page. Legacy injected drivers
+without `forTab` retain account serialization.
+
+The shared client provides host-only create/list/select/close lifecycle methods.
+Ownership is the stable CDP target, never an assumed tab-strip index. In a real
+local Chromium check, v0.36 `tab close` failed installing network controls and
+lost sibling targets. Cleanup therefore pins a survivor, uses Unlock's existing
+private CDP connection for one exact `Target.closeTarget`, waits boundedly for
+absence and verifies the surviving targets. It never retries a close whose
+outcome is uncertain, and exposes no generic CDP/eval tool.
+
+Tests: `browser-tabs.test.ts`, `browser-tab-transport.test.ts`, the task-wrapper
+case in `browser-unlock-factory.test.ts`, and the playground's
+`test/agent-browser-tabs.test.ts`. Run the optional real-browser check from Unlock:
+
+```sh
+AIKO_TAB_TEST_BROWSER=/absolute/path/to/chrome bun test apps/agent/test/browser-tabs.live.test.ts
+```
+
+It uses a fresh temporary profile and public `example.com` reads, without model
+calls or personal credentials. The local smoke also received independent
+`browser-harness` confirmation that both task pages existed together. This is
+not verification of private logins or a deployed Codegraff VM. Rebuild/restart
+consumers to load the change; deployment remains a separate action.
+
+### Tab-scoped network learning
+
+The shared observer now reports immutable page ancestry separately from each
+exchange. `BrowserLearning` in the production driver requires that ancestry:
+only the selected page's completed, acknowledged requests enter its graph
+checkpoint. Same-origin siblings cannot donate dependency responses or supply
+command evidence. Call ownership is assigned during the queued native dispatch,
+not guessed when a later snapshot arrives. The original global clock/order and
+ambiguous-window checks run before the page-specific call filter. Associations
+remain low-confidence timing hints, never approval or execution authority.
+
+Page targets and CDP session IDs stay transient; the log keeps its existing
+bodyless facts, digest-bound checkpoints and sparse source-request mapping.
+Unknown ancestry, service-worker traffic and unproven top-level iframe/worker
+attachments can remain structural observations but do not become a task's
+reusable graph. Explicit nested iframe/dedicated-worker attachments inherit
+their proven page root. No URL/opener inference or new CDP command is used.
+
+Each page gets its own 120-fact navigation allowance, within the existing
+observer limits; navigating a sibling neither clears nor spends that allowance.
+After a settled observer replacement, live source IDs continue increasing and
+old page eligibility/command associations are discarded. Local index zero in a
+new listener must not refer to an earlier task's request. Accounts still share
+cookies across their tabs; this is capture isolation, not account isolation.
+
+Checks from Unlock (no model/provider tokens):
+
+```sh
+bun test apps/agent/test/browser-learning.test.ts apps/agent/test/browser-tabs.test.ts \
+  apps/agent/test/browser-tab-transport.test.ts apps/agent/test/browser-watch-driver.test.ts
+(cd ../unbrowse-playground/runtime && bun test test/cdp-network-listener.test.ts test/agent-browser-tabs.test.ts)
+AIKO_TAB_TEST_BROWSER=/absolute/path/to/chrome bun test apps/agent/test/browser-tabs.live.test.ts
+```
+
+The 2026-09-08 focused checks cover interleaved same-origin IDs, delayed responses,
+redirects, attachment ancestry, detachment/reuse rejection, secret exclusion,
+wrong-tab timing/CSRF producer rejection, independent capture allowances and
+observer replacement. The real pinned Chromium smoke additionally checks three
+successive task targets, page-specific checkpoints and disjoint command IDs,
+while confirming that closing one tab preserves its sibling. It uses public
+`example.com` pages; it does not establish private-site replay compatibility or
+simultaneous native command execution. Verification passed 65 shared and 76
+consumer focused tests (four separate opt-in skips), the real-browser smoke,
+and the external package install/type/import-safety gate. Full verification
+still encounters the unrelated `harness-session-recompute.test.ts`
+duplicate-origin type error in the playground; the latest consumer type gate
+stopped in an in-progress `native-login-render.test.ts` fixture missing required
+view fields. This is not a full-suite pass; recheck all gates before release.
 
 ## Browser included in Codegraff sandboxes
 

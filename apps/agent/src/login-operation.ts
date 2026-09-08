@@ -46,6 +46,7 @@ export interface LoginOperation extends LoginOperationRequest {
   status: LoginOperationStatus;
   sequence: number;
   probes: number;
+  challengeProbeStart?: number;
   challengeId?: string;
   challengeRevision?: number;
   challengeExpiresAt?: number;
@@ -76,6 +77,29 @@ export interface LoginOperationBinding {
 }
 const terminal = (status: LoginOperationStatus) =>
   ["connected", "expired", "cancelled"].includes(status);
+// Approval checks never submit credentials. Keep using native deadlines until
+// expiry, with slower checks while the owner completes verification.
+const nextLoginProbe = (
+  operation: LoginOperation,
+  at: number,
+  awaitingUser: boolean,
+) =>
+  Math.min(
+    operation.expiresAt,
+    operation.challengeExpiresAt ?? Infinity,
+    at +
+      (awaitingUser
+        ? Math.min(
+            30_000,
+            5_000 *
+              2 **
+                Math.min(
+                  operation.probes - (operation.challengeProbeStart ?? 0),
+                  3,
+                ),
+          )
+        : 1_000),
+  );
 const identity = (v: unknown): v is string =>
   typeof v === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,159}$/.test(v);
 export function requestLoginOperation(
@@ -165,8 +189,7 @@ export function loginOperationState(
         else if (
           !terminal(r.status) &&
           r.nextProbeAt !== undefined &&
-          Number(e.at) >= r.nextProbeAt &&
-          r.probes < 8
+          Number(e.at) >= r.nextProbeAt
         ) {
           r.status = "verifying";
           delete r.nextProbeAt;
@@ -233,8 +256,7 @@ export function loginOperationState(
         if (
           r.nextProbeAt !== undefined &&
           Number(e.at) >= r.nextProbeAt &&
-          !terminal(r.status) &&
-          r.probes < 8
+          !terminal(r.status)
         ) {
           r.status = "verifying";
           delete r.nextProbeAt;
@@ -300,10 +322,11 @@ export function loginOperationState(
         if (e.kind === "opening") r.status = "opening";
         if (e.kind === "challenge") {
           r.status = "awaiting_user";
-          delete r.nextProbeAt;
           r.challengeId = String(e.challengeId);
           r.challengeRevision = Number(e.challengeRevision);
           r.challengeExpiresAt = Number(e.expiresAt);
+          r.challengeProbeStart = r.probes;
+          r.nextProbeAt = nextLoginProbe(r, Number(e.at), true);
         }
         if (
           [
@@ -319,7 +342,8 @@ export function loginOperationState(
         e.sequence === r.sequence
       ) {
         r.status = "awaiting_user";
-        delete r.nextProbeAt;
+        r.nextProbeAt = nextLoginProbe(r, Number(e.at), true);
+        r.probes++;
       }
       if (
         e.type === "AikoLoginOperationProbeFinished" &&
@@ -327,7 +351,7 @@ export function loginOperationState(
       ) {
         r.probes++;
         r.status = "awaiting_user";
-        if (r.probes < 8) r.nextProbeAt = Number(e.at) + 1000;
+        r.nextProbeAt = nextLoginProbe(r, Number(e.at), r.probes >= 8);
       }
       if (
         e.type === "AikoLoginOperationVerified" &&
@@ -431,7 +455,7 @@ export function loginOperationComponent(binding: LoginOperationBinding) {
           .filter(
             (r) =>
               r.status === "requested" ||
-              (r.status === "verifying" && r.probes < 8) ||
+              r.status === "verifying" ||
               (r.status === "connected" && !r.continuationOutcome) ||
               (["cancelled", "expired"].includes(r.status) &&
                 !r.cleanupOutcome),

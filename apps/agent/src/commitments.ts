@@ -59,6 +59,23 @@ export const planDigest = (w: Commitment) =>
 export const executionId = (w: Commitment, action: WorkReceipt["action"]) =>
   w.id + ":" + planDigest(w) + ":" + action;
 
+/** Recovery is a projection of checked native occurrences, never a new task. */
+export function workEvaluationFailure(events: readonly Event[], w: Commitment) {
+  const last = events.findLast(e => e.owner === w.owner && e.workId === w.id && e.workVersion === w.version &&
+    (e.type === "AikoWorkEvaluationFailed" || e.type === "AikoWorkEvaluated" && e.status === "checked"));
+  return last?.type === "AikoWorkEvaluationFailed" ? last : undefined;
+}
+
+export function workRecoveryAt(events: readonly Event[], w: Commitment): number | undefined {
+  const failure = workEvaluationFailure(events, w);
+  if (!failure || failure.recoveryVersion !== 1 || failure.cause !== "source-unavailable" ||
+    !Number.isSafeInteger(failure.attempt) || Number(failure.attempt) < 1 || Number(failure.attempt) > 2 ||
+    !Number.isSafeInteger(failure.retryAt) || !Number.isSafeInteger(failure.deadlineAt) ||
+    Number(failure.retryAt) >= Number(failure.deadlineAt) ||
+    !workActive(w) || w.decision?.status === "pending") return;
+  return Number(failure.retryAt);
+}
+
 export function workEventKey(e: Event): string | undefined {
   if (
     !/^AikoWork[A-Z]/.test(e.type) ||
@@ -205,6 +222,18 @@ export function contactReplyAllowed(
   );
 }
 
+export function readyWorkNotice(events: readonly Event[], owner: string, w: Commitment): WorkNoticeRef | undefined {
+  if (w.owner !== owner || w.status !== "waiting" || !w.dependencyRefs.length || w.decision?.status === "pending") return undefined;
+  const state = workState(events, owner);
+  const readyDependencies = [...w.dependencyRefs].sort().map(workId => {
+    const dependency = state.commitments.get(workId);
+    return dependency?.status === "completed" && dependency.evidenceRefs.length > 0 && dependency.control === "active"
+      ? { workId, version: dependency.version } : undefined;
+  });
+  return readyDependencies.every((d): d is { workId: string; version: number } => d !== undefined)
+    ? { workId: w.id, version: w.version, readyDependencies } : undefined;
+}
+
 export function workNoticeCurrent(
   events: readonly Event[],
   owner: string,
@@ -225,9 +254,10 @@ export function workNoticeCurrent(
       state.contactHandling.get(
         JSON.stringify([w.plan.connectionId, w.plan.chat]),
       ) !== "owner") &&
-    (w.status === "completed" ||
+    (r.readyDependencies !== undefined ? (w.dueAt === null || now === undefined || now < w.dueAt) &&
+        workDigest(r) === workDigest(readyWorkNotice(events, owner, w) ?? null) : (w.status === "completed" ||
       (w.decision?.status === "pending" &&
-        (now === undefined || now < w.decision.expiresAt)))
+        (now === undefined || now < w.decision.expiresAt))))
   );
 }
 export function workView(
@@ -256,22 +286,14 @@ export function workView(
       !workTerminal(w) &&
       (w.decision?.status === "pending" ||
         (w.dueAt !== null && w.dueAt <= now)),
-    recoveryIssue: events.findLast(
-      (e) =>
-        e.type === "AikoWorkEvaluationFailed" &&
-        e.workId === w.id &&
-        e.workVersion === w.version,
-    )?.reason as string | undefined,
+    recoveryIssue: workEvaluationFailure(events, w)?.reason as string | undefined,
+    recoveryAt: workRecoveryAt(events, w),
     lane:
       w.status === "completed" || w.status === "cancelled"
         ? "done"
         : w.decision?.status === "pending" ||
-            events.some(
-              (e) =>
-                e.type === "AikoWorkEvaluationFailed" &&
-                e.workId === w.id &&
-                e.workVersion === w.version,
-            )
+            w.decision?.status === "expired" && w.control === "active" ||
+            (workEvaluationFailure(events, w) && workRecoveryAt(events, w) === undefined)
           ? "needs_you"
           : w.status === "waiting" ||
               w.control === "paused" ||

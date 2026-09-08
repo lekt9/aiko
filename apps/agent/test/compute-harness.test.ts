@@ -149,11 +149,15 @@ async function fixture() {
 test("compute retains complete output beyond exec tail and reopens without dispatch", async () => {
   const f = await fixture();
   expect(f.rows.size).toBe(0);
+  expect((await f.client().harnessReceipt(f.job)).status).toBe("unknown");
+  expect(f.rows.size).toBe(0); expect(f.count()).toBe(0);
   const receipt = await f.client().harnessJob(f.job);
   expect(receipt.status).toBe("completed");
   expect((receipt.output as any).text.length).toBe(80000);
   await verifySandboxReceipt(f.job, receipt);
   f.files.clear();
+  expect(await f.client().harnessReceipt(f.job)).toEqual(receipt);
+  await expect(f.client().harnessReceipt({ ...f.job, input: { changed: true } })).rejects.toThrow("identity conflict");
   expect(await f.client().harnessJob(f.job)).toEqual(receipt);
   expect(f.count()).toBe(1);
   await expect(
@@ -221,6 +225,7 @@ test("dispatcher binds both physical runtimes and preserves logical receipt iden
     };
   const receipt = await client.harnessJob(logical);
   await verifySandboxReceipt(logical, receipt);
+  expect(await client.harnessReceipt!(logical)).toEqual(receipt);
   expect(jsCalls).toBe(0);
   expect(jsProbes).toBe(0);
   jsEnvironment = await sandboxDigest("changed-runtime");

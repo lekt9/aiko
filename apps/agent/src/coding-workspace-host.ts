@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { SandboxCompute } from "./sandbox-compute.ts";
-import { CODING_WORKSPACE_ABI, codingWorkspaceEnvironment, validateCodingWorkspaceRequest, type CodingRepositoryGrant, type CodingWorkspaceBinding, type CodingWorkspaceRequest } from "./coding-workspace.ts";
+import { CODING_WORKSPACE_ABI, codingWorkspaceAuthorized, codingWorkspaceEnvironment, validateCodingWorkspaceRequest, type CodingRepositoryGrant, type CodingWorkspaceBinding, type CodingWorkspaceRequest } from "./coding-workspace.ts";
+import type { ProjectCollection, ProjectContextOptions, ProjectReadIdentity, ProjectSelection } from "./project-instructions.ts";
 import { sandboxDigest, type SandboxJobReceipt } from "./sandbox-job.ts";
 
 export interface CodingWorkspaceHostConfig {
@@ -27,17 +28,44 @@ export class CodegraffCodingWorkspace {
   binding(thread: string, redact: (text: string) => string): CodingWorkspaceBinding {
     return { owner: this.compute.owner, thread, redact,
       grantRevision: this.grantRevision,
-      authorizeRetained: command => !!command && this.config.repositories.some(grant => grant.id === command.repository && grant.actions.includes(command.action)),
+      authorizeRetained: command => !!command && codingWorkspaceAuthorized(this.config.repositories.find(grant => grant.id === command.repository), command),
       invoke: (request, signal) => {
       if (request.thread !== thread) throw Error("Coding workspace thread mismatch");
       return this.invoke(request, signal);
+    } };
+  }
+  projectContext(thread: string, redact: (text: string) => string, current?: () => CodegraffCodingWorkspace | undefined | Promise<CodegraffCodingWorkspace | undefined>): ProjectContextOptions | undefined {
+    const repositories = this.config.repositories.filter(grant => grant.actions.includes("read") && grant.actions.includes("list")).map(grant => grant.id);
+    if (!repositories.length) return undefined;
+    const owner = this.compute.owner, revision = this.grantRevision;
+    const active = async () => {
+      const workspace = current ? await current() : this;
+      return workspace?.compute.owner === owner && workspace.grantRevision === revision ? workspace : undefined;
+    };
+    const authorizeRetained = async (selection?: Partial<ProjectSelection>) => {
+      const workspace = await active();
+      return !!workspace && (selection?.repository ? [selection.repository] : repositories).every(id => workspace.config.repositories.some(grant => grant.id === id && grant.actions.includes("read") && grant.actions.includes("list")));
+    };
+    const read = async (selection: ProjectSelection, kind: "collect" | "load", path: string | undefined, identity: ProjectReadIdentity, signal: AbortSignal) => {
+      const workspace = await active();
+      if (!workspace || !await authorizeRetained(selection)) throw Error("Project repository read/list authority changed; refresh the project binding");
+      const command = { action: "context" as const, ...selection, kind, ...(path === undefined ? {} : { path }) };
+      const operationId = `project:${(await sandboxDigest([identity.callId, command])).slice(7)}`;
+      const receipt = await workspace.invoke({ version: 1, owner, thread, turn: identity.turn, operationId, command }, signal);
+      if (!await authorizeRetained(selection)) throw Error("Project repository authority changed during the read");
+      if (receipt.status !== "completed" || receipt.output === undefined) throw Error(receipt.reason ?? "Project context read did not complete");
+      return JSON.parse(redact(JSON.stringify(receipt.output)));
+    };
+    return { owner, thread, redact, remote: { repositories, grantRevision: revision, authorizeRetained,
+      collect: (selection, identity, signal) => read(selection, "collect", undefined, identity, signal) as Promise<ProjectCollection>,
+      load: (selection, path, identity, signal) => read(selection, "load", path, identity, signal),
     } };
   }
   async invoke(raw: CodingWorkspaceRequest, signal: AbortSignal): Promise<SandboxJobReceipt> {
     const request = validateCodingWorkspaceRequest(structuredClone(raw));
     if (request.owner !== this.compute.owner) throw Error("Coding workspace owner mismatch");
     const grant = this.config.repositories.find(repository => repository.id === request.command.repository);
-    if (!grant?.actions.includes(request.command.action)) throw Error("Repository action has no owner grant");
+    if (!codingWorkspaceAuthorized(grant, request.command)) throw Error("Repository action has no owner grant");
     const environmentDigest = await codingWorkspaceEnvironment(this.config.runnerBundle, this.config.bunVersion), jobDigest = await sandboxDigest(request);
     const base = { operationId: request.operationId, jobDigest, harnessDigest: await sandboxDigest(CODING_WORKSPACE_ABI), environmentDigest, requests: 0, browserStarts: 0 as const };
     let terminalOperation: { thread: string; operation: string } | undefined;

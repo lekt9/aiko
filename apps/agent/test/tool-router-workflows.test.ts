@@ -38,6 +38,15 @@ test("foreign, uncrystallized and tampered workflows are excluded from describe 
  expect((await f.call("describe",{toolIds:["workflow:FindRepositoryIssueDigest"]})).state).toBe("needs_discovery");
  expect((await f.call("discover",task)).tasks[0].tools.every((t:any)=>t.provider!=="workflow")).toBe(true);
 });
+test("changed downstream schema removes a saved procedure from native discovery", async () => {
+ const f = await fixture();
+ const before = await f.call("route", task);
+ f.catalog[0]!.inputSchema = { type: "object", properties: { query: { type: "string" } }, required: ["query"] };
+ expect(await f.call("status", { decisionId: before.id })).toMatchObject({ current: false });
+ expect((await f.call("describe", { toolIds: ["workflow:FindRepositoryIssueDigest"] })).tools).toEqual([]);
+ await f.restart();
+ expect((await f.call("discover", task)).tasks[0].tools.some((t: any) => t.id === "workflow:FindRepositoryIssueDigest")).toBe(false);
+});
 test("owned connection, catalog version and crystallization changes invalidate saved native decisions",async()=>{
  const f=await fixture();const first=await f.call("route",task);
  expect(await f.call("status",{decisionId:first.id})).toMatchObject({current:true});

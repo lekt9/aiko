@@ -29,6 +29,12 @@ Cloudflare ingress now schedules a durable alarm and that alarm awaits the nativ
 
 Telegram typing indicators expire quickly; drafts are temporary previews. Both require a final send to become a normal chat reply. The deployed subscriptions explicitly include Stop updates. See the current [draft API](https://core.telegram.org/bots/api#sendmessagedraft) and [Stop update contract](https://core.telegram.org/bots/api#stoppedmessagegeneration).
 
+## Reply formatting
+
+Verified in source on 2026-09-08: [the shared formatter](../apps/agent/src/telegram-format.ts) converts `*bold*` and `**bold**` to bold, `_italic_` to italic, and backtick code to Telegram HTML. Ordinary replies, progress edits, drafts, media captions, album captions, and secretary responses use `parse_mode: "HTML"`. Long replies use `rich_message.html` through the existing single-message delivery path.
+
+Callers supply reply text, not pre-rendered HTML. The formatter escapes literal `<`, `>`, and `&`; raw HTML remains visible text. This is a small formatting subset, not a full Markdown renderer: links, headings, and nested emphasis are not converted. Redaction in the outbound adapter happens before formatting. Keep that order when changing delivery so secrets cannot be hidden from redaction by encoded markup. [Regression coverage](../apps/agent/test/telegram-format.test.ts) checks request payloads with an injected transport; it does not prove live Telegram rendering or deployment.
+
 ## Full API coverage versus mounted capabilities
 
 The reviewed catalog also covers forwarding/copying; live locations; forum administration; memberships and join requests; inline/guest queries; managed bots; profile settings; stories; gifts and Stars; paid media; payments/subscriptions; checklists; games; sticker-set administration; Passport errors; and ephemeral messages. These names are discoverable, but most do not yet have Aiko execution adapters. Many require a group administrator role, business rights, a payment flow or a user-selected target that the private-chat owner binding does not provide.

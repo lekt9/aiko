@@ -69,6 +69,7 @@ function expression(e: Expression, read: (field: string) => Cell, typeOf: (field
 
 /** One bounded evaluation owns its cell cache; no network or durable writes occur here. */
 export function evaluateQuery(store: StructuredStore, query: Query): QueryResult {
+  if (query.mode !== undefined && query.mode !== "cached") throw new DataError("unavailable", "Transient fresh queries are unavailable; request a bounded table refresh explicitly");
   identifier(query.tableId); const table = store.table(query.tableId);
   const budget = query.maxRows ?? 2000, maxBytes = query.maxBytes ?? 262144, limit = query.limit ?? 50;
   integer(budget, 1, 10000); integer(maxBytes, 1024, 1048576); integer(limit, 1, 500);
@@ -79,7 +80,7 @@ export function evaluateQuery(store: StructuredStore, query: Query): QueryResult
   let manifestBytes = 2;
   const depend = (dependency: QueryDependency) => {
     store.assertDependency(dependency);
-    const key = canonical([dependency.tableId, dependency.tableRevision, dependency.rowId ?? null, dependency.rowRevision ?? null, dependency.columnId ?? null]);
+    const key = canonical([dependency.tableId, dependency.tableRevision, dependency.rowId ?? null, dependency.rowRevision ?? null, dependency.columnId ?? null, dependency.valueVersion ?? null]);
     const previous = dependencies.get(key);
     manifestBytes += byteLength(dependency) - (previous ? byteLength(previous) : -1);
     if (manifestBytes > maxBytes) throw new DataError("limit", "Query dependency evidence exceeds byte budget");
@@ -109,7 +110,7 @@ export function evaluateQuery(store: StructuredStore, query: Query): QueryResult
       dependency.retention = binding.retention;
       if (binding.kind === "request") dependency.source = { kind: "request", id: binding.sourceId, contractDigest: binding.contractDigest };
       else {
-        const subject = binding.subject ?? (binding.subjectField ? read(tableId, row, binding.subjectField).value : undefined);
+        const subject = binding.subject ?? (binding.subjectField ? read(tableId, row, binding.subjectField).value : row.value.entity?.subject);
         dependency.source = { kind: "entity", ...(typeof subject === "string" ? { subject } : {}), ...(binding.observationId ? { observationId: binding.observationId } : {}) };
       }
     }
@@ -139,11 +140,23 @@ export function evaluateQuery(store: StructuredStore, query: Query): QueryResult
           }
         } else {
           const saved = store.cell(tableId, row.id, columnId);
+          if (b.kind === "entity" && dependency.source?.kind === "entity" && saved && (saved.cell.sourceGeneration || saved.cell.value !== undefined)) {
+            dependency.source.observationId = saved.cell.sourceGeneration ?? "legacy-unverified";
+            dependency.source.followHead = !b.observationId;
+            depend(dependency);
+          }
+          if (saved?.cell.valueVersion !== undefined) { dependency.valueVersion = saved.cell.valueVersion; depend(dependency); }
+          for (const input of saved?.dependencies ?? []) depend(input);
           if (dependency.source?.kind === "request" && saved && (saved.cell.sourceGeneration || saved.cell.value !== undefined)) { dependency.source.generation = saved.cell.sourceGeneration ?? "legacy-unverified"; depend(dependency); }
           if (saved?.cell.lineage?.length) { dependency.lineage = saved.cell.lineage; depend(dependency); }
           if (!saved || saved.retention === "reference-only" || b.retention !== saved.retention || saved.tableRevision !== t.revision || saved.rowRevision !== row.revision) result = { state: "unavailable", freshness: "unknown", source: b.kind === "request" ? b.sourceId : b.subject ?? "entity" };
           else {
             result = { ...saved.cell };
+            try { if (!store.assertCurrentDependencies([...(saved.dependencies ?? []), ...(b.kind === "entity" ? [dependency] : [])])) result.freshness = "stale"; }
+            catch (error) {
+              if (!(error instanceof DataError) || !["conflict", "missing"].includes(error.code)) throw error;
+              result = { state: "unavailable", freshness: "unknown", error: "Input dependency changed" };
+            }
             if (saved.tableRevision !== t.revision || saved.rowRevision !== row.revision || b.kind === "request" && (result.checkedAt === undefined || result.checkedAt + b.refresh.maxAgeSeconds * 1000 < store.now())) result.freshness = "stale";
           }
         }

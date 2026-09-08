@@ -133,7 +133,9 @@ export function createHttpRecipe(
     for (const c of validateCookies(ctx.cookies, ctx.domains)) {
       if (c.partitionKey) throw new VaultError("RUNTIME_UNAVAILABLE", 409);
       const line = `${c.name}=${c.value}; Path=${c.path}; Secure${c.httpOnly ? "; HttpOnly" : ""}${c.hostOnly ? "" : `; Domain=${c.domain}`}${c.expires > 0 ? `; Expires=${new Date(c.expires * 1000).toUTCString()}` : ""}; SameSite=${c.sameSite}`;
-      await jar.setCookie(line, origin.origin + c.path);
+      const cookieUrl = new URL(`https://${c.domain.replace(/^\./, "")}`);
+      cookieUrl.pathname = c.path;
+      await jar.setCookie(line, cookieUrl.href);
     }
     const call = async (path: string, fields?: Record<string, string>) => {
       try {

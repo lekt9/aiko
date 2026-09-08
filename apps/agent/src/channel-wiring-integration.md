@@ -21,7 +21,7 @@ flowchart LR
 
 The reusable library artifact contains code, schemas, effect declarations, verifier and derived `SKILL.md`. The owner retains credentials, channel instances, source cursors, child-operation identities and pending deliveries. A familiar occurrence takes the verified execution path directly. Inference is used to acquire a missing capability or repair a failed contract.
 
-There are three readiness results to inspect: the internal port exists, the verified handler is connected, and any external provider subscription is active. `channels.bind` creates the first; `channels.connect` checks the second. External activation needs its own provider binding and receipt. A webhook uses the existing host ingress for durable admission, allowing its sandbox handler to sleep between executions.
+There are three readiness results to inspect: the internal port exists, the verified handler is connected, and any external provider subscription is active. `channels.bind` creates the first; `channels.connect` checks the second. Inspect its returned `status`: incompatible schemas, effects or handler eligibility can produce a retained `failed` connection without throwing. Require `status === "active"` before enabling the source or emitting input. External activation needs its own provider binding and receipt. A webhook uses the existing host ingress for durable admission, allowing its sandbox handler to sleep between executions.
 
 Composing code and explicitly granted registry handlers now share the scoped native package bridge. `channelRegistryContinuations` runs pinned `channel.manage` handlers through native code dispatch, retained package calls and independent final contract verification. Ordinary handlers retain the `pure`/`channel.reply` path. Sandbox filesystem or network access never grants channel-management authority.
 
@@ -33,7 +33,7 @@ Autonomous composition uses these same boundaries: reuse a compatible active con
 
 ### Returning a hook from a library harness
 
-A channel-creating harness should return a checked description of the connection it established. This is a proposed composition result convention over the existing package operations; no `channels.createHook` method or new runtime service is required. Retain the private result under the creating operation so another authorized composition can recover and use it after the creating VM exits.
+A channel-creating harness should return a checked description of the connection it established. This is a proposed composition result convention over the existing package operations; no `channels.createHook` method or new runtime service is required. Retain the private result under the creating operation so another authorized composition can recover it after the creating VM exits. Recovery of that description and permission to admit later input are separate checks.
 
 | Result evidence | What its consumer can establish |
 | --- | --- |
@@ -47,6 +47,8 @@ Resolve readiness from current retained facts when reusing the result; an old cr
 
 The existing managed bridge remains narrower than owner-native code: a `channel.manage` handler can create internal child ports through `bind`, `connect`, `emit`, `request` and `wait` within its retained grant. It cannot independently attach an arbitrary log source, publish a provider endpoint or adopt itself as a standing hook. Owner-native composition uses the separately configured source/provider/lifetime capabilities for those steps.
 
+For an enduring hook, use this handoff: **managed factory returns its checked internal connection → owner-native code records eligible standing adoption → attach and activate the source → verify readiness**. The outer composing operation owns the enduring-hook creation contract; the child factory verifies internal construction only. Parent completion fences managed task hooks, so returning handles cannot itself promise an active hook after return. The current `channels.adopt` path permits an eligible completed parent within its original deadline, requires current standing policy and resolution of uncertain custody, and records fresh watermarks. It never restores cancelled queued input. Keep the source disabled until the handoff completes. If adoption is unavailable, expose that limitation instead of presenting the internal construction witness as enduring readiness. Within a still-running task, the child can remain task-scoped and serve `channels.request` without standing adoption.
+
 Keep the execution boundaries explicit:
 
 1. The factory returns only after its requested creation contract is checked. Internal wiring and external activation have separate readiness receipts.
@@ -54,6 +56,18 @@ Keep the execution boundaries explicit:
 3. A connected downstream hook consumes the output as its own invocation, preserving causal lineage with a distinct effect identity. A waiting task uses `channels.request` or `channels.wait`; a user message additionally goes through the authorized outbox policy and provider evidence.
 
 For a known deterministic handler this path requires no new composition or inference. A future adaptive action selector may choose an eligible network or browser implementation under the same semantic contract, but must retain that choice before executing the occurrence. Today's `channels.connect` pins a concrete harness/contract pair; it does not silently follow a changing registry head.
+
+### Chaining the ports a harness creates
+
+Use a shared typed port as one connection's output and the next connection's input. It needs both `inbox` and `outbox` directions, compatible handler schemas and current grants. The wiring component records a verified output as an accepted occurrence on that port; the downstream connection claims its own invocation. Preserve causal lineage while keeping each invocation's identity distinct.
+
+For `input → handler A → intermediate → handler B → output`, configure in this order:
+
+1. Create the three scoped ports and select the verified handler/contract pairs.
+2. Connect `intermediate → handler B → output`, then `input → handler A → intermediate`.
+3. Establish the required lifetimes and output consumer, then enable the input source.
+
+This order matters because `start: "after-registration"` excludes occurrences already recorded on the input port. Replay setup with its retained identities; do not compensate for a setup gap by blindly re-emitting an input that may already have caused an effect. Reuse existing bounded backlog, hop limits and backpressure on each connection. A managed factory still needs the owner-native adoption handoff above for an enduring chain; creating a downstream hook does not extend its parent's lifetime.
 
 <a id="proposed-log-source-bindings"></a>
 
@@ -74,11 +88,12 @@ const output = await channels.bind({name:"acknowledgments",schema:"text.message.
   directions:["inbox","outbox"],authorityRef:source.receivingAuthority,operationId:"obs-out"});
 await tools.call({name:"harness_evaluate",arguments:{digest:source.handler.harness,evaluationId:"obs-check"}});
 await tools.call({name:"harness_promote",arguments:{digest:source.handler.harness,evaluationId:"obs-check",expectedGeneration:0}});
-await channels.connect({name:"observation-ack",generation:1,
+const wiring = await channels.connect({name:"observation-ack",generation:1,
   input:{channel:input.channel,generation:input.generation},accepts:source.schema,
   handler:{harness:source.handler.harness,contract:source.handler.contract},
   output:{channel:output.channel,generation:output.generation,mode:"port"},
   start:"after-registration",authorityRef:source.receivingAuthority,operationId:"obs-wire"});
+if (wiring.status !== "active") throw Error(wiring.reason ?? "Hook is not ready");
 const binding = await tools.call({name:"channel_source_bind",arguments:{
   operationId:"obs-source",source:source.kind,sourceAuthority:source.id,
   receivingAuthority:source.receivingAuthority,
@@ -101,7 +116,7 @@ The current source adapters project these existing facts:
 
 | Source | Authoritative location and code | Permitted hook input |
 | --- | --- | --- |
-| Browser tool result | Owner-bound browser trace retained in the account log; [trace decoder and redaction](../../../packages/browser-harness/src/browser-trace.ts) | Allowlisted action/category, success or unknown, bounded duration, source sequence and opaque occurrence reference. Keep URLs, selectors, page content, typed values and network bodies out of this schema. |
+| Browser tool result | Owner-bound browser trace retained in the account log; [shared trace decoder and redaction](../../../docs/shared-browser-runtime.md) | Allowlisted action/category, success or unknown, bounded duration, source sequence and opaque occurrence reference. Keep URLs, selectors, page content, typed values and network bodies out of this schema. |
 | Entity-learn change | `AikoKnowledgeChanged` in the existing owner indexer; [snapshot producer](background.ts) | Current/previous semantic root, completeness, change count, source sequence and opaque occurrence reference. The current payload contains no observation IDs or leaf evidence. A separate authorized capability must resolve any evidence needed by the handler; raw subjects, URLs and observation payloads stay outside this schema. |
 | Login observation | `AikoPrivateLoginObserved` from the [private-state allowlist](native-login-observation.ts) | Attempt/challenge identity and revision, observation kind, sequence and expiry. Passwords, OTP values, DOM and secret hashes remain in the private login path. Even an observed `verified` kind is not the trusted terminal receipt that resumes a login operation. |
 
@@ -185,7 +200,7 @@ const wiring = await channels.connect({
   authorityRef: receivingGrant, start: "after-registration",
   operationId: "task-42:connect", maxAttempts: 2
 });
-// Inspect wiring.status: active or failed; identity is not proof of readiness.
+if (wiring.status !== "active") throw Error(wiring.reason ?? "Hook is not ready");
 await channels.emit({
   port: {channel: input.channel, generation: input.generation},
   schema: "text.message.v1", value: {text: "fixture input"},
@@ -201,6 +216,8 @@ For a scoped reply use output mode `reply-to-accepted-input` with exactly the in
 Registry contract `applicability.hook` must contain `accepts`, `emits`, `inputSchema` for the typed value, and declared `effects`. The ordinary handler path restricts effects to `pure`/`channel.reply`; an explicitly granted `channel.manage` handler uses the [managed continuation path](#activated-pinned-registry-continuations) below. The top-level contract input schema validates `{value, schema, correlation}`; its output schema validates the returned typed value. The handler digest and contract digest must be registered and evaluated before connecting. Unsupported predicates/transforms require a new verified handler artifact; JavaScript closures are never accepted.
 
 ## Atomic native request/reply
+
+`channels.request` matches one directly connected handler and reply port; it does not automatically await the terminal output of an arbitrary chain. A managed parent that needs a combined result can use direct child requests and return its own independently checked outcome. A standing chain gives its final port an explicit consumer.
 
 `channels.request({operationId, send, reply})` is implemented in the same application package. `send` has exactly the `channels.emit` arguments; `reply` has exactly the `channels.wait` arguments. The two correlations must match. Both the send receiving grant and reply connection grant are checked; use opaque grant references. At delivery, `authorize(owner, reply.authorityRef, "connect", retainedWaiter)` rechecks the reply scope using the waiter's port, handler, schema and safe correlation reference. The handler/contract must already be connected by exactly one current active wiring from the send port to the reply port, covering the next source occurrence. An ambiguous connection, historical-only backfill, foreign port/generation, incompatible schema, expired initial deadline, or previously accepted source is rejected without either fact being committed.
 
@@ -238,7 +255,7 @@ The independent process-boundary fixture in `scripts/fixtures/self-composing-cha
 ## Remaining seams / unsupported features
 
 - Actor, Bun and Cloudflare mounts exist. Runtime availability still depends on the trusted registry factory, verifier set, receiving grant and sandbox transport; public ingress and provider bridging additionally require their configured bindings. Presence in source does not prove deployment or provider activation.
-- Provider-scoped public admission and the explicit text bridge are implemented in `channel-ingress.ts`; install the additive mounts below. Configured default Bun/Worker registries additionally support [generated `signed-json-v1` adapters](provider-adapter-integration.md): verified planner acquisition, private ingress arming before subscription, signed receipts, correlated sends and explicit lost-acknowledgement reconciliation. `provider_adapter_control` supplies bounded explicit polling, renewal, reconciliation, pause/resume and retirement. Acquisition does not subscribe, and binding remains pending until verified activation. The general external channel API still uses owner credentials; provider ingress uses its separate receive-only capability and signature. Automatic poll/renew scheduling, other protocols, synchronous challenges, account/mailbox creation and physical retention remain unsupported by this path. Controlled host tests do not attest live providers or deployment.
+- Provider-scoped public admission and the explicit text bridge are implemented in `channel-ingress.ts`; install the additive mounts below. Configured default Bun/Worker registries additionally support [generated `signed-json-v1` adapters](provider-adapter-integration.md): verified planner acquisition, private ingress arming before subscription, signed receipts, correlated sends and explicit lost-acknowledgement reconciliation. `provider_adapter_control` supplies bounded explicit polling, renewal, reconciliation, pause/resume and retirement. A trusted `automaticControls` policy also enables [finite polling/renewal plans through native alarms](provider-adapter-integration.md#finite-automatic-controls-native-host-no-separate-scheduler); automatic renewal additionally requires verified `signed-lease-v1` expiry evidence. Acquisition does not subscribe, and binding remains pending until verified activation. The general external channel API still uses owner credentials; provider ingress uses its separate receive-only capability and signature. Other protocols, synchronous challenges, account/mailbox creation, external standing-hook adoption and physical retention remain unsupported by this path. Controlled host tests do not attest live providers or deployment.
 - Internal ports currently support immutable schema/generation 1; wiring generations upgrade. Changing a port schema requires another explicit port binding. Cross-owner wiring fails closed; no cross-owner receiving-capability exchange is implemented.
 - External decoder-to-typed-port admission and checked typed result-to-provider outbox routing require an explicit retained bridge scope. Unbridged external inputs keep the existing actor inference wrapper. Previously selected typed input never falls back to inference when its bridge is disabled.
 - Queue bounds are conservative: unconsumed retained source/output occurrences count against backlog. There is no implicit consumer acknowledgement or retention deletion. Eight unresolved invocations may be claimed per owner; uncertain claims hold capacity until checked/rejected/exhausted.

@@ -362,18 +362,18 @@ test("disconnect queued during relay completion cannot be undone by late host st
  expect((await one.connections())[0]).toMatchObject({ status: "disconnected", relayDisconnectStatus: "confirmed" });
 });
 
-test("terminal progress publication retries durably without failing or replaying a successful form",async()=>{
+test("waiting progress publication retries durably without failing or replaying a successful form",async()=>{
  const store=new Store();let fail=true,calls=0;const delivered:any[]=[];
  const e=new ConnectorEngine({owner:"123",store,secureBrowser:{native:true,begin,control:async()=>{calls++;return {status:"pending",domain:"service.net",fields:["username","password"],expiresAt:Date.now()+600000,revision:1}}},onEvent:async event=>{
-  if(event.type==="AikoLoginProgress"&&event.stage==="complete"&&fail)throw Error("Publication temporarily unavailable");
+  if(event.type==="AikoLoginProgress"&&event.stage==="waiting"&&fail)throw Error("Publication temporarily unavailable");
   delivered.push(event);
  }});
  const connection=await e.connectBrowser("service.net");
  const response=await connectorApi(new Request("http://localhost/api/connectors/native",{method:"POST",body:JSON.stringify({connectionId:connection.id,action:"form"})}),e);
  expect(response.status).toBe(200);expect((await response.json()).fields).toEqual(["username","password"]);
  const pending=[...store.rows.values()].find(row=>row.id===connection.id).pendingEvents;
- expect(pending).toHaveLength(1);expect(pending[0]).toMatchObject({type:"AikoLoginProgress",stage:"complete"});
- const progress=await e.nativeProgress(connection.id);expect(progress.progress.at(-1)?.stage).toBe("complete");
+ expect(pending).toHaveLength(1);expect(pending[0]).toMatchObject({type:"AikoLoginProgress",stage:"waiting"});
+ const progress=await e.nativeProgress(connection.id);expect(progress.progress.at(-1)?.stage).toBe("waiting");
  fail=false;await e.flushEvents();
  expect(calls).toBe(1);expect(delivered.filter(event=>event.id===pending[0].id)).toHaveLength(1);
  expect([...store.rows.values()].find(row=>row.id===connection.id).pendingEvents).toEqual([]);
@@ -419,7 +419,7 @@ test("panel OTP binding reaches the real private handler; stale challenges and l
      if(params.expression==="location.hostname")return {result:{value:"service.net"}};
      if(params.expression==="location.origin")return {result:{value:"https://service.net"}};
      if(params.expression.includes("Object.keys(f)"))return {result:{value:["code"]}};
-     if(loseAck&&params.expression.includes("f.requestSubmit"))throw Error("lost acknowledgement");
+     if(loseAck&&params.expression.includes("HTMLFormElement.prototype.requestSubmit.call"))throw Error("lost acknowledgement");
      return {result:{value:true}};
    }
    return {};

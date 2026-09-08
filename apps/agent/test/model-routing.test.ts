@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { Infer, type InferRequest } from "tardie";
+import { CONTRIBUTION_OUTPUT } from "../src/background.ts";
 import { Database } from "bun:sqlite";
 import { ModelBudget } from "../src/model-budget.ts";
 import { ModelBudgetDenied, type ModelBudgetDenial } from "../src/model-budget-denial.ts";
@@ -30,6 +31,24 @@ const nativeRequest: InferRequest = { trajectory: [{ type: "MessageReceived", id
 
 // Uses the installed native model.ts and streaming adapter, not a mocked inference binding.
 const react = (router: ReturnType<typeof createModelRouting>, role: ModelRole, request = nativeRequest) => Effect.runPromise(Effect.gen(function* () { const infer = yield* Infer; return yield* infer.react(request); }).pipe(Effect.provide(router.layer(role))));
+
+for (const allowance of [1024, 4096]) test(`native v2 reflection caps output at the stricter allowance (${allowance}) and never retries a provider failure`, async () => {
+ let physical = 0, wire: any;
+ const vars = { ...env };
+ const router = createModelRouting({ owner: "123", env: vars,
+   config: { ...parseModelRouting(vars, { maxOutputTokens: allowance }), fallbacks: { rag: [{ provider: "codegraff", model: "glm-5.3-flash", secretEnv: "CODEGRAFF_API_KEY" }] } },
+   throttleRetryDelaysMs: [0, 0],
+   fetch: async (_, init) => { physical++; wire = JSON.parse(String(init?.body)); return Response.json({ error: "unavailable" }, { status: 503 }); },
+ });
+ const request: InferRequest = { ...nativeRequest, identity: { ...nativeRequest.identity, thread: "background-123-reflection" },
+   trajectory: [{ ...nativeRequest.trajectory[0]!, source: "background", output: { name: CONTRIBUTION_OUTPUT.name, schema: CONTRIBUTION_OUTPUT.schema } }],
+   output: { fallback: { kind: "local", name: "validate-once" } },
+ };
+ const result = await react(router, "rag", request);
+ expect(result.kind).toBe("fail"); expect(physical).toBe(1);
+ expect(wire.max_tokens).toBe(Math.min(allowance, 1500));
+ expect(request.trajectory[0]?.output).toEqual({ name: CONTRIBUTION_OUTPUT.name, schema: CONTRIBUTION_OUTPUT.schema });
+});
 
 test("queued user messages cannot split tool calls from their recorded replies", async () => {
  const request = { ...nativeRequest, trajectory: [
@@ -124,6 +143,16 @@ test("native provider retries recover transient HTTP errors and retain permanent
   if (result.kind === "fail") expect(result.error).toContain(String(status));
   expect(JSON.stringify(result)).not.toContain("private provider diagnostic");
  }
+});
+
+test("native retries recover a redacted fetch failure", async () => {
+ let calls = 0;
+ const router = createModelRouting({ owner: "123", env, config: parseModelRouting(env), throttleRetryDelaysMs: [1],
+  fetch: async () => { if (++calls === 1) throw new TypeError("fetch failed: fixture-private-token"); return streamReply(); } });
+ const result = await react(router, "rag");
+ expect(result).toMatchObject({ kind: "complete", output: "Verified answer" });
+ expect(calls).toBe(2);
+ expect(JSON.stringify(result)).not.toContain("fixture-private-token");
 });
 
 test("configured Codegraff fallbacks serve exhausted Cerebras roles with their own endpoint stamp", async () => {

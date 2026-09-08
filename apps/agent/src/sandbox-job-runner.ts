@@ -1,8 +1,8 @@
 import { executeHarnessAction, type HarnessTransportRequest, type HarnessTransportResponse } from "@unbrowse/browser-harness/harness-runtime";
 import { validateSiteHarnessArtifact } from "@unbrowse/browser-harness/harness-artifact";
-import { sendObservedHttp } from "./observed-network.ts";
+import { sendObservedHttp, type ObservedHttpOptions, type ObservedHttpDispatch } from "./observed-network.ts";
 import { runCodeSegment } from "./code-sandbox-runner.ts";
-import { sandboxCanonical, sandboxDigest, sandboxArtifactDependencies, type SandboxArtifact, type SandboxJob, type SandboxJobReceipt } from "./sandbox-job.ts";
+import { sandboxCanonical, sandboxDigest, sandboxArtifactDependencies, verifySandboxReceipt, type SandboxArtifact, type SandboxJob, type SandboxJobReceipt } from "./sandbox-job.ts";
 import type { SandboxPythonRuntime } from "./sandbox-python.ts";
 
 /** Exact running toolchain, including the vendored evaluator, is pinned by the VM runner digest. */
@@ -19,6 +19,10 @@ export interface SandboxJobBinding {
   journal: SandboxJobJournal;
   /** Trusted local/private-network transport only; never accepted from guest input. */
   send?: (request: HarnessTransportRequest, signal: AbortSignal) => Promise<HarnessTransportResponse>;
+  /** Trusted test/host dependencies of the real DNS-pinned HTTP primitive. */
+  http?: Pick<ObservedHttpOptions, "lookup" | "request">;
+  beforeNetworkDispatch?: (request: { jobDigest: SandboxJob["harnessDigest"]; requestDigest: SandboxJob["harnessDigest"];
+    stepId: string; attempt: number; prepared: ObservedHttpDispatch }, signal: AbortSignal) => Promise<void>;
   /** Explicit isolated native runtime; absent in the browser/vault runner. */
   python?: SandboxPythonRuntime;
 }
@@ -46,6 +50,17 @@ export async function buildSandboxLibrary(artifact: Extract<SandboxArtifact, {ki
   if (Buffer.byteLength(code) > 65536) throw Error("Built code exceeds QuickJS segment budget");
   return { kind: "code" as const, code };
 }
+/** Read only: missing or running custody never enters claim/execute. */
+export async function readSandboxReceipt(value: SandboxJob, binding: SandboxJobBinding, cancellation?: AbortSignal): Promise<SandboxJobReceipt> {
+  cancellation?.throwIfAborted();
+  const job = JSON.parse(sandboxCanonical(value)) as SandboxJob;
+  if (job.version !== 1 || job.owner !== binding.owner || !/^[\w:.-]{1,200}$/.test(job.operationId) || job.environmentDigest !== binding.environmentDigest) throw Error("Sandbox receipt scope mismatch");
+  const jobDigest = await sandboxDigest(job), retained = await binding.journal.read(binding.owner, job.operationId);
+  cancellation?.throwIfAborted();
+  if (retained && retained.digest !== jobDigest) throw Error("Sandbox receipt identity conflict");
+  return verifySandboxReceipt(job, retained?.receipt ?? { operationId: job.operationId, jobDigest, harnessDigest: job.harnessDigest,
+    environmentDigest: job.environmentDigest, requests: 0, browserStarts: 0, status: "unknown", reason: "no_retained_terminal_receipt" });
+}
 export async function runSandboxJob(job: SandboxJob, binding: SandboxJobBinding, cancellation?: AbortSignal): Promise<SandboxJobReceipt> {
   const encoded = sandboxCanonical(job);
   if (Buffer.byteLength(encoded) > (job.artifact.kind === "python" ? 64 * 1024 * 1024 : 1024 * 1024)) throw Error("Sandbox job exceeds byte budget");
@@ -64,6 +79,9 @@ export async function runSandboxJob(job: SandboxJob, binding: SandboxJobBinding,
   if (![wallMs,requests,outputBytes].every(Number.isInteger) || wallMs < 1 || wallMs > (python ? 300000 : 30000) || requests < 0 || requests > 96 || outputBytes < 1 || outputBytes > (python ? 2 * 1024 * 1024 : 262144)) throw Error("Invalid sandbox budget");
   if (python && (!binding.python || binding.python.lockDigest !== (job.artifact as Extract<SandboxArtifact,{kind:"python"}>).runtimeLockDigest)) throw Error("Isolated Python runtime unavailable or changed");
   if (!python && job.assets !== undefined) throw Error("Binary assets require an isolated Python job");
+  if (job.dispatch !== undefined && (job.dispatch.protocol !== "host-request/v1" || Object.keys(job.dispatch).length !== 1 ||
+    job.artifact.kind !== "network" || job.mode === "build" || !binding.beforeNetworkDispatch || binding.send))
+    throw Error("Sandbox physical dispatch authority unavailable");
   if (!Array.isArray(job.authority.origins) || !Array.isArray(job.authority.methods) || job.authority.origins.some(o => new URL(o).origin !== o) || job.authority.methods.some(m=> !["GET","HEAD","POST","PUT","PATCH","DELETE","OPTIONS"].includes(m))) throw Error("Invalid sandbox authority");
   const expectedLock = sandboxArtifactDependencies(job.artifact);
   if (sandboxCanonical(expectedLock) !== sandboxCanonical(job.dependencyLock)) throw Error("Unresolved dependency lock");
@@ -100,8 +118,13 @@ export async function runSandboxJob(job: SandboxJob, binding: SandboxJobBinding,
           signal.throwIfAborted();
           if (!job.authority.origins.includes(new URL(request.url).origin) || !job.authority.methods.includes(request.method) || base.requests >= requests) throw Error("Network authority or budget exceeded");
           base.requests++;
-          writeDispatched ||= !["GET","HEAD","OPTIONS"].includes(request.method);
-          const response = await (binding.send ?? sendObservedHttp)(request,signal);
+          const markDispatch = () => { writeDispatched ||= !["GET","HEAD","OPTIONS"].includes(request.method); };
+          const response = binding.send
+            ? (markDispatch(), await binding.send(request,signal))
+            : await sendObservedHttp(request, signal, { ...binding.http,
+              ...(job.dispatch ? { beforeDispatch: async (prepared: ObservedHttpDispatch) => {
+                await binding.beforeNetworkDispatch!({ jobDigest, requestDigest: await sandboxDigest(prepared), stepId: request.stepId, attempt: request.attempt, prepared }, signal);
+              } } : {}), onDispatch: markDispatch });
           signal.throwIfAborted();
           if (Buffer.byteLength(sandboxCanonical(response)) > outputBytes) throw Error("Response byte budget exceeded");
           terminal = response.body ?? null;

@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { boundedText } from "./security.ts";
 import { createHash } from "node:crypto";
 import { component } from "tardie/core/component";
 import { effect } from "tardie/core/effect";
@@ -11,7 +12,7 @@ import {
   canonical,
   hash as approvalHash,
 } from "./action-approval.ts";
-import type { CodeSegment, CodeSegmentResult } from "./code-sandbox-protocol.ts";
+import type { CodeSegment } from "./code-sandbox-protocol.ts";
 import { CODE_SEGMENT_MAX_BYTES } from "./code-sandbox-protocol.ts";
 
 /**
@@ -62,6 +63,9 @@ export interface PromiseRecord {
   readonly reason?: string;
   readonly resultSummary?: string;
   readonly lastHookAt?: number;
+  readonly sourceTurn?: string;
+  /** Present only for the native continuation protocol; legacy dispatches stay unknown. */
+  readonly execution?: { version: 1; turn: string };
 }
 
 type Transition = Event & {
@@ -83,7 +87,7 @@ const PROMISE_MAX_LABEL = 80;
 // silently drop every transition after the first.
 export const promiseEventKey = (e: Event): string | undefined => {
   if (e.type === "AikoPromiseTransition" && typeof e.id === "string")
-    return `aiko-promise:t:${e.id}:${(e as Transition).previous ?? 0}`;
+    return `aiko-promise:t:${JSON.stringify([e.owner, e.thread, e.id, (e as Transition).previous ?? 0])}`;
   if (e.type === "AikoPromiseTick" && typeof e.id === "string")
     return `aiko-promise:tick:${e.id}`;
   if (e.type === "AikoPromiseSettled" && typeof e.id === "string")
@@ -107,6 +111,7 @@ const labelOf = (payload: PromisePayload): string => {
 };
 
 function project(records: Map<string, PromiseRecord>, e: Transition) {
+  if (e.owner !== e.snapshot?.owner || e.thread !== e.snapshot?.thread || e.id !== e.snapshot?.id) return;
   const prior = records.get(e.id);
   if (e.previous !== (prior?.version ?? 0) || e.snapshot.version !== e.previous + 1)
     return;
@@ -118,6 +123,7 @@ function project(records: Map<string, PromiseRecord>, e: Transition) {
         when: r.when,
         hash: r.hash,
         createdAt: r.createdAt,
+        owner: r.owner, thread: r.thread, id: r.id, expiresAt: r.expiresAt, sourceTurn: r.sourceTurn ?? null,
       });
     if (frozen(prior) !== frozen(e.snapshot)) return;
   } else if (e.snapshot.state !== "pending") return;
@@ -128,7 +134,14 @@ export function promiseState(log: readonly Event[]) {
   const records = new Map<string, PromiseRecord>();
   for (const e of log)
     if (e.type === "AikoPromiseTransition") project(records, e as Transition);
-  return { records };
+  // Callers must not mutate journal-owned consent through a returned record.
+  return { records: new Map([...records].map(([id, record]) => [id, structuredClone(record)])) };
+}
+
+/** Keep outstanding work reachable even after many newer completed tasks. */
+export function promiseReviewOrder(a: PromiseRecord, b: PromiseRecord): number {
+  const active = (r: PromiseRecord) => ["pending", "resolved", "dispatching"].includes(r.state) && (r.state === "dispatching" || r.expiresAt > Date.now());
+  return Number(active(b)) - Number(active(a)) || b.createdAt - a.createdAt;
 }
 
 /** Journal event types that may resolve hooks; all are value-free lifecycle events. */
@@ -155,12 +168,6 @@ export function promiseWakeEvent(log: readonly Event[], at: number): Event | und
     : undefined;
 }
 
-export type PromiseExecutors = {
-  /** Runs on the owner's VM. Throwing a retryable error before the dispatching
-   * marker is persisted lets the effect retry (e.g. sandbox busy). */
-  harness: (segment: CodeSegment, signal?: AbortSignal) => Promise<CodeSegmentResult>;
-};
-
 /** Host-only service. Never expose resolve/markDispatching/settle as NativeTools or actor methods. */
 export function createPromises(binding: { owner: string; thread: string; now?: () => number }) {
   const { owner, thread } = binding;
@@ -169,7 +176,8 @@ export function createPromises(binding: { owner: string; thread: string; now?: (
   const read = (id: string) =>
     Effect.gen(function* () {
       const log = yield* EventLog;
-      return promiseState(yield* log.read).records.get(id);
+      const record = promiseState(yield* log.read).records.get(id);
+      return record?.owner === owner && record.thread === thread ? record : undefined;
     });
   const append = (prior: PromiseRecord | undefined, snapshot: PromiseRecord) =>
     Effect.gen(function* () {
@@ -208,9 +216,17 @@ export function createPromises(binding: { owner: string; thread: string; now?: (
     payload: PromisePayload;
     when: ResolveWhen;
     expiresInMs?: number;
+    sourceTurn?: string;
+    intentId?: string;
   }) =>
     Effect.gen(function* () {
-      const payload = input.payload as PromisePayload;
+      // Snapshot all consent material before any async read/hash. No caller aliases.
+      let payload: PromisePayload;
+      let when: ResolveWhen;
+      try {
+        payload = JSON.parse(canonical(input.payload));
+        when = JSON.parse(canonical(input.when));
+      } catch { return yield* Effect.fail(new ApprovalError("Invalid promise payload or condition")); }
       const code = String(payload?.segment?.code ?? "");
       if (
         payload?.kind !== "harness" ||
@@ -218,10 +234,27 @@ export function createPromises(binding: { owner: string; thread: string; now?: (
         typeof payload.segment.code !== "string" ||
         !code.trim() ||
         code.length > PROMISE_MAX_CODE_CHARS ||
-        Buffer.byteLength(code, "utf8") > CODE_SEGMENT_MAX_BYTES
+        Buffer.byteLength(canonical(payload), "utf8") > CODE_SEGMENT_MAX_BYTES ||
+        !payload.segment.values || typeof payload.segment.values !== "object" || Array.isArray(payload.segment.values) ||
+        !payload.segment.packages || typeof payload.segment.packages !== "object" || Array.isArray(payload.segment.packages) ||
+        Object.keys(payload.segment.values).some(key => !/^[A-Za-z_$][\w$]*$/.test(key) || ["__proto__", "constructor", "prototype"].includes(key)) ||
+        Object.entries(payload.segment.packages).some(([key, methods]) => !/^[A-Za-z_$][\w$]*$/.test(key) ||
+          ["__proto__", "constructor", "prototype"].includes(key) || key in payload.segment.values ||
+          !Array.isArray(methods) || methods.length === 0 || methods.some(method => typeof method !== "string" || !/^[A-Za-z_$][\w$]*$/.test(method) || ["__proto__", "constructor", "prototype"].includes(method))) ||
+        !Number.isSafeInteger(payload.segment.ambient?.at) || typeof payload.segment.ambient?.seed !== "string" ||
+        !Array.isArray(payload.segment.history) || payload.segment.history.length !== 0 ||
+        payload.segment.issued !== undefined || payload.segment.scheduling !== undefined
       )
         return yield* Effect.fail(new ApprovalError("Invalid promise payload"));
-      const when = input.when as ResolveWhen;
+      const intentId = input.intentId;
+      if (intentId) {
+        const existing = yield* get(intentId);
+        if (existing) {
+          if (canonical(existing.payload) !== canonical(payload) || canonical(existing.when) !== canonical(when) || existing.sourceTurn !== input.sourceTurn)
+            return yield* Effect.fail(new ApprovalError("Promise invocation already bound to another payload"));
+          return existing;
+        }
+      }
       if (
         when?.kind === "approval" ||
         (when?.kind === "at" &&
@@ -238,11 +271,11 @@ export function createPromises(binding: { owner: string; thread: string; now?: (
       const log = yield* EventLog;
       const state = promiseState(yield* log.read);
       if (
-        [...state.records.values()].filter((r) => r.state === "pending").length >=
+        [...state.records.values()].filter((r) => r.owner === owner && r.thread === thread && r.state === "pending" && r.expiresAt > now()).length >=
         MAX_PENDING_PROMISES
       )
         return yield* Effect.fail(new ApprovalError("Too many pending promises"));
-      const id = `promise-${createHash("sha256")
+      const id = intentId ?? `promise-${createHash("sha256")
         .update(`${owner}:${thread}:${now()}:${crypto.randomUUID()}`)
         .digest("hex")
         .slice(0, 24)}`;
@@ -253,6 +286,7 @@ export function createPromises(binding: { owner: string; thread: string; now?: (
         payload: JSON.parse(JSON.stringify(payload)) as PromisePayload,
         when: JSON.parse(JSON.stringify(when)) as ResolveWhen,
         label: labelOf(payload),
+        ...(input.sourceTurn ? { sourceTurn: input.sourceTurn } : {}),
         createdAt: now(),
         expiresAt: now() + ttl,
       };
@@ -264,7 +298,8 @@ export function createPromises(binding: { owner: string; thread: string; now?: (
         token: crypto.randomUUID(),
       } as PromiseRecord;
       const result = yield* append(undefined, record);
-      if (!result.won) return yield* Effect.fail(new ApprovalError("Promise conflict"));
+      if (!result.won && (canonical(result.current?.payload) !== canonical(payload) || canonical(result.current?.when) !== canonical(when) || result.current?.sourceTurn !== input.sourceTurn))
+        return yield* Effect.fail(new ApprovalError("Promise conflict"));
       return result.current;
     });
   /** Host-side resolution. Hook events must match the record's own condition. */
@@ -286,7 +321,7 @@ export function createPromises(binding: { owner: string; thread: string; now?: (
       if (
         !cooled ||
         (source.kind === "human" && current.when.kind !== "approval") ||
-        (source.kind === "time" && current.when.kind !== "at") ||
+        (source.kind === "time" && (current.when.kind !== "at" || current.when.at > now())) ||
         (source.kind === "hook" && !hookResolves(current.when, source.event))
       )
         return current;
@@ -325,7 +360,7 @@ export function createPromises(binding: { owner: string; thread: string; now?: (
     Effect.gen(function* () {
       const current = yield* get(id);
       if (!current || current.state !== "resolved") return { current, won: false };
-      const result = yield* append(current, next(current, { state: "dispatching" }));
+      const result = yield* append(current, next(current, { state: "dispatching", execution: { version: 1, turn: promiseTurn(id) } }));
       return { current: result.current, won: result.won && result.current.state === "dispatching" };
     });
   const settle = (
@@ -354,7 +389,8 @@ export function createPromises(binding: { owner: string; thread: string; now?: (
       const log = yield* EventLog;
       const records = promiseState(yield* log.read).records;
       return [...records.values()]
-        .sort((a, b) => b.createdAt - a.createdAt)
+        .filter(r => r.owner === owner && r.thread === thread)
+        .sort(promiseReviewOrder)
         .slice(0, 32)
         .map((r) => ({
           id: r.id,
@@ -375,13 +411,13 @@ export function createPromises(binding: { owner: string; thread: string; now?: (
     ) => Effect.Effect<{ owner: string; subject: string; authenticated: true } | undefined, unknown>,
   ) =>
     Effect.gen(function* () {
-      if (request.method !== "POST") return new Response(null, { status: 405 });
+      if (request.method !== "POST") return Response.json({ error: "method_not_allowed" }, { status: 405, headers: { "Cache-Control": "no-store" } });
       const human = yield* authenticate(request).pipe(
         Effect.catchCause(() => Effect.succeed(undefined)),
       );
       if (!human || human.authenticated !== true || human.owner !== owner)
-        return new Response(null, { status: 403 });
-      const decoded = yield* Effect.tryPromise<unknown>(() => request.json()).pipe(
+        return Response.json({ error: "authenticated_owner_required" }, { status: 403, headers: { "Cache-Control": "no-store" } });
+      const decoded = yield* Effect.tryPromise<unknown>(async () => JSON.parse(await boundedText(new Response(request.body), 2048))).pipe(
         Effect.catch(() => Effect.succeed(null)),
       );
       const body = decoded as Record<string, unknown> | null;
@@ -389,16 +425,28 @@ export function createPromises(binding: { owner: string; thread: string; now?: (
         !body ||
         typeof body !== "object" ||
         Array.isArray(body) ||
-        Object.keys(body).some((k) => !["id", "decision"].includes(k)) ||
+        Object.keys(body).sort().join(",") !== "decision,hash,id" ||
         typeof body.id !== "string" ||
-        !["approve", "reject"].includes(String(body.decision))
+        typeof body.hash !== "string" ||
+        !["approve", "reject", "cancel"].includes(String(body.decision))
       )
-        return new Response(null, { status: 400 });
-      const outcome =
+        return Response.json({ error: "invalid_decision" }, { status: 400, headers: { "Cache-Control": "no-store" } });
+      const current = yield* get(body.id);
+      if (!current) return Response.json({ error: "promise_not_found" }, { status: 404 });
+      if (current.hash !== body.hash) return Response.json({ error: "promise_changed" }, { status: 409 });
+      if (body.decision !== "cancel" && current.when.kind !== "approval")
+        return Response.json({ error: "approval_not_required" }, { status: 409 });
+      const replay = body.decision === "approve" && ["resolved", "dispatching", "settled", "unknown"].includes(current.state) ||
+        body.decision === "reject" && current.state === "rejected" || body.decision === "cancel" && current.state === "cancelled";
+      if (!replay && (body.decision === "cancel" ? !["pending", "resolved"].includes(current.state) : current.state !== "pending"))
+        return Response.json({ error: "promise_not_pending", promise: current }, { status: 409 });
+      const outcome = body.decision === "cancel" ? yield* cancel(body.id, "owner") :
         String(body.decision) === "approve"
           ? yield* resolve(body.id, { kind: "human", subject: human.subject })
           : yield* reject(body.id, human.subject);
-      return Response.json(outcome, { headers: { "Cache-Control": "no-store" } });
+      const accepted = body.decision === "approve" ? ["resolved", "dispatching", "settled", "unknown"].includes(outcome?.state ?? "") :
+        outcome?.state === (body.decision === "cancel" ? "cancelled" : "rejected");
+      return Response.json({ promise: outcome, ...(!accepted ? { error: "promise_decision_conflict" } : {}) }, { status: accepted ? 200 : 409, headers: { "Cache-Control": "no-store" } });
     });
   return { prepare, resolve, reject, cancel, get, list, markDispatching, settle, handleDecision };
 }
@@ -430,10 +478,8 @@ function normalizeWhen(raw: unknown): ResolveWhen | undefined {
     return {
       kind: "hook",
       eventType: w.eventType as PromiseHookEvent,
-      cooldownMs:
-        w.cooldownSeconds === undefined || w.cooldownSeconds === null
-          ? undefined
-          : (w.cooldownSeconds as number) * 1000,
+      ...(w.cooldownSeconds === undefined || w.cooldownSeconds === null
+        ? {} : { cooldownMs: (w.cooldownSeconds as number) * 1000 }),
     };
   return undefined;
 }
@@ -519,7 +565,7 @@ export function promiseTools(
       Effect.gen(function* () {
         const self = yield* Self,
           log = yield* EventLog;
-        if (self.thread !== `user-${owner}`)
+        if (self.actor !== "aiko" || self.thread !== `user-${owner}`)
           return { status: "rejected", reason: "owner_scope" };
         let a = raw as Record<string, any>;
         if (
@@ -546,8 +592,11 @@ export function promiseTools(
           if (typeof a.id !== "string" || !/^promise-[a-f0-9]{24}$/.test(a.id))
             return { status: "rejected", reason: "invalid_input" };
           const cancelled = yield* service.cancel(a.id, "model");
-          return { status: "cancelled", state: cancelled?.state ?? "unknown" };
+          return { status: cancelled?.state === "cancelled" ? "cancelled" : "rejected", state: cancelled?.state ?? "missing", reason: cancelled?.state === "cancelled" ? undefined : "Only pending work can be cancelled; dispatched work may still complete." };
         }
+        const invocation = (yield* log.read).find(e => ["ToolCalled", "PackageCalled"].includes(e.type) && e.callId === ctx.callId && e.turn === ctx.turn);
+        const intentId = `promise-${createHash("sha256").update(JSON.stringify([owner, self.thread, ctx.turn, ctx.callId])).digest("hex").slice(0, 24)}`;
+        const existing = yield* service.get(intentId);
         const when = normalizeWhen(a.when);
         const packages = a.packages as Record<string, string[]> | undefined;
         const values = a.values as Record<string, unknown> | undefined;
@@ -564,7 +613,7 @@ export function promiseTools(
               values && typeof values === "object" && !Array.isArray(values)
                 ? values
                 : {},
-            ambient: { at: Date.now(), seed: crypto.randomUUID() },
+            ambient: existing?.payload.segment.ambient ?? { at: Number(invocation?.at ?? Date.now()), seed: intentId },
             history: [],
           },
         };
@@ -575,6 +624,8 @@ export function promiseTools(
           .prepare({
             payload,
             when: when as ResolveWhen,
+            sourceTurn: ctx.turn,
+            intentId,
             expiresInMs: a.expiresInHours === undefined ? undefined : a.expiresInHours * 3600_000,
           })
           .pipe(Effect.catch((error) => Effect.succeed(String((error as Error).message))));
@@ -588,7 +639,7 @@ export function promiseTools(
           label: prepared.label,
           decisionHint:
             prepared.when.kind === "approval"
-              ? "The owner approves from the mini app promises screen; execution is automatic after approval."
+              ? "Open Approvals in the mini app and review Promises. Approving queues this exact task; check its receipts for completion."
               : prepared.when.kind === "at"
                 ? "Executes at the scheduled time without a model turn."
                 : "Executes when the matching journal event lands.",
@@ -597,22 +648,40 @@ export function promiseTools(
   }));
 }
 
-export function promiseComponent(owner: string, executors: PromiseExecutors) {
-  type Runtime = { records: Map<string, PromiseRecord>; work: Map<string, Work> };
+export const promiseTurn = (id: string) => `promise-execution:${id}`;
+export const promiseCodeId = (id: string) => `promise-code:${id}`;
+
+/** Business outcomes come from durable tool receipts, not the code's return text. */
+export function promiseExecutionOutcome(events: readonly Event[], record: PromiseRecord): "succeeded" | "failed" | "unknown" {
+  const prefix = `${promiseCodeId(record.id)}.`;
+  const calls = events.filter(e => typeof e.callId === "string" && e.callId.startsWith(prefix));
+  const started = calls.filter(e => e.type === "AikoCodeToolStarted");
+  if (calls.some(e => e.type === "PackageCalled" && !calls.some(r => r.type === "PackageReturned" && r.callId === e.callId)) ||
+    calls.some(e => e.type === "PackageReturned" && (e.result as { status?: string } | undefined)?.status === "unknown") || started.some(e => !calls.some(r => r.type === "AikoCodeToolSettled" && r.callId === e.callId)) ||
+    calls.some(e => e.type === "AikoCodeToolSettled" && (e.status === "unknown" || e.succeeded === false && e.status === undefined))) return "unknown";
+  const code = events.find(e => e.type === "CodeSettled" && e.execId === promiseCodeId(record.id));
+  if (!code || code.error || calls.some(e => e.type === "AikoCodeToolSettled" && e.succeeded === false ||
+    e.type === "PackageReturned" && (e.result as { error?: unknown } | undefined)?.error)) return "failed";
+  return "succeeded";
+}
+
+export function promiseComponent(owner: string) {
+  type Runtime = { records: Map<string, PromiseRecord>; work: Map<string, Work>; events: readonly Event[] };
   return component({
     name: "aiko.promises",
     keys: { prefixes: ["aiko-promise:"], keyOf: promiseEventKey },
-    initial: () => ({ records: new Map<string, PromiseRecord>(), work: new Map<string, Work>() }),
+    initial: () => ({ records: new Map<string, PromiseRecord>(), work: new Map<string, Work>(), events: [] as Event[] }),
     step: (s: Runtime, e: Event): Runtime => {
       const records = new Map(s.records);
       if (e.type === "AikoPromiseTransition")
         project(records, e as Transition);
       const work = new Map(s.work);
       const at = Number(e.at);
-      if (!Number.isSafeInteger(at)) return { records, work };
+      if (!Number.isSafeInteger(at)) return { records, work, events: [...s.events, e] };
       // Browser-learning synthesizes hook events with sourceThread; those never resolve.
       const internal = e.type === "AikoHookReceived" && e.sourceThread !== undefined;
       for (const record of records.values()) {
+        if (record.owner !== owner || record.thread !== `user-${owner}`) continue;
         if (record.state === "resolved" || record.state === "dispatching") {
           // Re-drive interrupted resolutions; the act continues from fresh state.
           work.set(record.id, {
@@ -640,26 +709,30 @@ export function promiseComponent(owner: string, executors: PromiseExecutors) {
             trigger: `${e.type}:${e.id}`,
             source: { kind: "hook", event: e },
           });
-        else if (record.when.kind === "at" && record.when.at <= at)
+        else if (record.expiresAt <= at || record.when.kind === "at" && record.when.at <= at)
           work.set(record.id, {
             id: record.id,
             version: record.version,
-            trigger: `time:${record.when.at}`,
+            trigger: `time:${record.when.kind === "at" ? record.when.at : record.expiresAt}`,
             source: { kind: "time" },
           });
       }
-      return { records, work };
+      return { records, work, events: [...s.events, e] };
     },
     output: (s: Runtime) => ({
       view: undefined,
-      transitions: [...s.work.values()].map((item) =>
+      transitions: [...s.work.values()].filter(item => {
+        const record = s.records.get(item.id);
+        return !record?.execution || !s.events.some(e => e.type === "MessageReceived" && e.id === record.execution!.turn) ||
+          s.events.some(e => e.turn === record.execution!.turn && ["TurnCompleted", "TurnFailed", "TurnCancelled"].includes(e.type));
+      }).map((item) =>
         effect({
-          key: `aiko-promise:work:${item.id}:${item.version}`,
+          key: `aiko-promise:work:${item.id}:${item.version}:${s.events.some(e => e.turn === promiseTurn(item.id) && ["TurnCompleted", "TurnFailed", "TurnCancelled"].includes(e.type)) ? "settle" : "dispatch"}`,
           input: item,
           act: () =>
             Effect.gen(function* () {
               const self = yield* Self;
-              if (self.thread !== `user-${owner}`) return [];
+              if (self.actor !== "aiko" || self.thread !== `user-${owner}`) return [];
               const log = yield* EventLog;
               const readCurrent = () =>
                 Effect.gen(function* () {
@@ -678,55 +751,32 @@ export function promiseComponent(owner: string, executors: PromiseExecutors) {
                 else yield* service.resolve(item.id, { kind: "time" });
                 current = yield* readCurrent();
               }
-              if (current?.state === "dispatching") {
-                // The previous dispatcher died mid-run; never re-execute.
+              if (current?.state === "resolved") {
+                const marked = yield* service.markDispatching(item.id);
+                if (!marked.won) return [];
+                current = marked.current;
+              }
+              if (current?.state !== "dispatching") return [];
+              if (!current.execution) {
+                // A pre-continuation dispatcher may already have run. Never replay it.
                 yield* service.settle(item.id, "unknown");
                 return [];
               }
-              if (current?.state !== "resolved") return [];
-              const marked = yield* service.markDispatching(item.id);
-              if (!marked.won) return [];
-              let outcome: "succeeded" | "failed" | "unknown" = "unknown";
-              let summary: string | undefined;
-              const attempted = yield* Effect.tryPromise(() =>
-                executors.harness(current!.payload.segment),
-              ).pipe(
-                Effect.catch((error) =>
-                  Effect.succeed({
-                    __thrown: String((error as Error)?.message ?? "executor_error"),
-                  }),
-                ),
-              );
-              if ("__thrown" in attempted) {
-                // Transport-level failure: the segment may or may not have run.
-                outcome = "unknown";
-              } else if (attempted.settled && !attempted.error) {
-                outcome = "succeeded";
-                const value = attempted.result;
-                summary =
-                  typeof value === "string" && value
-                    ? value.slice(0, 200)
-                    : value !== undefined
-                      ? JSON.stringify(value).slice(0, 200)
-                      : undefined;
-              } else if (attempted.settled) {
-                outcome = "failed";
-                summary = "harness_failed";
-              } else outcome = "unknown";
-              const settled = yield* service.settle(item.id, outcome, summary);
-              if (settled?.outcome)
-                yield* log
-                  .append([
-                    {
-                      type: "AikoPromiseSettled",
-                      id: item.id,
-                      owner,
-                      at: Date.now(),
-                      outcome: settled.outcome,
-                    },
-                  ])
-                  .pipe(Effect.catch(() => Effect.void));
-              return [];
+              const history = yield* log.read;
+              const turn = current.execution.turn;
+              const terminal = history.findLast(e => e.turn === turn && ["TurnCompleted", "TurnFailed", "TurnCancelled"].includes(e.type));
+              if (terminal) {
+                const outcome = promiseExecutionOutcome(history, current);
+                yield* service.settle(item.id, outcome, outcome === "unknown" ? "Check submitted actions before retrying." : undefined);
+                return [{ type: "AikoPromiseSettled", id: item.id, owner, at: Date.now(), outcome }];
+              }
+              if (history.some(e => e.type === "MessageReceived" && e.id === turn)) return [];
+              const original = history.find(e => e.type === "MessageReceived" && e.id === current.sourceTurn);
+              const telegram = original && original.chat === owner && (original.source === "telegram" && String(original.sender) === owner ||
+                original.source === "automation" && original.channel === "telegram" && original.sender === "automation");
+              return [{ type: "MessageReceived", id: turn, source: "automation", sender: "automation", owner,
+                promiseId: current.id, promiseHash: current.hash, text: `Run the approved or scheduled task: ${current.label}`,
+                ...(telegram ? { channel: "telegram", chat: owner, telegram: original.telegram } : {}), at: Date.now() }];
             }),
         }),
       ),

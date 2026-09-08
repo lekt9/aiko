@@ -25,6 +25,9 @@ import {
 } from "entity-learn";
 import { fixtureRead, type Entity, type ReadReceipt } from "./capabilities.ts";
 import { WikiMemory } from "./wiki-memory.ts";
+import { memoryResultDependencies, withRetainedDependencies } from "./retained-result-dependencies.ts";
+import type { HarnessDependencyErasureReceipt } from "./harness-library.ts";
+import { prepareMemoryErasure, type MemoryErasureBinding } from "./memory-erasure-authority.ts";
 
 export interface MemoryReceipt {
   kind: "memory-receipt";
@@ -44,6 +47,13 @@ export interface MemoryBinding {
   embedding?: EmbeddingProvider;
   styleExampleConsent?: (observationId: string) => boolean;
   redact: (text: string) => string;
+  /** Trusted host cleanup of registered private copies; never supplied in tool arguments. */
+  eraseCopies?: (observations: readonly string[], operationId: string) => Promise<HarnessDependencyErasureReceipt>;
+  /** Shares the host's restore admission boundary, including asynchronous private-copy cleanup. */
+  withErasure?: <T>(operation: () => Promise<T>) => Promise<T>;
+  /** Required for native memory_erase. Independent host authority is resolved
+   * per call; absent/unavailable authority never falls back to local deletion. */
+  erasureAuthority?: MemoryErasureBinding | (() => Promise<MemoryErasureBinding>);
   /** Trusted same-owner, same-instance source reads for background provenance only. */
   readSourcePage?: (source: ThreadAddress, after: number, limit: number) => Promise<readonly ThreadEventRow[]>;
   /** Already authorized and bound to exactly this actor thread by the host. */
@@ -417,14 +427,14 @@ export function memoryTools(
             const result = (
               data: unknown,
               description: string,
-            ): MemoryReceipt => ({
+            ): MemoryReceipt => withRetainedDependencies({
               kind: "memory-receipt",
               owner: binding.owner,
               operation,
               outcome: "ok",
               text: description,
               result: json(data),
-            });
+            }, memoryResultDependencies(data));
             try {
               if (Object.hasOwn(sources, operation)) {
                 object(input, []);
@@ -670,6 +680,62 @@ export function memoryTools(
                     "Suppressed this subject and its cited/derived claims from future memory retrieval. This does not erase journal artifacts, earlier chat/tool logs, existing context or backups.",
                   );
                 }
+                case "erase": {
+                  const erase = async (): Promise<MemoryReceipt> => {
+                  context.signal.throwIfAborted();
+                  const args = object(input, ["subject", "expected", "expectedScopeVersion", "resume"]);
+                  const resume = args.resume === undefined ? undefined : text(args.resume);
+                  if (resume && Object.keys(args).length !== 1) throw new MemoryError("invalid_input", "Resume accepts only the original erasure receipt");
+                  const request = resume ? undefined : { subject: text(args.subject), expectedHead: text(args.expected),
+                    expectedScopeVersion: integer(args.expectedScopeVersion, 1, Number.MAX_SAFE_INTEGER, 0), key };
+                  // Resolve independent custody inside the owner gate on every
+                  // call. A missing/rejected resolver can never select legacy mode.
+                  const authorityBinding = typeof binding.erasureAuthority === "function" ? await binding.erasureAuthority() : binding.erasureAuthority;
+                  if (!authorityBinding || authorityBinding.owner !== binding.owner || !binding.withErasure)
+                    throw new MemoryError("authority_unavailable", "Erasure requires current independent owner authority and its admission gate");
+                  context.signal.throwIfAborted();
+                  const authority = await prepareMemoryErasure({ memory, authority: authorityBinding,
+                    input: request, resume, signal: context.signal });
+                  try {
+                    const admission = await authority.prepare();
+                    context.signal.throwIfAborted();
+                    if (admission.deletionRequired) authority.erase();
+                  } catch (error) {
+                    // A failed operation or cancellation cannot imply rollback.
+                    // Only a verified exact unchanged native archive releases it.
+                    try { await authority.abortUnchanged(); } catch { /* Keep uncertain claim held. */ }
+                    throw error;
+                  }
+                  const receiptKey = authority.receiptKey;
+                  const committed = memory.journal.receipt(memory.scope, receiptKey)?.event;
+                  if (committed?.operation !== "erase-subject" || !committed.erasure?.observationIds || !committed.erasure.subjects || committed.erasedObservations === undefined)
+                    throw new MemoryError("forbidden", "Not an owner-scoped committed subject erasure");
+                  const erased = { scope: memory.scope, erased: true, retired: false,
+                    subjects: committed.erasure.subjects.length, observations: committed.erasedObservations,
+                    observationIds: committed.erasure.observationIds, replacements: committed.erasure.replacements ?? [], resume: receiptKey };
+                  let copies: HarnessDependencyErasureReceipt | undefined;
+                  try {
+                    context.signal.throwIfAborted();
+                    copies = binding.eraseCopies ? await binding.eraseCopies(
+                      [...new Set([...erased.observationIds, ...erased.replacements.map(replacement => replacement.previous)])], receiptKey) : undefined;
+                    if (!copies || copies.version !== 1 || copies.status !== "erased" || !/^sha256:[a-f0-9]{64}$/.test(copies.operation) ||
+                        !Array.isArray(copies.references) || copies.references.some(ref => !/^sha256:[a-f0-9]{64}$/.test(ref)))
+                      throw Error("Registered private-copy cleanup unavailable");
+                    await authority.complete({ status: "complete", reference: `registered-private-results:${copies.operation}`,
+                      digest: authorityBinding.fingerprint(["aiko.registered-copy-cleanup/v1", binding.owner, receiptKey, copies]) });
+                  } catch {
+                    return { ...result({ ...erased, copies: copies ?? { status: "pending" }, authority: { status: "pending" } },
+                      "Memory erasure committed, but registered private-copy cleanup or its authority acknowledgement is incomplete. Call memory_erase with only {resume: result.resume} to finish the original cleanup without deleting more memory. Earlier logs, untracked copies and backups remain outside this receipt."), outcome: "error" };
+                  }
+                  return result(
+                    { ...erased, copies },
+                    "Permanently erased this subject's recorded memory history and known dependent copies from the live memory store. Retained erasure receipts prevent memory replay from restoring them. Navigational links are removed while preserving the linked facts; replacements maps their old observation IDs to new canonical IDs. Unrelated memory remains available. " +
+                    "Registered observation-dependent private results and working data were erased from live custody. " +
+                    "Earlier chat/tool logs, untracked copies, existing context, backups and disk remnants require separate cleanup; this receipt does not attest their erasure.",
+                  );
+                  };
+                  return binding.withErasure ? await binding.withErasure(erase) : await erase();
+                }
                 case "refresh_logs": {
                   registerApproved(memory, logSource!.source);
                   const refreshed = await memory.refresh(logSource!.source.id, {
@@ -792,6 +858,13 @@ export function memoryTools(
       "forget",
       "Suppress a subject from future retrieval with its exact current observation ID. This is NOT physical deletion of journal/chat history or backups.",
       schema({ subject: string, expected: string }, ["subject", "expected"]),
+    ),
+    bindingOf(
+      "memory_erase",
+      "erase",
+      "For an explicit permanent deletion request: erase a subject's recorded memory history and registered private copies. Supply subject, its exact expected observation ID and expectedScopeVersion from a fresh memory_scan. To finish interrupted private-copy cleanup, supply only resume from the original receipt; this resumes that committed erasure and cannot delete new memory. Earlier chat/tool logs, untracked copies and backups need separate cleanup. Use memory_forget for retrieval suppression only.",
+      Object.assign(schema({ subject: string, expected: string, expectedScopeVersion: numberSchema(1, Number.MAX_SAFE_INTEGER), resume: string }),
+        { oneOf: [{ required: ["subject", "expected", "expectedScopeVersion"], not: { required: ["resume"] } }, { required: ["resume"], not: { anyOf: [{ required: ["subject"] }, { required: ["expected"] }, { required: ["expectedScopeVersion"] }] } }] }),
     ),
     bindingOf(
       "memory_refresh_logs",

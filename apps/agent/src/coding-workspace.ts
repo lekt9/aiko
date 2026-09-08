@@ -5,9 +5,11 @@ import { EventLog } from "tardie/core/log";
 import type { Event } from "tardie/core/event";
 import type { NativeTool } from "tardie/component/tool";
 import { sandboxDigest, type SandboxJobReceipt } from "./sandbox-job.ts";
+import { projectRelativePath } from "./project-instructions.ts";
 
 /** Repository identifiers resolve through trusted owner grants, never guest paths. */
 export type CodingWorkspaceCommand =
+  | { action: "context"; repository: string; workspace?: string; cwd?: string; kind: "collect" | "load"; path?: string }
   | { action: "create"; repository: string; workspace: string; base?: string }
   | { action: "status" | "index" | "close"; repository: string; workspace: string }
   | { action: "list"; repository: string; workspace: string; path?: string }
@@ -18,7 +20,7 @@ export type CodingWorkspaceCommand =
   | { action: "test"; repository: string; workspace: string }
   | { action: "reconcile"; repository: string; workspace: string; operation: string }
   | { action: "merge"; repository: string; workspace: string; testOperation: string; message: string };
-export type CodingWorkspaceAction = CodingWorkspaceCommand["action"];
+export type CodingWorkspaceAction = Exclude<CodingWorkspaceCommand["action"], "context">;
 export interface CodingRepositoryGrant {
   id: string;
   /** A path inside the isolated owner compute VM, configured by the host. */
@@ -50,6 +52,9 @@ export const CODING_WORKSPACE_ABI = "aiko-coding-workspace/2";
 export const codingWorkspaceEnvironment = async (bundle: string, bunVersion: string) => sandboxDigest({ abi: CODING_WORKSPACE_ABI, bundle: await sandboxDigest(bundle), bunVersion });
 export const codingWorkspaceDigest = (request: CodingWorkspaceRequest) => sandboxDigest(request);
 const codingActions: readonly CodingWorkspaceAction[] = ["create", "status", "index", "close", "list", "read", "edit", "undo", "query", "test", "reconcile", "merge"];
+export function codingWorkspaceAuthorized(grant: CodingRepositoryGrant | undefined, command: CodingWorkspaceCommand): boolean {
+  return !!grant && (command.action === "context" ? grant.actions.includes("read") && grant.actions.includes("list") : grant.actions.includes(command.action));
+}
 /** Trusted deployment configuration only. Project text cannot create grants. */
 export function parseCodingRepositories(raw: string | undefined): Readonly<Record<string, CodingRepositoryGrant[]>> {
   if (!raw?.trim()) return {};
@@ -82,11 +87,16 @@ export function validateCodingWorkspaceRequest(value: CodingWorkspaceRequest) {
   const id = (s: unknown) => typeof s === "string" && /^[A-Za-z0-9_.:-]{1,180}$/.test(s);
   const nativeId = (s: unknown) => typeof s === "string" && s.length >= 1 && s.length <= 2048 && !/[\u0000-\u001f]/.test(s);
   if (value?.version !== 1 || !id(value.owner) || !nativeId(value.thread) || !nativeId(value.turn) || !nativeId(value.operationId) ||
-      !value.command || !id(value.command.repository) || !id(value.command.workspace) ||
-      !codingActions.includes(value.command.action))
+      !value.command || !id(value.command.repository) || !(value.command.action === "context" && value.command.workspace === undefined || id(value.command.workspace)) ||
+      !(value.command.action === "context" || codingActions.includes(value.command.action)))
     throw Error("Invalid coding workspace request");
   if (value.command.action === "reconcile" ? !nativeId(value.command.operation) || !/^sha256:[a-f0-9]{64}$/.test(value.reconciliation?.expectedDigest ?? "") : value.reconciliation !== undefined)
     throw Error("Reconciliation requires an exact retained native operation digest");
+  if (value.command.action === "context") {
+    projectRelativePath(value.command.cwd ?? "", true);
+    if (!["collect", "load"].includes(value.command.kind) || value.command.kind === "load" && !value.command.path || value.command.kind === "collect" && value.command.path !== undefined) throw Error("Invalid project context request");
+    if (value.command.path !== undefined) projectRelativePath(value.command.path);
+  }
   if (new TextEncoder().encode(JSON.stringify(value)).length > 1024 * 1024) throw Error("Coding request exceeds 1 MiB");
   return value;
 }

@@ -1,9 +1,14 @@
+import { BrowserWatchesPanel } from "./browser-watches-panel";
+import { SavedToolsPanel } from "./saved-tools-panel";
 import { NativeLoginPanel } from "./native-login-panel";
 import { MiniAppScreen } from "./mini-app-screen";
+import { MiniAppNavigationContext } from "./mini-app-navigation";
+import { PromisesPanel, PromisesProvider } from "./promises-panel";
+import "../styles/ui-recovery.css";
 import { SecretaryPanel } from "./secretary-panel";
 import { PasswordManagerPanel } from "./password-manager-panel";
 import { ImportLoginsPanel } from "./import-logins-panel";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
   Search,
@@ -16,8 +21,10 @@ import {
   RefreshCw,
   LoaderCircle,
   X,
+  Wrench,
 } from "lucide-react";
 import { AIKO_TELEGRAM_URL } from "../lib/telegram";
+import { GMAIL_DOMAIN, canonicalGmailDomain } from "../../../../packages/protocol/src/google-connection";
 import {
   connectorRequest,
   MiniAppAuthenticationError,
@@ -37,8 +44,8 @@ type PendingApproval = {
 };
 type DrawerApp = { name: string; domain: string };
 const suggestedApps: DrawerApp[] = [
+  { name: "Gmail", domain: GMAIL_DOMAIN },
   { name: "LinkedIn", domain: "linkedin.com" },
-  { name: "Gmail", domain: "gmail.com" },
   { name: "Instagram", domain: "instagram.com" },
   { name: "Notion", domain: "notion.so" },
   { name: "Slack", domain: "slack.com" },
@@ -75,7 +82,7 @@ function connectionName(connection: ConnectorConnection) {
   const domain = connection.connectorId.replace(/^arcade:|^browser:/, "");
   return (
     connection.appName ??
-    suggestedApps.find((app) => app.domain === domain)?.name ??
+    suggestedApps.find((app) => app.domain === canonicalGmailDomain(domain))?.name ??
     domain
   );
 }
@@ -99,8 +106,11 @@ export function ConnectorOnboarding() {
   const telegramEnabled = useRef(true);
   const accountRequests = useRef<AbortController | null>(null);
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
+  const [promiseCount, setPromiseCount] = useState(0);
   const [approvalError, setApprovalError] = useState("");
   const [deciding, setDeciding] = useState(false);
+  const decisionPending = useRef(false);
+  const approvalRead = useRef(0);
   const [approvalLoading, setApprovalLoading] = useState(true);
   const [signedIn, setSignedIn] = useState(false);
   const [accountVersion, setAccountVersion] = useState(0);
@@ -119,6 +129,7 @@ export function ConnectorOnboarding() {
   const opening = useRef(false);
   const [websiteError, setWebsiteError] = useState("");
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [savedToolsOpen, setSavedToolsOpen] = useState(false);
   const [nativeInline, setNativeInline] = useState(false);
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
@@ -218,11 +229,11 @@ export function ConnectorOnboarding() {
     if ((failure as Error).name !== "AbortError")
       setError((failure as Error).message);
   }
-  async function request<T>(
+  const request = useCallback(async <T,>(
     path: string,
     body?: object,
     signal?: AbortSignal,
-  ): Promise<T> {
+  ): Promise<T> => {
     accountRequests.current ??= new AbortController();
     const accountSignal = accountRequests.current.signal;
     const combined = signal
@@ -233,25 +244,28 @@ export function ConnectorOnboarding() {
     });
     combined.throwIfAborted();
     return response;
-  }
+  }, []);
   useEffect(() => {
     if (!signedIn) return;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const refreshQueue = async () => {
+      const revision = ++approvalRead.current;
       try {
+        if (decisionPending.current) return;
         const queue = await request<{ pending: PendingApproval[] }>(
           "/approvals",
           undefined,
           abort.signal,
         );
-        if (!abort.signal.aborted) {
-          setApprovals(queue.pending);
+        if (!abort.signal.aborted && revision === approvalRead.current) {
+          updateApprovalQueue(queue.pending);
           setApprovalLoading(false);
           setApprovalError("");
         }
       } catch (failure) {
-        if (!abort.signal.aborted) {
+        if (!abort.signal.aborted && revision === approvalRead.current) {
+          setApprovalLoading(false);
           setApprovalError(
             failure instanceof MiniAppAuthenticationError
               ? failure.message
@@ -269,22 +283,41 @@ export function ConnectorOnboarding() {
       clearTimeout(timer);
     };
   }, [signedIn, accountVersion]);
+  function updateApprovalQueue(next: PendingApproval[], focused = document.activeElement) {
+    const navigation = focused?.closest(".approval-navigation");
+    setApprovals(next);
+    requestAnimationFrame(() => {
+      // Settled/expired cards disappear. Keep keyboard users at their review
+      // surface, but never steal focus if they already returned to their task.
+      if (focused && !focused.isConnected && document.activeElement === document.body && navigation?.isConnected)
+        navigation.querySelector("summary")?.focus();
+    });
+  }
   async function decideApproval(id: string, approve: boolean) {
-    if (deciding) return;
+    if (decisionPending.current) return;
+    decisionPending.current = true;
+    const account = accountRequests.current;
+    const focused = document.activeElement;
+    ++approvalRead.current; // A pre-decision poll cannot resurrect this request.
     setDeciding(true);
     setApprovalError("");
     try {
       await request("/approvals", { id, approve });
       const queue = await request<{ pending: PendingApproval[] }>("/approvals");
-      setApprovals(queue.pending);
+      if (account?.signal.aborted) return;
+      updateApprovalQueue(queue.pending, focused);
     } catch (failure) {
+      if (account?.signal.aborted) return;
       setApprovalError(
         failure instanceof Error
           ? failure.message
           : "Could not confirm the decision. Refresh and try again.",
       );
     } finally {
-      setDeciding(false);
+      if (!account?.signal.aborted) {
+        decisionPending.current = false;
+        setDeciding(false);
+      }
     }
   }
   function clearAccount() {
@@ -294,7 +327,11 @@ export function ConnectorOnboarding() {
     setAccountVersion((value) => value + 1);
     telegramEnabled.current = false;
     setSignedIn(false);
+    ++approvalRead.current;
+    decisionPending.current = false;
+    setDeciding(false);
     setApprovals([]);
+    setPromiseCount(0);
     setApprovalError("");
     setApprovalLoading(true);
     setSignedOut(true);
@@ -306,6 +343,7 @@ export function ConnectorOnboarding() {
     setOpeningApp(undefined);
     setAddWebsite(false);
     setAssistantOpen(false);
+    setSavedToolsOpen(false);
     setConnections(undefined);
     setAuthorization(undefined);
     setNotice("");
@@ -346,7 +384,7 @@ export function ConnectorOnboarding() {
     setNativeInline(result.nativeInline === true);
     return result.connections;
   }
-  async function openApp(app: DrawerApp) {
+  async function openApp(app: DrawerApp, reconnectId?: string) {
     if (opening.current || pending || !signedIn) return;
     opening.current = true;
     setOpeningApp(app);
@@ -355,6 +393,13 @@ export function ConnectorOnboarding() {
     setAuthorization(undefined);
     setNotice("");
     try {
+      if (reconnectId) {
+        const cleanup = await request<{ status: string; relayDisconnectStatus?: string }>(
+          "/disconnect", { connectionId: reconnectId },
+        );
+        if (cleanup.status !== "disconnected" || cleanup.relayDisconnectStatus !== "confirmed")
+          throw new Error("The previous sign-in could not be closed yet. Try reconnecting again to finish cleanup.");
+      }
       // Password-manager flow: every app opens a private login session for its
       // website where the owner signs in with their own credentials. No OAuth
       // handoff, no catalog round-trip before the login screen appears.
@@ -368,6 +413,7 @@ export function ConnectorOnboarding() {
         setNativeInline(response.nativeInline ?? nativeInline);
         setNativeDomain(app.domain);
         setNativeConnection(response.id);
+        setSelectedConnection(undefined);
         const list = await refresh();
         setNativeUsername(
           list?.find((item) => item.id === response.id)?.importedUsername,
@@ -456,7 +502,7 @@ export function ConnectorOnboarding() {
       matchesQuery(app.name, app.domain) &&
       !activeConnections.some(
         (c) =>
-          c.connectorId === `browser:${app.domain}` ||
+          (c.provider === "browser" && canonicalGmailDomain(c.connectorId.replace(/^browser:/, "")) === app.domain) ||
           (c.appName ?? "").toLowerCase() === app.name.toLowerCase(),
       ),
   );
@@ -464,23 +510,17 @@ export function ConnectorOnboarding() {
     (c) => c.id === selectedConnection?.id,
   );
   const resumeUrl = safeAuthorizationUrl(selected?.authorizationUrl);
-  if (signedIn && (approvals.length > 0 || approvalLoading))
-    return (
-      <section className="approval-screen" aria-labelledby="approval-title">
-        <h2 id="approval-title">
-          {approvalLoading
-            ? "Checking approvals…"
-            : `Approvals (${approvals.length})`}
-        </h2>
-        <p>
-          Review what Aiko wants to do. Your apps return when the queue is
-          clear.
-        </p>
+  const approvalCount = approvals.length + promiseCount;
+  const approvalNavigation = signedIn ? <section className="approval-navigation" aria-label="Action approvals">
+        <p role="status">{approvalLoading ? "Checking approvals…" : approvalError ? "Approval status may be out of date." : approvalCount ? `${approvalCount} ${approvalCount === 1 ? "action needs" : "actions need"} your approval. Review when you’re ready.` : "Review requests and recent decisions."}</p>
         {approvalError && (
           <p role="alert" className="credential-error">
             {approvalError}
           </p>
         )}
+        <details>
+        <summary>Approvals ({approvalCount})</summary>
+        <p>Review what Aiko wants to do. Actions wait for your decision; you can keep working in your apps.</p>
         {approvals.map((item) => (
           <article className="approval-card" key={item.id}>
             <h3>{item.name.replace(/_/g, " ")}</h3>
@@ -516,13 +556,16 @@ export function ConnectorOnboarding() {
             </div>
           </article>
         ))}
-      </section>
-    );
-  return (
+        <PromisesPanel />
+        </details>
+      </section> : null;
+  const content = (
+    <MiniAppNavigationContext value={approvalNavigation}>
     <section
       className="connector-onboarding app-drawer"
       aria-labelledby="connector-title"
     >
+      {approvalNavigation}
       <div className="connector-heading">
         <div>
           <h2 id="connector-title">Your apps</h2>
@@ -636,6 +679,9 @@ export function ConnectorOnboarding() {
             onClick={() => setImportOpen(true)}
           >
             <FileUp size={15} aria-hidden="true" /> Import from CSV
+          </button>
+          <button type="button" className="text-button saved-tools-entry" onClick={() => setSavedToolsOpen(true)}>
+            <Wrench size={15} aria-hidden="true" /> Saved tools
           </button>
         </div>
       )}
@@ -753,6 +799,9 @@ export function ConnectorOnboarding() {
       )}
       {filter === "all" && (
         <section className="drawer-section" aria-label="Add apps">
+          {!query.trim() && apps.some(app => app.domain === GMAIL_DOMAIN) && (
+            <p className="aiko-fineprint">Start with Gmail: connect your Google account privately through Unlock. You can add other apps whenever you’re ready.</p>
+          )}
           <div className="drawer-section-heading">
             <h3>
               {query
@@ -774,7 +823,7 @@ export function ConnectorOnboarding() {
               >
                 <AppTileIcon name={app.name} domain={app.domain} />
                 <span className="drawer-tile-name">{app.name}</span>
-                <span className="drawer-tile-status">{"Add login"}</span>
+                <span className="drawer-tile-status">{app.domain === GMAIL_DOMAIN ? "Recommended first" : "Add login"}</span>
               </button>
             ))}
             <button
@@ -816,6 +865,9 @@ export function ConnectorOnboarding() {
           )}
         </details>
       )}
+      {signedIn && savedToolsOpen && <MiniAppScreen title="Saved tools" close={() => setSavedToolsOpen(false)}>
+        <SavedToolsPanel key={accountVersion} request={request} />
+      </MiniAppScreen>}
       {addWebsite && (
         <MiniAppScreen title="Add a website" close={() => setAddWebsite(false)}>
           <div className="credential-identity">
@@ -969,6 +1021,24 @@ export function ConnectorOnboarding() {
               )}
             </div>
           )}
+          {selected.status === "failed" && selected.provider === "browser" && nativeInline && (
+            <div className="connector-actions">
+              <p className="aiko-fineprint">
+                Start a new sign-in to reconnect this app. Aiko will close the previous sign-in first.
+              </p>
+              <button
+                className="button primary"
+                disabled={pending}
+                onClick={() => void openApp({
+                  name: connectionName(selected),
+                  domain: selected.connectorId.replace(/^browser:/, ""),
+                }, selected.id)}
+              >
+                {pending ? "Reconnecting…" : "Reconnect app"}
+              </button>
+            </div>
+          )}
+          {selected.provider === "browser" && <BrowserWatchesPanel key={`${accountVersion}:${selected.id}`} connectionId={selected.id} siteName={connectionName(selected)} request={request} />}
           <button
             className="button drawer-disconnect"
             disabled={pending}
@@ -1008,5 +1078,11 @@ export function ConnectorOnboarding() {
         />
       )}
     </section>
+    </MiniAppNavigationContext>
   );
+  return signedIn ? (
+    <PromisesProvider request={request} authScope={String(accountVersion)} onPendingCount={setPromiseCount}>
+      {content}
+    </PromisesProvider>
+  ) : content;
 }

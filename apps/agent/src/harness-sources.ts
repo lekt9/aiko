@@ -53,6 +53,13 @@ export function harnessSourceState(events: readonly Event[], owner: string) {
       if (e.previousGeneration === (previous?.generation ?? 0) && e.generation === Number(e.previousGeneration) + 1 && snapshots.has(String(e.snapshotDigest))) heads.set(String(e.sourceId), e);
     }
     if (e.type === "AikoHarnessSourceCandidateDerived") derived.set(String(e.harnessDigest), e);
+    // A retained edit carries the original source dependency fence forward.
+    // Edited bytes are authored changes, never newly observed source evidence.
+    if (e.type === "AikoHarnessCandidateRecorded" && e.revision && typeof e.revision === "object") {
+      const predecessor = derived.get(String((e.revision as { predecessorDigest?: string }).predecessorDigest));
+      if (predecessor) derived.set(String(e.harnessDigest), { ...predecessor, harnessDigest: e.harnessDigest,
+        predecessorDigest: (e.revision as { predecessorDigest: string }).predecessorDigest });
+    }
   }
   return { snapshots, heads, derived };
 }
@@ -262,6 +269,9 @@ export function sourceAwareHarnessBinding(binding: HarnessLibraryBinding, journa
       return !signal.aborted && current;
     },
     execute: async (input, signal) => { need(await eligible(input.artifact), "Source dependency changed; revalidation required"); return binding.execute(input, signal); },
+    ...(binding.reconcile ? { reconcile: async (input: Parameters<HarnessLibraryBinding["execute"]>[0], signal: AbortSignal) => {
+      need(await eligible(input.artifact), "Source dependency changed; reconciliation unavailable"); return binding.reconcile!(input, signal);
+    } } : {}),
   };
 }
 

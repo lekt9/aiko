@@ -1,4 +1,4 @@
-import { Journal } from "./journal.js";
+import { Journal, type RestoreAuthority, type OnErasure, type SubjectErasureInput } from "./journal.js";
 import type { MemoryStorage } from "./storage.js";
 import { assertNoSecrets, canonical, clone, digest, fail, number, object, observationId, receipt, rememberInput, sourceCoverage, sourceInput, text, MAX_PAYLOAD_BYTES } from "./codec.js";
 import { normalizeSource } from "./sources.js";
@@ -16,6 +16,10 @@ export interface MemoryOptions {
   /** Bound by the host, not supplied by the model on each call. */
   scope: string;
   clock?: () => number;
+  /** Trusted synchronous host lookup; configured but unavailable authority refuses restore. */
+  restoreAuthority?: RestoreAuthority;
+  /** Synchronous same-storage authority write; failure rolls native erasure back. */
+  onErasure?: OnErasure;
   adapters?: Readonly<Record<string, SourceRunner>>;
   /** Optional host capability. Worker hosts do not implicitly gain filesystem access. */
   files?: { canonicalPath(path: string): string; read(source: Source, maxBytes: number): Promise<SourceResult> };
@@ -31,11 +35,13 @@ export class Memory {
     this.clock = options.clock ?? Date.now;
     this.adapters = Object.assign(Object.create(null), options.adapters ?? {});
     this.files = options.files;
-    this.journal = new Journal(options.storage);
+    this.journal = new Journal(options.storage, options.restoreAuthority, options.onErasure);
   }
   close(): void { this.journal.close(); }
   /** Operator-only migration, including suppressed history. Not a model-facing recall operation. */
   exportArchive() { return this.journal.exportArchive(this.scope); }
+  checkArchiveErasure(value: unknown) { return this.journal.checkArchiveErasure(this.scope, value); }
+  erasureFence() { return this.journal.erasureFence(this.scope); }
   importArchive(value: unknown) { return this.journal.importArchive(this.scope, value); }
   now(): number { return number(this.clock(), "clock", 0, 8640000000000000); }
   private base(key: string, fingerprint: string, operation: MemoryEvent["operation"], at: number): MemoryEvent {
@@ -66,7 +72,7 @@ export class Memory {
       subject: input.subject, title: input.title, type: input.type, kind: input.kind ?? "fact", payload: input.payload,
       producer, observedAt, recordedAt: at, expiresAt: input.ttlSeconds === undefined ? null : observedAt + input.ttlSeconds * 1000,
       validFrom: input.validFrom ?? null, validTo: input.validTo ?? null, supersedes: input.supersedes ?? null,
-      supports: [...new Set(input.supports ?? [])], dependsOn: [...new Set(input.dependsOn ?? [])], links: input.links ?? [],
+      supports: [...new Set(input.supports ?? [])], dependsOn: [...new Set(input.dependsOn ?? [])], links: (input.links ?? []).filter(link => !this.journal.isErasedSubject(this.scope, link.subject)),
     };
     const observation = { id: observationId(content), ...content };
     if (!accessible(this, observation)) fail("evidence_unavailable", "Evidence is unavailable or its closure exceeds 256 observations");
@@ -93,6 +99,18 @@ export class Memory {
       return { ...this.base(key, fingerprint, "forget", this.now()), subject };
     });
     return { subject, forgotten: true, erased: false };
+  }
+  /** Explicit host authority only. Erases all live native contents for this scope
+   * and permanently retires it; logical forget remains a separate operation. */
+  eraseScope(expectedVersion: number, key: string): { scope: string; erased: true; retired: true } {
+    return this.journal.eraseScope(this.scope, expectedVersion, key, this.now());
+  }
+  prepareSubjectErasure(input: SubjectErasureInput) { return this.journal.prepareSubjectErasure(this.scope, input); }
+  subjectErasureReceipt(key: string) { return this.journal.subjectErasureReceipt(this.scope, key); }
+  /** Authorized selective erasure; never delegates to whole-scope retirement. */
+  eraseSubject(input: { subject: string; expectedHead: string; expectedScopeVersion: number; key: string }):
+    { scope: string; erased: true; retired: false; subjects: number; observations: number; observationIds: string[]; replacements: { previous: string; observation: string }[] } {
+    return this.journal.eraseSubject(this.scope, input, this.now());
   }
   get(id: string): MemoryHit | null {
     receipt(id);
@@ -190,7 +208,7 @@ export class Memory {
           producer.kind = result.producer.kind;
           producer.evidenceReference = result.producer.reference;
         }
-        const observations = inputs.filter(i => !this.journal.head(this.scope, i.subject)?.forgotten).map(i => {
+        const observations = inputs.filter(i => !this.journal.isErasedSubject(this.scope, i.subject) && !this.journal.head(this.scope, i.subject)?.forgotten).map(i => {
           const head = this.journal.head(this.scope, i.subject);
           if (head) {
             const existing = this.journal.observation(this.scope, head.id)!;

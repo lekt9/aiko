@@ -349,11 +349,19 @@ export class Runtime {
     if (!p.scope.includes("sessions:write"))
       throw new VaultError("FORBIDDEN", 403);
     const input = sessionWrite.parse(body);
+    // Ordinary synchronization cannot recover a revoked or invalidated session.
+    // Expired ready jars may still be verified; owner import handles recovery.
+    const checkSession = (c: ConnectionRow, s: SessionRow | undefined) => {
+      if (!s || s.revision !== input.revision)
+        throw new VaultError("CONFLICT", 409);
+      if (!s.verified || s.status !== "ready" || s.generation !== c.version)
+        throw new VaultError("REAUTH_REQUIRED", 409);
+      return s;
+    };
     const snapshot = await this.vault.db.transaction(async (sql) => {
       const c = await this.vault.authorize(sql, p, connection, true),
         s = await this.stored(sql, p, connection, true);
-      if (!s || s.revision !== input.revision)
-        throw new VaultError("CONFLICT", 409);
+      checkSession(c, s);
       const version = (
         await sql.query<{ version: number }>(
           "SELECT version FROM profiles WHERE tenant=$1 AND id=$2",
@@ -365,8 +373,8 @@ export class Runtime {
     if (input.cookies.length === 0)
       return this.vault.db.transaction(async (sql) => {
         const c = await this.vault.authorize(sql, p, connection, true),
-          s = await this.stored(sql, p, connection, true);
-        if (c.version !== snapshot.c.version || s?.revision !== input.revision)
+          s = checkSession(c, await this.stored(sql, p, connection, true));
+        if (c.version !== snapshot.c.version)
           throw new VaultError("CONFLICT", 409);
         const secret = await this.vault.cipher.seal(sessionKey(p, connection), {
             cookies: [],
@@ -411,6 +419,10 @@ export class Runtime {
         )
       ).rows[0]?.version;
       if (version !== snapshot.version) throw new VaultError("CONFLICT", 409);
+      const current = await this.vault.authorize(sql, p, connection, true);
+      checkSession(current, await this.stored(sql, p, connection, true));
+      if (checked.expiresAt <= this.vault.now())
+        throw new VaultError("REAUTH_REQUIRED", 409);
       return this.publish(sql, p, snapshot.c, checked, input.revision);
     });
   }

@@ -1,4 +1,9 @@
 import {loginObservationEvent} from "./native-login-observation.ts";
+import { canonicalGmailDomain, GMAIL_DOMAIN } from "../../../packages/protocol/src/google-connection.ts";
+import { loginAssistanceMethods, type GmailLoginGrant, type LoginAssistanceMethod } from "../../../packages/protocol/src/login-assistance.ts";
+import { loginUuid } from "./native-login-observation.ts";
+import { nativeLoginScopesOverlap } from "./native-login-policy.ts";
+import { LOGIN_IMPORT_MAX_ROWS, loginImportCapacityError } from "../../../packages/protocol/src/login-import.ts";
 import { createHash, randomUUID } from "node:crypto";
 import {
   boundedText,
@@ -35,6 +40,10 @@ export type {
 
 export interface ConnectorStore {
   get(key: string): Promise<unknown>;
+  /** Optional host commit fence: read the same authoritative persisted record
+   * synchronously inside native admission. Never supply an async-proof cache.
+   * Stores without an atomic local read (for example remote Postgres) omit it. */
+  getSync?(key: string): unknown;
   set(key: string, value: unknown): Promise<void>;
   list(prefix: string): Promise<unknown[]>;
 }
@@ -63,6 +72,17 @@ export type Connection = {
   importedUsername?: string;
   relayDisconnectStatus?: "pending" | "confirmed" | "unavailable" | "unknown";
 };
+/** Host-only metadata for binding a watch; contains no credentials or browser content. */
+export type BrowserWatchConnectionAuthority = {
+  owner: string;
+  connectionId: string;
+  domain: string;
+  revision: number;
+  expiresAt: number;
+  status: "connected";
+  /** Adapter provenance only; the collector must still verify its exact profile. */
+  native: boolean;
+};
 export type ConnectionEvent = {
   type:
     "AikoPrivateLoginObserved" | "AikoConnectionChanged" | "AikoLoginSubmitted" | "AikoLoginAttemptFailed" | "AikoLoginProgress";
@@ -85,6 +105,7 @@ type StoredConnection = Connection & {
   browserVerification?: SecureBrowserVerification;
   /** Private source binding. Read afresh during renewal; never a password snapshot. */
   credentialReference?: { managerId: string; reference: string };
+  loginAssistance?: { source: GmailLoginGrant; attemptId: string; id: string; method: LoginAssistanceMethod };
   eventSequence?: number;
   pendingEvents?: ConnectionEvent[];
 };
@@ -128,7 +149,7 @@ export type ConnectorOptions = {
   /** Hosts explicitly opt in only after production OAuth configuration is verified. */
 };
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
-export const MAX_IMPORT_ROWS_PER_REQUEST = 500;
+export const MAX_IMPORT_ROWS_PER_REQUEST = LOGIN_IMPORT_MAX_ROWS;
 export const MAX_STAGED_IMPORTS_PER_OWNER = 1000;
 export type ImportLoginRow = {
   name?: string;
@@ -420,6 +441,47 @@ export class ConnectorEngine {
     await this.options.store.set(`${this.prefix}connection:${row.id}`,row);
     await this.publishEvents(row);
   }
+  /** Inspect committed authority without polling, renewing or opening a private page. */
+  browserWatchAuthority(id: string): Promise<BrowserWatchConnectionAuthority | undefined> {
+    return this.serial(async () => this.watchAuthorityOf(await this.load(id)));
+  }
+  /** Host-only final native admission read. Absence is denial, never permission
+   * to reuse a previous async proof. Call within the owning host transaction;
+   * the host must still match the expected revision/domain and account gate. */
+  browserWatchCommitAuthority(id: string): BrowserWatchConnectionAuthority | undefined {
+    try {
+      if (!/^[a-f0-9-]{36}$/.test(id) || !this.options.store.getSync) return undefined;
+      const value = this.options.store.getSync(`${this.prefix}connection:${id}`);
+      // `unknown` store values deliberately cannot make an async implementation
+      // look like a synchronous authority read, even if a thenable carries fields.
+      if (value && typeof (value as { then?: unknown }).then === "function") return undefined;
+      const row = object(value) as StoredConnection;
+      if (row.owner !== this.options.owner || row.id !== id) return undefined;
+      return this.watchAuthorityOf(row);
+    } catch { return undefined; }
+  }
+  /** Discovery uses the same store-only projection; connections() may renew sessions. */
+  browserWatchAuthorities(): Promise<BrowserWatchConnectionAuthority[]> {
+    return this.serial(async () => {
+      const rows = await this.options.store.list(`${this.prefix}connection:`);
+      return rows.flatMap(value => {
+        const authority = this.watchAuthorityOf(object(value) as StoredConnection);
+        return authority ? [authority] : [];
+      });
+    });
+  }
+  private watchAuthorityOf(row: StoredConnection): BrowserWatchConnectionAuthority | undefined {
+    const verification = row.browserVerification;
+    if (row.owner !== this.options.owner || !/^[a-f0-9-]{36}$/.test(row.id ?? "") ||
+      row.provider !== "browser" || row.status !== "connected" || verification?.verified !== true ||
+      !Number.isSafeInteger(verification.revision) || verification.revision < 1 ||
+      !Number.isSafeInteger(verification.expiresAt) || verification.expiresAt <= Date.now()) return undefined;
+    try {
+      const binding = this.browserBinding(row);
+      return { ...binding, revision: verification.revision, expiresAt: verification.expiresAt,
+        status: "connected", native: this.options.secureBrowser?.native === true };
+    } catch { return undefined; }
+  }
   async loginOperationContext(id:string) {
     const row=await this.load(id);
     if(row.provider!=="browser"||!this.options.secureBrowser?.control)throw Error("Owned private login unavailable");
@@ -434,7 +496,7 @@ export class ConnectorEngine {
       const row=await this.load(input.connectionId);
       await this.options.loginOperationGuard?.(input.connectionId,input);
       if(row.provider!=="browser" || this.browserBinding(row).domain!==input.domain || !this.options.secureBrowser?.control) throw Error("Owned private login unavailable");
-      const view=await this.options.secureBrowser.control(this.browserBinding(row),{action:input.action,attemptId:input.attemptId},signal);
+      const view=await this.options.secureBrowser.control(this.browserBinding(row),{action:input.action,attemptId:input.attemptId,gmailGrant:await this.loginGmailGrant(row)},signal);
       if(view.attemptId!==input.attemptId)throw Error("Login attempt changed");
       if(view.status==="connected") {
         const committed=await this.completeBrowser(row);
@@ -447,6 +509,25 @@ export class ConnectorEngine {
       await this.recordLoginObservations(row,view);
       return view;
     });
+  }
+  /** Reauthorize the original source for every private continuation. A retained
+   * VM source session is insufficient after local disconnect or replacement. */
+  private async loginGmailGrant(row: StoredConnection, input?: Partial<import("./native-login.ts").NativeLoginInput>): Promise<GmailLoginGrant | undefined> {
+    if (input?.action === "assist") {
+      if (!this.options.secureBrowser?.native || !loginUuid(input.sourceConnectionId) || !loginUuid(input.assistanceId) || !loginUuid(input.attemptId) || !loginAssistanceMethods.includes(input.assistMethod!)) throw Error("Invalid Gmail sign-in request");
+      const source = await this.load(input.sourceConnectionId);
+      const verification = source.browserVerification;
+      if (source.id === row.id || source.provider !== "browser" || this.browserBinding(source).domain !== GMAIL_DOMAIN || source.status !== "connected" || !verification?.verified || verification.expiresAt <= Date.now()) throw Error("Reconnect Gmail before continuing");
+      const next = { source: { connectionId: source.id, revision: verification.revision, expiresAt: verification.expiresAt }, id: input.assistanceId, attemptId: input.attemptId, method: input.assistMethod! };
+      if (row.loginAssistance && JSON.stringify(row.loginAssistance) !== JSON.stringify(next)) throw Error("An assisted sign-in is already active");
+      row.loginAssistance = next; await this.save(row); // Fence the owner's approval before remote work.
+    }
+    const pin = row.loginAssistance;
+    if (!pin || !this.options.secureBrowser?.native) return;
+    try {
+      const source = await this.load(pin.source.connectionId), verification = source.browserVerification;
+      if (source.provider === "browser" && this.browserBinding(source).domain === GMAIL_DOMAIN && source.status === "connected" && verification?.verified && verification.revision === pin.source.revision && verification.expiresAt === pin.source.expiresAt && verification.expiresAt > Date.now()) return { ...pin.source };
+    } catch { /* Lost/foreign custody is denial, not a renewed grant. */ }
   }
   nativeControl(
     id: string,
@@ -474,6 +555,8 @@ export class ConnectorEngine {
         row.status !== "pending" ||
         !this.options.secureBrowser?.control ||
         ![
+          "assist",
+          "assist_consent",
           "form",
           "credentials",
           "login",
@@ -488,6 +571,8 @@ export class ConnectorEngine {
         ].includes(input.action)
       )
         throw Error("Private sign-in unavailable");
+      const gmailGrant = await this.loginGmailGrant(row, input);
+      if (input.action === "assist_consent" && (row.loginAssistance?.id !== input.assistanceId || row.loginAssistance?.attemptId !== input.attemptId)) throw Error("Stale assisted sign-in approval");
       const key = `${this.prefix}login-progress:${id}`;
       const progress: { stage: string; message: string; at: number }[] = [];
       const report = async (stage: string, message: string) => {
@@ -514,7 +599,7 @@ export class ConnectorEngine {
       try {
         result = await this.options.secureBrowser.control(
           this.browserBinding(row),
-          input,
+          { ...input, gmailGrant },
           deadline,
         );
       } catch (error) {
@@ -532,7 +617,7 @@ export class ConnectorEngine {
       }
       if (result.status === "connected") await this.completeBrowser(row);
       await this.recordLoginObservations(row,result);
-      await report("complete", result.status === "connected" ? "Connected successfully." : result.requiresOrigin ? "The website needs your permission to continue." : result.fields?.includes("code") ? "Enter the website’s verification code." : result.fields?.length ? "The sign-in form is ready." : "Waiting for the website to finish loading…");
+      await report(result.pageError ? "failed" : result.status === "connected" ? "complete" : "waiting", result.status === "connected" ? "Connected successfully." : result.pageError === "navigation_uncertain" ? "The website stopped responding after sign-in was sent. Check its status before submitting again." : result.pageError ? "The sign-in website could not be loaded. Check its status to try again." : result.requiresOrigin ? "The website needs your permission to continue." : result.fields?.includes("code") ? "Enter the website’s verification code." : result.fields?.length ? "The sign-in form is ready." : "Waiting for the website to finish loading…");
       return result;
     });
   }
@@ -668,7 +753,9 @@ export class ConnectorEngine {
         rows.length < 1 ||
         rows.length > MAX_IMPORT_ROWS_PER_REQUEST
       )
-        throw new Error("Import between 1 and 500 logins at a time");
+        throw new Error(`Import between 1 and ${MAX_IMPORT_ROWS_PER_REQUEST} logins at a time`);
+      const capacityError = loginImportCapacityError(rows);
+      if (capacityError) throw new Error(capacityError);
       const existing = await this.options.store.list(
         `${this.prefix}connection:`,
       );
@@ -1102,6 +1189,7 @@ export class ConnectorEngine {
     delete row.authId;
     delete row.browserVerification;
     delete row.credentialReference;
+    delete row.loginAssistance;
     const adapter = this.options.secureBrowser;
     if (row.provider === "browser" && !alreadySettled)
       row.relayDisconnectStatus = adapter?.disconnect
@@ -1209,8 +1297,13 @@ export class ConnectorEngine {
     }
   }
   private async connectBrowserUnlocked(value: string): Promise<Connection> {
-    const domain = connectorDomain(value);
+    const requested = connectorDomain(value);
+    const domain = this.options.secureBrowser?.native ? canonicalGmailDomain(requested) : requested;
     const connections = await this.connectionsUnlocked();
+    if (this.options.secureBrowser?.native && connections.some(row =>
+      row.provider === "browser" && ["pending", "connected"].includes(row.status) &&
+      row.connectorId !== `browser:${domain}` && canonicalGmailDomain(row.connectorId.slice(8)) === domain))
+      throw Error("Disconnect the previous Gmail connection, then add Gmail again to update its sign-in address.");
     const existing = connections.find(
       (row) =>
         row.connectorId === `browser:${domain}` &&
@@ -1259,7 +1352,8 @@ export class ConnectorEngine {
             connections.some(
               (row) =>
                 row.id !== old.id &&
-                row.connectorId === old.connectorId &&
+                row.provider === "browser" &&
+                nativeLoginScopesOverlap(connectorDomain(row.connectorId.slice(8)), this.browserBinding(old).domain) &&
                 ["pending", "connected"].includes(row.status),
             )
           )

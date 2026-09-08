@@ -375,7 +375,7 @@ export interface MemorySnapshot {
   /** Scope-wide revisions bracketing this read, never attributed to one ingestion. */
   scopeVersion: number;
   endScopeVersion: number;
-  hashPolicyVersion: "aiko-memory-semantic/v1";
+  hashPolicyVersion: "aiko-memory-semantic/v2";
   root: string;
   leaves: {
     subject: string;
@@ -403,7 +403,7 @@ function rawLogEpisode(
   );
 }
 
-/** Page native current heads so corpus growth never silently truncates the change root. */
+/** Page native current, non-stale heads; revocation and dependency invalidation remove evidence from this root. */
 export function memorySnapshot(binding: Binding): MemorySnapshot {
   const memory = openMemory(binding);
   try {
@@ -434,7 +434,7 @@ export function memorySnapshot(binding: Binding): MemorySnapshot {
       );
     const admitted = candidates.flatMap((candidate) => {
       const hit = memory.get(candidate.id);
-      if (!hit || hit.state !== "current") return [];
+      if (!hit || hit.state !== "current" || hit.freshness === "stale") return [];
       const observation = hit.observation;
       return [
         {
@@ -452,16 +452,16 @@ export function memorySnapshot(binding: Binding): MemorySnapshot {
       );
     let level = leaves.map((leaf) =>
       sha256(
-        `aiko-memory-leaf/v1\n${JSON.stringify([leaf.subject, leaf.digest])}`,
+        `aiko-memory-leaf/v2\n${JSON.stringify([leaf.subject, leaf.digest])}`,
       ),
     );
-    if (!level.length) level = [sha256("aiko-memory-empty/v1")];
+    if (!level.length) level = [sha256("aiko-memory-empty/v2")];
     while (level.length > 1) {
       const parents: string[] = [];
       for (let index = 0; index < level.length; index += 2)
         parents.push(
           sha256(
-            `aiko-memory-node/v1\n${level[index]}\n${level[index + 1] ?? level[index]}`,
+            `aiko-memory-node/v2\n${level[index]}\n${level[index + 1] ?? level[index]}`,
           ),
         );
       level = parents;
@@ -469,7 +469,7 @@ export function memorySnapshot(binding: Binding): MemorySnapshot {
     const endScopeVersion = memory.journal.scopeVersion(memory.scope);
     return {
       scope: memory.scope, scopeVersion: before, endScopeVersion,
-      hashPolicyVersion: "aiko-memory-semantic/v1",
+      hashPolicyVersion: "aiko-memory-semantic/v2",
       root: level[0],
       leaves,
       complete:

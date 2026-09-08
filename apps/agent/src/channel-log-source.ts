@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { BROWSER_EVENT_SCHEMA, browserEventKey, browserEventTypes, validateBrowserEventFields, type BrowserEventKind } from "./browser-events.ts";
 import { component } from "tardie/core/component";
 import { effect } from "tardie/core/effect";
 import { Self } from "tardie/core/runtime";
@@ -9,7 +10,7 @@ import {
   browserToolCategoryOf,
   BROWSER_TRACE_SCHEMA_VERSION,
   BROWSER_TRACE_REDACTION_REVISION,
-} from "../../../packages/browser-harness/src/browser-trace.ts";
+} from "@unbrowse/browser-harness/trace";
 import { channelDigest, CHANNEL_PROVENANCE } from "./channel-bindings.ts";
 import { channelSeal, channelHydrate } from "./channel-custody.ts";
 import { harnessDigest } from "./harness-library.ts";
@@ -21,7 +22,7 @@ import { routeBackground } from "./background-route.ts";
 import type { createChannelWiring, WiringJournal } from "./channel-wiring.ts";
 
 export type ChannelLogSourceKind =
-  "browser-result" | "knowledge-change" | "private-login";
+  "browser-result" | "knowledge-change" | "private-login" | "browser-push" | "browser-notification" | "browser-network";
 export interface ChannelLogSourceGrant {
   owner: string;
   id: string;
@@ -30,6 +31,13 @@ export interface ChannelLogSourceGrant {
   active: boolean;
   expiresAt: number;
   maxBindings: number;
+  /** Trusted browser watch scope and monotone private queue floor. This changes
+   * admission, never the saved source snapshot, pin or cursor numbering. */
+  browserSequenceCut?: { producer: string; epoch: string; generation: number; through: number };
+  /** Confirmed native watch renewal; the cumulative budget never resets the cut. */
+  browserLease?: { revision: number; expiresAt: number; maxOccurrences: number; requestId: string };
+  /** A watch owns one immutable source cut, including after exhaustion. */
+  browserOperationId?: string;
 }
 /** Trusted host configuration, refreshed at registration and every admission. No
  * caller-selected owner, stream, predicate, model or network capability exists. */
@@ -40,17 +48,35 @@ export interface ChannelLogSourceBindings {
   grants(): readonly ChannelLogSourceGrant[];
   current(): boolean;
 }
-const types: Record<ChannelLogSourceKind, string> = {
+export interface BrowserLogSourceFilter {
+  connectionId: string; connectionRevision: string; generation: number; origin: string;
+  outcome: string; method?: string; route?: string; excludeCausePrefix?: string;
+}
+export function matchesBrowserLogSource(e: Event, filter: BrowserLogSourceFilter) {
+  const fields = e.fields as Record<string, unknown> | undefined;
+  return e.connectionId === filter.connectionId && e.connectionRevision === filter.connectionRevision && e.generation === filter.generation &&
+    fields?.origin === filter.origin && fields?.outcome === filter.outcome &&
+    (filter.method === undefined || fields?.method === filter.method) && (filter.route === undefined || fields?.route === filter.route) &&
+    !(filter.excludeCausePrefix && typeof e.cause === "string" && e.cause.startsWith(filter.excludeCausePrefix));
+}
+const legacyTypes = {
   "browser-result": "BrowserToolResultObserved",
   "knowledge-change": "AikoKnowledgeChanged",
   "private-login": "AikoPrivateLoginObserved",
 };
+const types: Record<ChannelLogSourceKind, string> = { ...legacyTypes,
+  "browser-push": browserEventTypes.push,
+  "browser-notification": browserEventTypes.notification,
+  "browser-network": browserEventTypes.network,
+};
+const browserSourceKind = (kind: ChannelLogSourceKind): BrowserEventKind | undefined =>
+  kind === "browser-push" ? "push" : kind === "browser-notification" ? "notification" : kind === "browser-network" ? "network" : undefined;
 export const channelLogSourceSchema = (kind: ChannelLogSourceKind) =>
   `aiko.observation.${kind}.v1`;
 const recipe = channelDigest([
   "aiko.log-source",
   1,
-  types,
+  legacyTypes,
   BROWSER_TRACE_SCHEMA_VERSION,
   BROWSER_TRACE_REDACTION_REVISION,
   {
@@ -68,6 +94,9 @@ const recipe = channelDigest([
     loginRevision: "native-login-observation/1",
   },
 ]);
+// Preserve existing three source recipes and artifact pins across this additive change.
+const sourceRecipe = (kind: ChannelLogSourceKind) => browserSourceKind(kind)
+  ? channelDigest(["aiko.browser-log-source", 1, kind, BROWSER_EVENT_SCHEMA]) : recipe;
 const kinds = new Set([
   "Cut",
   "Bound",
@@ -78,6 +107,7 @@ const kinds = new Set([
   "Wake",
   "Relayed",
   "Exhausted",
+  "Renewed",
 ]);
 export function channelLogSourceEventKey(e: Event) {
   return e.provenance === CHANNEL_PROVENANCE &&
@@ -121,6 +151,15 @@ export function normalizeChannelLogSource(
   if (e.type !== types[kind] || (e.owner !== undefined && e.owner !== owner))
     return;
   const base = { schema: channelLogSourceSchema(kind), sequence, occurrence };
+  const browserKind = browserSourceKind(kind);
+  if (browserKind) {
+    if (!browserEventKey(e) || e.owner !== owner || e.kind !== browserKind || typeof e.connectionId !== "string" || typeof e.connectionRevision !== "string") return;
+    try {
+      const fields = validateBrowserEventFields(e.fields, browserKind);
+      return { ...base, eventId: e.id, connectionId: e.connectionId, connectionRevision: e.connectionRevision,
+        kind: browserKind, observedAt: e.observedAt, fields };
+    } catch { return; }
+  }
   if (kind === "browser-result") {
     if (![true, false, "unknown"].includes(e.success as any)) return;
     const action = browserToolActionOf(e.action);
@@ -186,7 +225,7 @@ export function channelLogSourceAppendAllowed(
 ) {
   const rows = [...read()];
   for (const e of batch) {
-    if (!e.type.startsWith("AikoChannelLogSource")) continue;
+    if (!e.type.startsWith("AikoChannelLogSource")) { rows.push(e); continue; }
     if (!channelLogSourceEventKey(e)) return false;
     const previous = rows.find(
       (p) => channelLogSourceEventKey(p) === channelLogSourceEventKey(e),
@@ -202,6 +241,7 @@ export function channelLogSourceAppendAllowed(
         "AikoChannelLogSourceRevoked",
         "AikoChannelLogSourceGap",
         "AikoChannelLogSourceExhausted",
+        "AikoChannelLogSourceRenewed",
       ].includes(e.type) &&
       !rows.some(
         (p) =>
@@ -211,6 +251,19 @@ export function channelLogSourceAppendAllowed(
       )
     )
       return false;
+    if (e.type === "AikoChannelLogSourceRenewed") {
+      const lease = channelLogSourceLease(rows, String(e.owner), String(e.binding));
+      const request = rows.find(p => p.owner === e.owner && p.type === "AikoBrowserWatchLeaseRenewalRequested" && p.id === e.watchRenewalId);
+      if (!lease.request || !browserSourceKind(lease.request.source) || lease.stop?.type === "AikoChannelLogSourceGap" || lease.stop?.type === "AikoChannelLogSourceRevoked" ||
+        e.id !== `${e.binding}:lease:${e.leaseRevision}` || e.leaseRevision !== lease.revision + 1 ||
+        !request || lease.request.sourceAuthority !== `watch-source:${request.watchId}` || request.leaseRevision !== e.leaseRevision ||
+        request.expiresAt !== e.expiresAt || request.maxOccurrences !== e.maxOccurrences ||
+        !rows.some(p => p.owner === e.owner && p.type === "AikoBrowserWatchLeaseRenewalChecked" && p.requestId === request.id && p.status === "confirmed") ||
+        !Number.isSafeInteger(e.expiresAt) || !Number.isSafeInteger(request.at) || Number(e.expiresAt) <= Number(request.at) ||
+        Number(e.expiresAt) > Number(request.at) + 86400000 || Number(e.expiresAt) < lease.request.expiresAt ||
+        !Number.isSafeInteger(e.maxOccurrences) || Number(e.maxOccurrences) < (lease.request.maxOccurrences ?? 128) || Number(e.maxOccurrences) < lease.used || Number(e.maxOccurrences) > 1_000_000 ||
+        e.expiresAt === lease.request.expiresAt && e.maxOccurrences === lease.request.maxOccurrences) return false;
+    }
     if (e.type === "AikoChannelLogSourceProgress") {
       const cut = rows.find(
         (p) =>
@@ -252,7 +305,22 @@ type Request = {
   receivingAuthority: string;
   port: { channel: string; generation: number };
   expiresAt: number;
+  filter?: BrowserLogSourceFilter;
+  maxOccurrences?: number;
 };
+/** Retain the original immutable request, cut and history anchor. Only lifetime
+ * bounds are overlaid by independently keyed native renewal facts. */
+export function channelLogSourceLease(rows: readonly Event[], owner: string, id: string) {
+  const facts = own(rows, owner), cut = facts.find(e => e.type === "AikoChannelLogSourceCut" && e.id === id);
+  const renewal = facts.findLast(e => e.type === "AikoChannelLogSourceRenewed" && e.binding === id);
+  const revision = Number(renewal?.leaseRevision ?? 0);
+  const original = cut?.request as Request | undefined;
+  const request = original && { ...original, ...(renewal ? { expiresAt: Number(renewal.expiresAt), maxOccurrences: Number(renewal.maxOccurrences) } : {}) };
+  const stop = facts.findLast(e => e.binding === id && (["AikoChannelLogSourceRevoked", "AikoChannelLogSourceGap"].includes(e.type) ||
+    e.type === "AikoChannelLogSourceExhausted" && Number(e.leaseRevision ?? 0) >= revision));
+  const progress = facts.findLast(e => e.type === "AikoChannelLogSourceProgress" && e.binding === id) ?? cut;
+  return { cut, progress, request, revision, stop, used: Math.max(0, Number(progress?.cursor ?? 0) - Number(cut?.cursor ?? 0)) };
+}
 export function createChannelLogSources(
   owner: string,
   journal: WiringJournal,
@@ -269,23 +337,40 @@ export function createChannelLogSources(
     )
       throw Error("log_source_owner_denied");
   });
-  const allowed = (a: Request) =>
+  const allowed = (a: Request, allowInactiveRenewal = false) =>
     binding.current() &&
     binding
       .grants()
       .some(
         (g) =>
           g.owner === owner &&
-          g.active &&
+          (g.active || allowInactiveRenewal && !!browserSourceKind(a.source)) &&
           g.id === a.sourceAuthority &&
           g.kind === a.source &&
           g.receivingAuthority === a.receivingAuthority &&
-          g.expiresAt >= a.expiresAt &&
-          a.expiresAt > Date.now() &&
+          (allowInactiveRenewal ? g.browserLease?.expiresAt ?? g.expiresAt : g.expiresAt) >= a.expiresAt &&
+          (allowInactiveRenewal || a.expiresAt > Date.now()) &&
+          (g.browserOperationId === undefined || !!browserSourceKind(a.source) &&
+            /^[a-zA-Z0-9_.:-]{1,128}$/.test(g.browserOperationId) && g.browserOperationId === a.operationId) &&
           Number.isInteger(g.maxBindings) &&
           g.maxBindings > 0 &&
-          g.maxBindings <= 32,
+          g.maxBindings <= 32 && (!g.browserSequenceCut || !!browserSourceKind(a.source) &&
+            typeof g.browserSequenceCut.producer === "string" && !!g.browserSequenceCut.producer && typeof g.browserSequenceCut.epoch === "string" && !!g.browserSequenceCut.epoch &&
+            Number.isSafeInteger(g.browserSequenceCut.generation) && g.browserSequenceCut.generation > 0 && Number.isSafeInteger(g.browserSequenceCut.through) && g.browserSequenceCut.through >= 0),
       );
+  const browserCutReason = (a: Request, event: Event, current?: readonly Event[]) => {
+    const cut = binding.grants().find(g => g.owner === owner && g.id === a.sourceAuthority && g.kind === a.source && g.receivingAuthority === a.receivingAuthority)?.browserSequenceCut;
+    if (!cut || !browserSourceKind(a.source)) return undefined;
+    if (event.producer !== cut.producer || event.epoch !== cut.epoch || event.generation !== cut.generation) return "watch_producer_scope";
+    // A retained control can only narrow this explicitly bound grant. Read its
+    // native cut at commit too, so asynchronous grant refresh cannot admit an
+    // old occurrence between a pause/resume transaction and projection refresh.
+    const controls = current?.filter(e => e.owner === owner && e.type === "AikoBrowserWatchControlled" &&
+      (e.sequenceCut as any)?.producer === cut.producer && (e.sequenceCut as any)?.epoch === cut.epoch && (e.sequenceCut as any)?.generation === cut.generation) ?? [];
+    if (controls.at(-1) && controls.at(-1)!.status !== "active") return "watch_paused";
+    const through = Math.max(cut.through, ...controls.map(e => Number((e.sequenceCut as any).through)));
+    return Number(event.sequence) <= through ? "watch_pause_cut" : undefined;
+  };
   const ackPins = new Set(
     channelLogSourceHarnessDefinitions().map((d) => harnessDigest(d.artifact)),
   );
@@ -297,10 +382,11 @@ export function createChannelLogSources(
     });
     if (!allowed(a)) throw Error("log_source_grant_denied");
   };
-  const snapshot = async (kind: ChannelLogSourceKind) => {
+  const snapshot = async (request: Request) => {
+    const kind = request.source;
     const rows = await readThread(stream(owner, kind));
     return rows
-      .filter((e) => e.type === types[kind])
+      .filter((e) => e.type === types[kind] && (!request.filter || matchesBrowserLogSource(e, request.filter)))
       .map((e) =>
         kind !== "knowledge-change"
           ? e
@@ -320,29 +406,45 @@ export function createChannelLogSources(
   const anchor = (rows: readonly Event[]) =>
     channelSeal(journal.blobs, owner, harnessDigest(rows));
   const state = (rows: readonly Event[], id: string) => {
-    const facts = own(rows, owner),
-      cut = facts.find(
-        (e) => e.type === "AikoChannelLogSourceCut" && e.id === id,
-      );
-    const progress =
-      facts
-        .filter(
-          (e) => e.type === "AikoChannelLogSourceProgress" && e.binding === id,
-        )
-        .at(-1) ?? cut;
-    return {
-      cut,
-      progress,
-      stopped: facts.some(
-        (e) =>
-          [
-            "AikoChannelLogSourceRevoked",
-            "AikoChannelLogSourceGap",
-            "AikoChannelLogSourceExhausted",
-          ].includes(e.type) && e.binding === id,
-      ),
-    };
+    const lease = channelLogSourceLease(rows, owner, id);
+    return { ...lease, stopped: !!lease.stop };
   };
+  const renew = (raw: { id: string; leaseRevision: number; expiresAt: number; maxOccurrences: number; watchRenewalId: string }, confirmation?: Event) => Effect.gen(function* () {
+    yield* scoped;
+    const args = structuredClone(raw), rows = yield* Effect.promise(journal.read), s = state(rows, args.id);
+    const checked = confirmation && structuredClone(confirmation);
+    if (checked && (checked.owner !== owner || checked.type !== "AikoBrowserWatchLeaseRenewalChecked" || checked.requestId !== args.watchRenewalId || checked.status !== "confirmed")) throw Error("log_source_renewal_confirmation_invalid");
+    if (s.stop && s.stop.type !== "AikoChannelLogSourceExhausted") throw Error("log_source_renewal_invalid");
+    const eventId = `${args.id}:lease:${args.leaseRevision}`;
+    const prior = own(rows, owner).find(e => e.type === "AikoChannelLogSourceRenewed" && e.id === eventId);
+    if (prior) {
+      if (prior.expiresAt !== args.expiresAt || prior.maxOccurrences !== args.maxOccurrences || prior.watchRenewalId !== args.watchRenewalId) throw Error("log_source_renewal_conflict");
+      return { status: "active", id: args.id, leaseRevision: args.leaseRevision, used: s.used };
+    }
+    if (!s.request || !browserSourceKind(s.request.source) || s.stop && s.stop.type !== "AikoChannelLogSourceExhausted" ||
+      args.leaseRevision !== s.revision + 1 || !Number.isSafeInteger(args.expiresAt) ||
+      args.expiresAt < s.request.expiresAt || !Number.isSafeInteger(args.maxOccurrences) || args.maxOccurrences < (s.request.maxOccurrences ?? 128) ||
+      args.maxOccurrences < s.used || args.maxOccurrences > 1_000_000 || args.expiresAt === s.request.expiresAt && args.maxOccurrences === s.request.maxOccurrences) throw Error("log_source_renewal_invalid");
+    const request = { ...s.request, expiresAt: args.expiresAt, maxOccurrences: args.maxOccurrences };
+    // A valid time-only request can reach confirmation after the old budget is
+    // consumed. Retain its exact ceiling; scanning still enforces used >= limit.
+    const permitted = () => allowed(request, true) && binding.grants().some(g => g.owner === owner && g.id === request.sourceAuthority &&
+      g.browserLease?.revision === args.leaseRevision && g.browserLease.expiresAt === args.expiresAt && g.browserLease.maxOccurrences === args.maxOccurrences && g.browserLease.requestId === args.watchRenewalId);
+    if (!permitted()) throw Error("log_source_renewal_denied");
+    return yield* Effect.promise(() => journal.transact(current => {
+      if (!permitted()) throw Error("log_source_renewal_denied");
+      const next = fact(owner, "Renewed", eventId, { binding: args.id, leaseRevision: args.leaseRevision,
+        expiresAt: args.expiresAt, maxOccurrences: args.maxOccurrences, watchRenewalId: args.watchRenewalId });
+      const retained = own(current, owner).find(e => e.type === next.type && e.id === eventId);
+      if (retained && channelDigest(retained) !== channelDigest(next)) throw Error("log_source_renewal_conflict");
+      const batch = retained ? [] : [...(checked ? [checked] : []), next];
+      if (!channelLogSourceAppendAllowed(batch, () => current)) throw Error("log_source_renewal_denied");
+      return { events: batch, result: { status: "active", id: args.id, leaseRevision: args.leaseRevision, used: state(current, args.id).used } };
+    }, async () => {
+      await wiring.authorizeAdmission(request.receivingAuthority, "emit", { port: request.port, schema: channelLogSourceSchema(request.source) });
+      if (!permitted()) throw Error("log_source_renewal_denied");
+    }));
+  });
   const register = (raw: unknown) =>
     Effect.gen(function* () {
       yield* scoped;
@@ -358,6 +460,8 @@ export function createChannelLogSources(
               "receivingAuthority",
               "port",
               "expiresAt",
+              "filter",
+              "maxOccurrences",
             ].includes(k),
         ) ||
         !Object.hasOwn(types, a.source) ||
@@ -371,6 +475,12 @@ export function createChannelLogSources(
         !allowed(a)
       )
         throw Error("log_source_grant_denied");
+      if ((a.filter || a.maxOccurrences !== undefined) && !browserSourceKind(a.source)) throw Error("browser_source_options_required");
+      if (a.maxOccurrences !== undefined && (!Number.isSafeInteger(a.maxOccurrences) || a.maxOccurrences < 1 || a.maxOccurrences > 1_000_000)) throw Error("browser_source_budget_invalid");
+      if (a.filter && (Object.keys(a.filter).some(key => !["connectionId", "connectionRevision", "generation", "origin", "outcome", "method", "route", "excludeCausePrefix"].includes(key)) ||
+        !a.filter.connectionId || !a.filter.connectionRevision || !Number.isSafeInteger(a.filter.generation) || a.filter.generation < 1 ||
+        typeof a.filter.origin !== "string" || typeof a.filter.outcome !== "string" ||
+        a.filter.excludeCausePrefix !== undefined && (typeof a.filter.excludeCausePrefix !== "string" || !a.filter.excludeCausePrefix.length))) throw Error("browser_source_filter_invalid");
       yield* Effect.promise(() =>
         wiring.authorizeAdmission(a.receivingAuthority, "emit", {
           port: a.port,
@@ -390,7 +500,7 @@ export function createChannelLogSources(
         requestDigest = channelDigest(a);
       let cut = state(yield* Effect.promise(journal.read), id).cut;
       if (!cut) {
-        const source = yield* Effect.promise(() => snapshot(a.source));
+        const source = yield* Effect.promise(() => snapshot(a));
         const anchorRef = yield* Effect.promise(() => anchor(source));
         cut = yield* Effect.promise(() =>
           journal.transact((rows) => {
@@ -414,7 +524,7 @@ export function createChannelLogSources(
             const e = fact(owner, "Cut", id, {
               request: a,
               requestDigest,
-              recipe,
+              recipe: sourceRecipe(a.source),
               stream: stream(owner, a.source),
               cursor: source.length,
               anchorRef,
@@ -423,7 +533,7 @@ export function createChannelLogSources(
           }, recheck(a)),
         );
       }
-      if (cut.requestDigest !== requestDigest || cut.recipe !== recipe)
+      if (cut.requestDigest !== requestDigest || cut.recipe !== sourceRecipe(a.source))
         throw Error("log_source_operation_conflict");
       return yield* Effect.promise(() =>
         journal.transact((rows) => {
@@ -474,7 +584,7 @@ export function createChannelLogSources(
       const wake = rows.filter(
         (e) =>
           Object.values(types).includes(e.type) ||
-          ["AikoChannelWiringCursor", "AikoChannelLogSourceWake"].includes(
+          ["AikoChannelWiringCursor", "AikoChannelWiringConsumed", "AikoChannelLogSourceWake"].includes(
             e.type,
           ),
       ).length;
@@ -498,7 +608,7 @@ export function createChannelLogSources(
               Effect.gen(function* () {
                 yield* scoped;
                 const a = cut.request as Request;
-                if (cut.recipe !== recipe) {
+                if (cut.recipe !== sourceRecipe(a.source)) {
                   yield* Effect.promise(() =>
                     journal.transact(() => ({
                       events: [
@@ -552,9 +662,9 @@ export function createChannelLogSources(
         .flatMap((bound) => {
           const id = String(bound.id),
             s = state(rows, id),
-            a = s.cut?.request as Request;
+            a = s.request as Request;
           if (!a || !s.progress || s.stopped) return [];
-          const token = channelDigest([id, s.progress.cursor, wake]);
+          const token = channelDigest(s.revision ? [id, s.progress.cursor, wake, s.revision] : [id, s.progress.cursor, wake]);
           return [
             effect({
               key: `aiko-channel-log-source:scan:${token}`,
@@ -563,9 +673,10 @@ export function createChannelLogSources(
                 Effect.gen(function* () {
                   yield* scoped;
                   if (!allowed(a)) return [];
-                  let current = state(yield* Effect.promise(journal.read), id);
+                  const currentLog = yield* Effect.promise(journal.read);
+                  let current = state(currentLog, id);
                   if (current.stopped) return [];
-                  if (current.cut!.recipe !== recipe) {
+                  if (current.cut!.recipe !== sourceRecipe(a.source)) {
                     yield* Effect.promise(() =>
                       journal.transact(() => ({
                         events: [
@@ -581,17 +692,19 @@ export function createChannelLogSources(
                     return [];
                   }
                   const source = yield* Effect.promise(() =>
-                    snapshot(a.source),
+                    snapshot(a),
                   );
                   const start = Number(current.progress!.cursor);
                   // Lifetime work is bounded too, including custom knowledge handlers that
                   // cause further learning. Explicit new composition is required after exhaustion.
-                  if (start - Number(current.cut!.cursor) >= 128) {
+                  const lifetimeBudget = a.maxOccurrences ?? 128;
+                  if (start - Number(current.cut!.cursor) >= lifetimeBudget) {
                     yield* Effect.promise(() =>
                       journal.transact(() => ({
                         events: [
-                          fact(owner, "Exhausted", id, {
+                          fact(owner, "Exhausted", s.revision ? `${id}:lease:${s.revision}` : id, {
                             binding: id,
+                            ...(s.revision ? { leaseRevision: s.revision } : {}),
                             cursor: start,
                             reason: "source_occurrence_budget",
                           }),
@@ -632,13 +745,14 @@ export function createChannelLogSources(
                     Math.min(
                       source.length,
                       start + 32,
-                      Number(current.cut!.cursor) + 128,
+                      Number(current.cut!.cursor) + lifetimeBudget,
                     );
                     i++
                   ) {
                     const occurrence = channelDigest([owner, id, i + 1]),
+                      sourceCut = browserCutReason(a, source[i]!, currentLog),
                       value =
-                        source[i]!.sourceFeedback === true
+                        source[i]!.sourceFeedback === true || sourceCut !== undefined
                           ? undefined
                           : normalizeChannelLogSource(
                               a.source,
@@ -670,6 +784,8 @@ export function createChannelLogSources(
                           current = state(events, id);
                           if (!allowed(a) || current.stopped)
                             return { events: [], result: true };
+                          if (browserCutReason(a, source[i]!, events) !== sourceCut)
+                            return { events: [], result: true };
                           if (Number(current.progress!.cursor) !== i)
                             return { events: [], result: true };
                           try {
@@ -688,7 +804,7 @@ export function createChannelLogSources(
                                         reason:
                                           source[i]!.sourceFeedback === true
                                             ? "source_ack_feedback"
-                                            : "invalid_source_metadata",
+                                            : sourceCut ?? "invalid_source_metadata",
                                       }),
                                 }),
                               ],
@@ -745,24 +861,18 @@ export function createChannelLogSources(
             rows = yield* Effect.promise(journal.read),
             s = state(rows, id);
           if (!s.cut) throw Error("log_source_binding_missing");
-          const stop = own(rows, owner).find(
-            (e) =>
-              e.binding === id &&
-              [
-                "AikoChannelLogSourceGap",
-                "AikoChannelLogSourceRevoked",
-                "AikoChannelLogSourceExhausted",
-              ].includes(e.type),
-          );
+          const stop = s.stop;
           return {
             id,
             cursor: s.progress!.cursor,
             start: s.cut.cursor,
+            leaseRevision: s.revision, expiresAt: s.request!.expiresAt, maxOccurrences: s.request!.maxOccurrences ?? 128,
+            used: s.used, remaining: Math.max(0, (s.request!.maxOccurrences ?? 128) - s.used),
             status:
               stop?.reason ??
               (stop
                 ? "revoked"
-                : allowed(s.cut.request as Request)
+                : allowed(s.request!)
                   ? "active"
                   : "authority_unavailable"),
           };
@@ -790,7 +900,7 @@ export function createChannelLogSources(
             .map((g) => ({
               ...g,
               schema: channelLogSourceSchema(g.kind),
-              recipe,
+              recipe: sourceRecipe(g.kind),
               maxOccurrences: 128,
               batchSize: 32,
               handler: (() => {
@@ -830,7 +940,7 @@ export function createChannelLogSources(
       run: revoke,
     },
   ];
-  return { component: native, tools, api: { register, revoke } };
+  return { component: native, tools, api: { register, revoke, renew } };
 }
 
 /** Retained indexer-to-owner native handoff. Wake contains no observation payload
@@ -892,7 +1002,9 @@ export function channelLogSourceHarnessDefinitions(): readonly import("./harness
       occurrence: { type: "string", pattern: "^[a-f0-9]{64}$" },
     };
     const fields =
-      kind === "browser-result"
+      browserSourceKind(kind)
+        ? { eventId: {type:"string",maxLength:512}, connectionId:{type:"string",maxLength:160}, connectionRevision:{type:"string",maxLength:160}, kind:{const:browserSourceKind(kind)}, observedAt:{type:"integer",minimum:1}, fields:{type:"object",properties:{origin:{type:"string"},outcome:{enum:["received","displayed","completed","failed"]},method:{type:"string"},route:{type:"string"},status:{type:"integer"}},required:["origin","outcome"],additionalProperties:false} }
+        : kind === "browser-result"
         ? {
             action: { type: "string", maxLength: 64 },
             category: {
@@ -956,7 +1068,9 @@ export function channelLogSourceHarnessDefinitions(): readonly import("./harness
             schema,
             sequence,
             occurrence: "a".repeat(64),
-            ...(kind === "browser-result"
+            ...(browserSourceKind(kind)
+              ? {eventId:`event-${sequence}`,connectionId:"fixture-connection",connectionRevision:"1",kind:browserSourceKind(kind)!,observedAt:1,fields:{origin:"https://example.com",outcome:kind==="browser-push"?"received":kind==="browser-notification"?"displayed":"completed"}}
+              : kind === "browser-result"
               ? {
                   action: "read",
                   category: "navigation",
@@ -1032,7 +1146,7 @@ export function channelLogSourceHarnessDefinitions(): readonly import("./harness
         sources: [
           {
             uri: `unlock:log-source/${kind}`,
-            revision: recipe,
+            revision: sourceRecipe(kind),
             digest: harnessDigest(code),
             license: "NOASSERTION",
           },

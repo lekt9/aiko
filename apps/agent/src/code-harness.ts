@@ -19,8 +19,11 @@ import type { HarnessBlobStore, HarnessDigest } from "./harness-library.ts";
 import { sandboxCanonical } from "./sandbox-job.ts";
 import { createCodeSpeculation } from "./code-speculation.ts";
 import { CodeData, codeDataEventKey, type CodeDataHandle } from "./code-data.ts";
+import { codeInferenceSourcesOf, type CodeInferenceSource } from "./code-context-custody.ts";
+import { retainedDependencies } from "./retained-result-dependencies.ts";
+import { promiseSandbox } from "./promise-execution.ts";
 
-export type CodeResultScope = { owner: string; thread: string; callId: string; tool: string; definitionDigest: string };
+export type CodeResultScope = { owner: string; thread: string; callId: string; tool: string; definitionDigest: string; dependencies?: readonly HarnessDigest[] };
 export interface CodeResultCustody {
   blobs: HarnessBlobStore;
   /** Trusted host policy: recheck current account, tool and invocation authority. */
@@ -29,13 +32,17 @@ export interface CodeResultCustody {
   read?(): Promise<readonly Event[]>;
 }
 type RetainedResult = CodeResultScope & { kind: "aiko-code-retained.v1"; ref: HarnessDigest };
-type CodeCompactionState = {kind:"aiko-code-compaction.v1";owner:string;thread:string;providerState:unknown;sources:CodeResultScope[]};
+type CodeCompactionState = {kind:"aiko-code-compaction.v1";owner:string;thread:string;providerState:unknown;sources:CodeResultScope[];inferenceSources:CodeInferenceSource[]};
 const unavailable = "Private tool result unavailable; inspect retained receipts. Do not repeat uncertain writes.";
 
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const controls = new Set(["execute", "respond", "send_message", "telegram_send", "telegram_voice", "telegram_screenshot", "tool_router_route", "tool_router_discover", "tool_router_describe", "tool_router_status", "code_workflow_run", "code_workflow_save", "code_workflow_list"]);
 export const codeHarnessEventKey = (e: Event) => codeDataEventKey(e) ?? (["AikoCodeToolStarted", "AikoCodeToolSettled", "AikoToolDefinitionRecorded", "AikoCodeWorkflowSaved"].includes(e.type) && typeof e.id === "string" ? `aiko-code-tool:${e.type}:${e.id}` : undefined);
 type ValueRef = { kind: "aiko-code-value"; owner: string; thread: string; id: string };
+const resultSource = (owner: string, thread: string, event: Event): CodeResultScope => ({
+  owner, thread, callId: String(event.callId), tool: String(event.tool), definitionDigest: String(event.definitionDigest),
+  ...(Array.isArray(event.dependencies) ? { dependencies: event.dependencies as HarnessDigest[] } : {}),
+});
 
 /** Per-owner/thread facade. Durable logs hold references and effect receipts, not private tool data. */
 export class CodeHarness {
@@ -58,7 +65,7 @@ export class CodeHarness {
       return id&&rows.some(e=>e.type==="CodeDispatched"&&e.execId===id&&e.turn===call?.turn)?[id]:[];
     });
     const sources=rows.filter(e=>typeof e.callId==="string"&&executions.some(id=>String(e.callId).startsWith(`${id}.`))).flatMap(e=>
-      e.type==="AikoCodeToolSettled"?[{owner:this.owner,thread:this.thread,callId:String(e.callId),tool:String(e.tool),definitionDigest:String(e.definitionDigest)}]:
+      e.type==="AikoCodeToolSettled"?[resultSource(this.owner,this.thread,e)]:
       e.type==="AikoCodeDataRead"&&Array.isArray(e.sources)?e.sources as CodeResultScope[]:[]);
     return this.uniqueSources(sources);
   }
@@ -71,11 +78,45 @@ export class CodeHarness {
     for(const source of sources)if(!await this.authorized(source))return false;
     return true;
   }
-  private async compactedContext(state:unknown):Promise<{providerState:unknown;sources:CodeResultScope[]}> {
+  private uniqueInferenceSources(sources:readonly CodeInferenceSource[]):CodeInferenceSource[] {
+    const unique=[...new Map(sources.map(source=>[sandboxCanonical(source),source])).values()];
+    if(unique.length>2048)throw Error("Inference source limit exceeded");
+    return unique;
+  }
+  private async preparedSources(events:readonly Event[]):Promise<CodeInferenceSource[]> {
+    const turns=new Set(events.flatMap(event=>typeof event.turn==="string"?[event.turn]:event.type==="MessageReceived"&&typeof event.id==="string"?[event.id]:[]));
+    const rows=this.custody?.read?await this.custody.read():events;
+    return this.uniqueInferenceSources(rows.filter(event=>event.type==="AikoProjectContextPrepared"&&event.owner===this.owner&&event.thread===this.thread&&typeof event.turn==="string"&&turns.has(event.turn)).map(event=>event.source as CodeInferenceSource));
+  }
+  private async inferenceSourcesAuthorized(sources:readonly CodeInferenceSource[], invocation?:{turn:string;key?:string}):Promise<boolean> {
+    if(!sources.length)return true;
+    try {
+      const custody=this.custody;
+      const scope={owner:this.owner,thread:this.thread};
+      if(!custody?.read||!custody.authorizeData||!await custody.authorizeData(scope))return false;
+      const rows=await custody.read();
+      for(const source of sources) {
+        if(!source||typeof source.tool!=="string"||typeof source.definitionDigest!=="string"||!Object.hasOwn(source,"arguments"))return false;
+        const native=this.native.get(source.tool),encoded=JSON.stringify(source.arguments);
+        if(!native?.authorizeRetained||source.definitionDigest!==`sha256:${digest(native.spec)}`||!encoded||Buffer.byteLength(encoded)>131072||this.redact(encoded)!==encoded)return false;
+        validateRouterInput(source.arguments);
+        if(!this.validators.get(source.tool)?.validate(source.arguments).valid)return false;
+        // Automatic guidance has its own native preparation receipt; it is not
+        // a fabricated tools.call invocation or an authority supplied by a model.
+        if(!rows.some(event=>event.type==="AikoProjectContextPrepared"&&event.owner===this.owner&&event.thread===this.thread&&typeof event.turn==="string"&&typeof event.key==="string"&&(!invocation||event.turn===invocation.turn&&event.key===invocation.key)&&sandboxCanonical(event.source)===sandboxCanonical(source)))return false;
+        if(!await native.authorizeRetained(structuredClone(source.arguments)))return false;
+      }
+      return await custody.authorizeData(scope);
+    }catch{return false;}
+  }
+  private async compactedContext(state:unknown):Promise<{providerState:unknown;sources:CodeResultScope[];inferenceSources:CodeInferenceSource[]}> {
     const row=state as CodeCompactionState;
     if(row?.kind!=="aiko-code-compaction.v1"||row.owner!==this.owner||row.thread!==this.thread||!Array.isArray(row.sources)||row.sources.length>2048||!Object.hasOwn(row,"providerState"))throw Error("Compaction source custody unavailable");
-    if(!await this.contextAuthorized(row.sources))throw Error("Compaction source authority changed");
-    return {providerState:row.providerState,sources:row.sources};
+    // Older envelopes did not track automatically injected project guidance.
+    // They cannot prove current source authority and must fall back to history.
+    const inferenceSources=row.inferenceSources;
+    if(!Array.isArray(inferenceSources)||inferenceSources.length>2048||!await this.contextAuthorized(row.sources)||!await this.inferenceSourcesAuthorized(inferenceSources))throw Error("Compaction source authority changed");
+    return {providerState:row.providerState,sources:row.sources,inferenceSources};
   }
 
   private speculationAuthority(method: string, args: any): boolean {
@@ -117,8 +158,8 @@ export class CodeHarness {
       const custody = this.custody;
       if (!custody || !await custody.authorize({...scope})) return false;
       const native = this.native.get(scope.tool);
-      if (!native?.authorizeRetained) return true;
-      if (!custody.read || scope.owner !== this.owner || scope.thread !== this.thread || scope.definitionDigest !== `sha256:${digest(native.spec)}`) return false;
+      if (!custody.read) return !native?.authorizeRetained;
+      if (!native || scope.owner !== this.owner || scope.thread !== this.thread || scope.definitionDigest !== `sha256:${digest(native.spec)}`) return false;
       const events = await custody.read();
       const settled = events.findLast(e => e.type === "AikoCodeToolSettled" && e.callId === scope.callId);
       // Initial invocation still passes the tool's ordinary current-authority gate.
@@ -136,7 +177,7 @@ export class CodeHarness {
         if (row.method !== "call" || row.args?.name !== scope.tool) return false;
         input = row.args.arguments ?? {};
       } else return false;
-      return await native.authorizeRetained(input) && await custody.authorize({...scope});
+      return (!native.authorizeRetained || await native.authorizeRetained(input)) && await custody.authorize({...scope});
     } catch { return false; }
   }
   private data(log?: typeof EventLog.Service) {
@@ -149,7 +190,9 @@ export class CodeHarness {
       authorizeSource:scope => this.authorized(scope),redact:this.redact});
   }
   private async retainDataReturn(method:string,args:unknown,callId:string,value:unknown,handles:CodeDataHandle[]) {
-    const ref=await this.custody!.blobs.putPrivate(this.owner,{kind:"aiko-code-data-return.v1",owner:this.owner,thread:this.thread,callId,method,args,value,handles});
+    const sources = (await Promise.all(handles.map(handle => this.data().sources(handle)))).flat();
+    const dependencies = [...new Set(sources.flatMap(source => source.dependencies ?? []))];
+    const ref=await this.custody!.blobs.putPrivate(this.owner,{kind:"aiko-code-data-return.v1",owner:this.owner,thread:this.thread,callId,method,args,value,handles}, dependencies);
     return {kind:"aiko-code-data-return.v1",owner:this.owner,thread:this.thread,callId,ref};
   }
   private async hydrateResult(ref: unknown, callId: string, args: any, method="call"): Promise<unknown> {
@@ -171,7 +214,7 @@ export class CodeHarness {
       throw Error(unavailable);
     try {
       const row = await this.custody!.blobs.get(this.owner,r.ref) as any;
-      if (row?.kind !== r.kind || Object.entries(scope).some(([key,value]) => row[key] !== value) ||
+      if (row?.kind !== r.kind || Object.entries(scope).some(([key,value]) => sandboxCanonical(row[key]) !== sandboxCanonical(value)) ||
           sandboxCanonical(row.arguments) !== sandboxCanonical(args.arguments ?? {}) || !await this.authorized(scope)) throw Error(unavailable);
       return row.value;
     } catch { throw Error(unavailable); }
@@ -201,7 +244,7 @@ export class CodeHarness {
             if(method==="retain") {
               // Derived values inherit the source authority of reads in this execution.
               const sources:CodeResultScope[]=rows.filter(e=>String(e.callId).startsWith(`${execution.execId}.`)).flatMap(e=>
-                e.type==="AikoCodeToolSettled" ? [{owner:this.owner,thread:this.thread,callId:String(e.callId),tool:String(e.tool),definitionDigest:String(e.definitionDigest)}] :
+                e.type==="AikoCodeToolSettled" ? [resultSource(this.owner,this.thread,e)] :
                 e.type==="AikoCodeDataRead"&&Array.isArray(e.sources) ? e.sources as CodeResultScope[] : []);
               const handle=await data.retain(args.value,callId,sources);handles.push(handle);value=handle;
             } else if(method==="query") {
@@ -265,19 +308,23 @@ export class CodeHarness {
       });
       const ref = this.custody ? yield* Effect.promise(async () => {
         try {
+          const dependencies = retainedDependencies(result);
+          if (dependencies.length) scope.dependencies = dependencies;
           const encoded = JSON.stringify(result ?? null);
           if (args.retain===true || Buffer.byteLength(encoded) > 2 * 1024 * 1024) {
             const handle=await this.data(log).retain(JSON.parse(this.redact(encoded)),callId,[scope]);
             return await this.retainDataReturn("call",args,callId,handle,[handle]);
           }
           const retained = await this.custody!.blobs.putPrivate(this.owner,{kind:"aiko-code-retained.v1",...scope,
-            arguments:input,value:JSON.parse(this.redact(encoded))});
+            arguments:input,value:JSON.parse(this.redact(encoded))}, dependencies);
           return {kind:"aiko-code-retained.v1",...scope,ref:retained};
         } catch { return {status:"unavailable",error:unavailable}; }
       }) : this.put(`tool:${id}`,result);
       const outcome=result as any;
-      const succeeded=!(ref as any)?.error && !outcome?.error && !["failed","unknown","blocked","rejected","authorization_required","needs_connection","unavailable"].includes(outcome?.status);
-      yield* log.append([{type:"AikoCodeToolSettled",id,owner:this.owner,tool:native.spec.name,definitionDigest:`sha256:${definitionDigest}`,callId,turn:dispatch.turn,result:ref,succeeded,at:Date.now()}]);
+      const succeeded=!(ref as any)?.error && !outcome?.error && outcome?.outcome !== "error" && !["failed","unknown","blocked","rejected","authorization_required","needs_connection","unavailable"].includes(outcome?.status);
+      yield* log.append([{type:"AikoCodeToolSettled",id,owner:this.owner,tool:native.spec.name,definitionDigest:`sha256:${definitionDigest}`,callId,turn:dispatch.turn,result:ref,succeeded,
+        ...(typeof outcome?.status === "string" ? { status: outcome.status } : {}),
+        ...(scope.dependencies?.length ? { dependencies: scope.dependencies } : {}),at:Date.now()}]);
       return ref;
     });
     // privateInput is installed by the sandbox adapter. It is never a credential
@@ -381,7 +428,7 @@ export class CodeHarness {
   }
   sandboxLayer() {
     const base = codegraffSandboxService(this.transport), harness=this;
-    return Layer.succeed(Sandbox)({managesParking:base.managesParking,replayVersion:base.replayVersion,run:(code,bindings,ambient)=> {
+    return Layer.succeed(Sandbox)(promiseSandbox({managesParking:base.managesParking,replayVersion:base.replayVersion,run:(code,bindings,ambient)=> {
       const transformed: Record<string, unknown> = {...bindings};
       if(ambient?.seed.startsWith("workflow:")) {
         const run=harness.workflowRuns.get(ambient.seed);
@@ -407,26 +454,32 @@ export class CodeHarness {
         return outcome.error ? {error:harness.redact(outcome.error)}
           : {result:harness.put(`output:${ambient?.seed ?? digest(code)}`,value)};
       }));
-    }});
+    }}, this.owner, this.thread, this.custody?.read));
   }
   inference<R>(base: Layer.Layer<Infer, never, R>) {
     const harness=this;
     return Layer.effect(Infer,Effect.gen(function*(){
       const model=yield* Infer;
       const hydrateTrajectory = async(events: readonly Event[]) => {
-        const projected:Event[]=[];
+        const projected:Event[]=[],sources:CodeResultScope[]=[],inferenceSources:CodeInferenceSource[]=[];
         for(const e of events) {
           if(e.type==="CompactionCompleted"&&e.providerState!==undefined) {
-            try{projected.push({...e,providerState:(await harness.compactedContext(e.providerState)).providerState});}catch{/* Restore the original authorized history instead of a revoked opaque window. */}
+            try{
+              const checkpoint=await harness.compactedContext(e.providerState);
+              projected.push({...e,providerState:checkpoint.providerState});
+              sources.push(...checkpoint.sources);inferenceSources.push(...checkpoint.inferenceSources);
+            }catch{/* Restore the original authorized history instead of a revoked opaque window. */}
             continue;
           }
           if(e.type!=="ToolReturned" || (e.result as any)?.result?.kind!=="aiko-code-value") {projected.push(e);continue;}
           try {
-            if(harness.custody&&!await harness.contextAuthorized(await harness.contextSources([e])))throw Error(unavailable);
+            const resultSources=harness.custody?await harness.contextSources([e]):[];
+            if(!await harness.contextAuthorized(resultSources))throw Error(unavailable);
             projected.push({...e,result:{...(e.result as any),...(harness.get((e.result as any).result) as object)}});
+            sources.push(...resultSources);
           }catch{projected.push({...e,result:{error:"Private code result expired or source authority changed; read fresh data before answering."}});}
         }
-        return projected;
+        return {trajectory:projected,sources:harness.uniqueSources(sources),inferenceSources:harness.uniqueInferenceSources(inferenceSources)};
       };
       return {...model,
         ...(model.compact === undefined ? {} : { compact: (request: import("tardie/inference/contract").CompactionRequest, key?: string, signal?: AbortSignal) =>
@@ -435,14 +488,17 @@ export class CodeHarness {
               try{
                 const previous=request.previous===undefined?undefined:await harness.compactedContext(request.previous);
                 const sources=harness.uniqueSources([...previous?.sources??[],...await harness.contextSources(request.trajectory)]);
-                if(!await harness.contextAuthorized(sources))return undefined;
-                return {sources,request:{...request,previous:previous?.providerState,trajectory:await hydrateTrajectory(request.trajectory)}};
+                const current=codeInferenceSourcesOf(request);
+                const hydrated=await hydrateTrajectory(request.trajectory);
+                const inferenceSources=harness.uniqueInferenceSources([...previous?.inferenceSources??[],...hydrated.inferenceSources,...await harness.preparedSources(request.trajectory),...current]);
+                if(!await harness.contextAuthorized(sources)||!await harness.inferenceSourcesAuthorized(inferenceSources)||!await harness.inferenceSourcesAuthorized(current,{turn:request.identity.turn,key}))return undefined;
+                return {sources,inferenceSources,request:{...request,previous:previous?.providerState,trajectory:hydrated.trajectory}};
               }catch{return undefined;}
             });
             if(!prepared)return undefined;
             const result=yield* model.compact!(prepared.request,key,signal);
-            if(!result||!(yield* Effect.promise(()=>harness.contextAuthorized(prepared.sources))))return undefined;
-            return {...result,state:{kind:"aiko-code-compaction.v1",owner:harness.owner,thread:harness.thread,providerState:result.state,sources:prepared.sources} satisfies CodeCompactionState};
+            if(!result||!(yield* Effect.promise(async()=>await harness.contextAuthorized(prepared.sources)&&await harness.inferenceSourcesAuthorized(prepared.inferenceSources))))return undefined;
+            return {...result,state:{kind:"aiko-code-compaction.v1",owner:harness.owner,thread:harness.thread,providerState:result.state,sources:prepared.sources,inferenceSources:prepared.inferenceSources} satisfies CodeCompactionState};
           }) }),
         react:(request:InferRequest,key?:string,signal?:AbortSignal)=> {
         const sanitize = (action: import("tardie/log/events").Action) => {
@@ -458,18 +514,25 @@ export class CodeHarness {
           return action;
         };
         return Effect.gen(function* () {
-          const trajectory=yield* Effect.promise(()=>hydrateTrajectory(request.trajectory));
+          const prepared=yield* Effect.promise(async()=>{
+            const current=codeInferenceSourcesOf(request),hydrated=await hydrateTrajectory(request.trajectory);
+            const inferenceSources=harness.uniqueInferenceSources([...hydrated.inferenceSources,...current]);
+            if(!await harness.inferenceSourcesAuthorized(current,{turn:request.identity.turn,key})||!await harness.inferenceSourcesAuthorized(inferenceSources)||!await harness.contextAuthorized(hydrated.sources))return undefined;
+            return {...hydrated,inferenceSources};
+          });
+          const denied=(action?:import("tardie/log/events").Action)=>({kind:"fail" as const,error:"Inference source authority changed; refresh project context before continuing.",failure:{cause:"inference_error" as const,attempts:0,policy:{source:"context_authority_changed"}},...(action?{usage:action.usage,endpoint:action.endpoint,mode:action.mode}:{})});
+          if(!prepared)return denied();
           const nativeCode = request.nativeCode === undefined ? undefined : {
             run: <A>(work: Effect.Effect<A, never, import("tardie/inference/contract").NativeCodeServices>, attemptSignal?: AbortSignal) =>
               request.nativeCode!.run(work.pipe(Effect.provide(harness.sandboxLayer())), attemptSignal)
           };
-          const scopedRequest = { ...request, trajectory, nativeCode, tools: request.tools.filter(t => controls.has(t.name)) };
+          const scopedRequest = { ...request, trajectory:prepared.trajectory, nativeCode, tools: request.tools.filter(t => controls.has(t.name)) };
           const session = yield* createCodeSpeculation({ request: scopedRequest, attempt: key,
             packages: harness.currentPackage === undefined ? [] : [harness.currentPackage],
             authority: ({ packageName, method, args }) => packageName === "tools" && harness.speculationAuthority(method, args),
             acceptsSource: source => source.length <= 65536 && harness.redact(source) === source, signal });
           return yield* model.react({ ...scopedRequest, onToolCallProgress: session.onToolCallProgress }, key, signal)
-            .pipe(Effect.map(sanitize), Effect.flatMap(session.finish), Effect.ensuring(Effect.sync(session.abort)));
+            .pipe(Effect.flatMap(action=>Effect.promise(async()=>await harness.contextAuthorized(prepared.sources)&&await harness.inferenceSourcesAuthorized(prepared.inferenceSources)?sanitize(action):denied(action))), Effect.flatMap(session.finish), Effect.ensuring(Effect.sync(session.abort)));
         });
       }};
     })).pipe(Layer.provide(base));

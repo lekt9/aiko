@@ -64,11 +64,15 @@ async function stop() {
   const timer = setTimeout(() => child?.kill("SIGKILL"), 10000);
   try { await child.exited; } finally { clearTimeout(timer); child = undefined; }
 }
-const request = (path: string, token?: string, body?: unknown) => fetch(origin + path, {
+const request = async (path: string, token?: string, body?: unknown) => {
+  const response = await fetch(origin + path, {
   method: body === undefined ? "GET" : "POST",
   headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(body === undefined ? {} : { "content-type": "application/json" }) },
   ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(10000),
-});
+  });
+  if (response.status >= 500) console.error(`Synthetic local ${path}: ${response.status} ${(await response.clone().text()).slice(0, 4000)}`);
+  return response;
+};
 try {
   await start();
   assert.equal((await request("/v1/messages")).status, 401);
@@ -96,15 +100,34 @@ try {
   assert.equal(response.status, 200);
   const history = await response.json() as any;
   assert.equal(history.messages.filter((row: any) => row.id === `plane:${message.id}` && row.text === message.text).length, 1);
+  const finalReplies = history.messages.filter((row: any) => row.role === "assistant" && row.turn === `plane:${message.id}`);
+  assert.equal(finalReplies.length, 1, "The original turn must have exactly one final reply");
+  assert.ok(finalReplies[0].text?.trim(), "The final reply must contain text");
+  // Reopen completed custody as well as interrupted custody. A duplicate input
+  // must not re-infer, replace, or resend the already-prepared final reply.
+  await stop();
+  await start();
   const replay = await request("/v1/messages", tokenA, message);
   assert.equal(replay.status, 202);
+  assert.equal((await request("/api/control/wake?account=acct_portable_a", "portable-test-operator-credential-000000", {})).status, 202);
   const readback = await (await request("/v1/messages", tokenA)).json() as any;
   assert.equal(readback.messages.filter((row: any) => row.id === `plane:${message.id}`).length, 1);
+  assert.deepEqual(readback.messages.filter((row: any) => row.role === "assistant" && row.turn === `plane:${message.id}`), finalReplies,
+    "Completed-reply restart/replay must preserve the exact final reply without duplication");
+  console.log(JSON.stringify({ phase: "response-recovery", verified: true, runtime: "real local workerd", restarts: 2,
+    replayedMessageId: message.id, finalReplyCount: finalReplies.length,
+    finalReplySha256: createHash("sha256").update(JSON.stringify(finalReplies)).digest("hex"), providerCalls: 0 }));
   const foreign = await (await request("/v1/messages", tokenB)).json() as any;
   assert.equal(foreign.messages.length, 0);
   assert.equal((await request("/api/control/events?thread=user-acct_portable_a", tokenB)).status, 403);
   assert.equal((await request("/api/control/export?account=acct_portable_a", tokenA)).status, 403);
-  console.log(JSON.stringify({ verified: true, runtime: "real local workerd", restartPersistence: true, replyAfterRestart: true, idempotency: true, accountIsolation: true, readOnlyScope: true, providerCalls: 0 }));
+  console.log(JSON.stringify({ verified: true, runtime: "real local workerd", restartPersistence: true, replyAfterRestart: true, completedReplyPreservedAfterSecondRestart: true, idempotency: true, accountIsolation: true, readOnlyScope: true, providerCalls: 0 }));
+} catch (error) {
+  // This process receives only the synthetic config above. Preserve the local
+  // runtime error when an endpoint returns non-JSON instead of hiding it behind
+  // a JSON parser failure.
+  console.error(output.slice(-6000));
+  throw error;
 } finally {
   await stop();
   await rm(directory, { recursive: true, force: true });

@@ -20,6 +20,13 @@ export async function backupApi(
     resting(): Promise<boolean>;
     account(): Promise<AccountBackup>;
     importAccount?(id: string, archive: AccountBackup): Promise<void>;
+    /** Required for every restore, including VM-only and imported retries.
+     * Host must also hold its owner restore/erasure mutex; a guard is not a lock. */
+    authorizeRestore?(
+      id: string,
+      archive: AccountBackup,
+      mode: "vm" | "account",
+    ): Promise<{ check(): Promise<void> }>;
     record(manifest: BackupManifest): Promise<void>;
     list(): Promise<unknown>;
   },
@@ -84,71 +91,92 @@ export async function backupApi(
     Object.keys(input).some((k) => !["id", "mode"].includes(k))
   )
     return Response.json({ error: "invalid_restore" }, { status: 400 });
-  const inventory = await options.backups.manifest(options.owner, input.id);
-  const accountFile = inventory.files.find(
-    (file) => file.path === "account.json",
+  if (!options.authorizeRestore)
+    throw Error("Restore authorization unavailable");
+  const { manifest: inventory, bytes: accountBytes } =
+    await options.backups.readFile(
+      options.owner,
+      input.id,
+      "account.json",
+      64 * 1024 * 1024,
+    );
+  const archive = JSON.parse(
+    new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(accountBytes),
+  ) as AccountBackup;
+  if (
+    !archive ||
+    archive.version !== 1 ||
+    archive.owner !== options.owner ||
+    !Array.isArray(archive.state)
+  )
+    throw Error("Account backup binding mismatch");
+  // Keep authorization inputs independent of mutable host callback references.
+  const guard = await options.authorizeRestore(
+    input.id,
+    structuredClone(archive),
+    input.mode,
   );
-  if (!accountFile || accountFile.bytes > 64 * 1024 * 1024)
-    throw Error("Account snapshot unavailable");
-  const accountBytes = new Uint8Array(accountFile.bytes);
+  if (!guard || typeof guard.check !== "function")
+    throw Error("Restore authorization unavailable");
+  await guard.check();
   const allowed: { id: string; domain: string; revision: number }[] = [];
   await options.sandbox.restore(
     async (sink) =>
-      options.backups.restore(options.owner, input.id, {
-        write: async (path, offset, bytes) => {
-          if (path === "account.json") accountBytes.set(bytes, offset);
-          else await sink.write(path, offset, bytes);
+      options.backups.restore(
+        options.owner,
+        input.id,
+        {
+          write: async (path, offset, bytes) => {
+            await guard.check();
+            if (path !== "account.json") await sink.write(path, offset, bytes);
+          },
+          abort: () => sink.abort(),
+          commit: async (manifest) => {
+            await guard.check();
+            if (input.mode === "account") {
+              if (!options.importAccount)
+                throw Error("Account recovery unavailable");
+              await options.importAccount(input.id, structuredClone(archive));
+            }
+            // Authorize from today's control-plane records, including a freshly
+            // imported account. Never reactivate a revoked/stale backup generation.
+            await guard.check();
+            const current = await options.account();
+            await guard.check();
+            for (const [, value] of current.state) {
+              const row = value as {
+                id?: string;
+                owner?: string;
+                provider?: string;
+                status?: string;
+                connectorId?: string;
+                browserVerification?: { revision: number };
+              } | null;
+              if (
+                row?.owner === options.owner &&
+                row.provider === "browser" &&
+                row.status === "connected" &&
+                row.connectorId?.startsWith("browser:") &&
+                row.id &&
+                Number.isSafeInteger(row.browserVerification?.revision)
+              )
+                allowed.push({
+                  id: row.id,
+                  domain: row.connectorId.slice(8),
+                  revision: row.browserVerification!.revision,
+                });
+            }
+            await guard.check();
+            await sink.commit({
+              ...manifest,
+              files: manifest.files.filter(
+                (file) => file.path !== "account.json",
+              ),
+            });
+          },
         },
-        abort: () => sink.abort(),
-        commit: async (manifest) => {
-          const archive = JSON.parse(
-            new TextDecoder().decode(accountBytes),
-          ) as AccountBackup;
-          if (
-            archive.version !== 1 ||
-            archive.owner !== options.owner ||
-            !Array.isArray(archive.state)
-          )
-            throw Error("Account backup binding mismatch");
-          if (input.mode === "account") {
-            if (!options.importAccount)
-              throw Error("Account recovery unavailable");
-            await options.importAccount(input.id, archive);
-          }
-          // Authorize from today's control-plane records, including a freshly
-          // imported account. Never reactivate a revoked/stale backup generation.
-          const current = await options.account();
-          for (const [, value] of current.state) {
-            const row = value as {
-              id?: string;
-              owner?: string;
-              provider?: string;
-              status?: string;
-              connectorId?: string;
-              browserVerification?: { revision: number };
-            } | null;
-            if (
-              row?.owner === options.owner &&
-              row.provider === "browser" &&
-              row.status === "connected" &&
-              row.connectorId?.startsWith("browser:") &&
-              row.id &&
-              Number.isSafeInteger(row.browserVerification?.revision)
-            )
-              allowed.push({
-                id: row.id,
-                domain: row.connectorId.slice(8),
-                revision: row.browserVerification!.revision,
-              });
-          }
-          await sink.commit({
-            ...manifest,
-            files: manifest.files.filter(
-              (file) => file.path !== "account.json",
-            ),
-          });
-        },
-      }),
+        inventory,
+      ),
     allowed,
   );
   return Response.json({ id: input.id, status: "restored", mode: input.mode });

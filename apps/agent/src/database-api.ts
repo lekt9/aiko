@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Event } from "tardie/core/event";
 import { canonical, DataError, identifier, type Command } from "../../../packages/structured-data/src/index.ts";
 import { databaseState, prepareDatabaseCommand, type DatabaseBinding } from "./database-component.ts";
-import { readDatabaseValue } from "./database.ts";
+import { assertDatabaseReadResult, readDatabaseValue } from "./database.ts";
 
 export interface DatabaseApiHost {
   read(): Promise<readonly Event[]>;
@@ -34,19 +34,38 @@ export async function databaseApi(request: Request, binding: DatabaseBinding, ho
       const events = await host.read();
       if (!await binding.authorize("read", request.signal)) throw new DataError("forbidden", "Database authority changed");
       request.signal.throwIfAborted();
-      const result = await readDatabaseValue(binding, name, input, events, request.signal);
+      const result = await readDatabaseValue(binding, name, input, events, request.signal, { write: principal.scopes.includes("write") });
+      if (name === "field_detail" && !principal.scopes.includes("write")) {
+        const field = result as import("@unlock/protocol").DatabaseFieldResult;
+        if (field.memory) field.memory.canCorrect = false;
+      }
       if (!await binding.authorize("read", request.signal)) throw new DataError("forbidden", "Database authority changed");
       request.signal.throwIfAborted();
+      assertDatabaseReadResult(binding, name, result);
+      if (name === "field_detail") {
+        const field = result as import("@unlock/protocol").DatabaseFieldResult;
+        if (field.memory) {
+          binding.store.assertCurrentDependencies(field.dependencies.filter(dependency => dependency.source?.kind === "entity" && dependency.source.observationId === field.memory!.observationId));
+          if (binding.store.mapping(field.memory.mappingId).revision !== field.memory.mappingRevision) throw new DataError("conflict", "Memory mapping changed during review");
+        }
+      }
       return json(result);
     };
     if (request.method === "GET" && path === "") return await read("database_catalog", {});
     if (request.method === "GET" && path === "/changes") return await read("database_changes", {});
+    if (request.method === "GET" && path === "/sources") return await read("database_sources", {});
+    if (request.method === "POST" && path === "/field") {
+      const input = await body(request);
+      if (Object.keys(input).some(key => !["tableId", "rowId", "columnId"].includes(key))) throw new DataError("invalid", "Unexpected field read arguments");
+      return await read("field_detail", input);
+    }
     if (request.method === "POST" && path === "/query") {
       const input = await body(request);
       if (Object.keys(input).some(k => k !== "query")) throw new DataError("invalid", "Only query is accepted");
       return await read("table_query", input);
     }
     if (request.method === "GET" && path.startsWith("/operations/")) return await read("database_operation", { operationId: decodeURIComponent(path.slice(12)) });
+    if (request.method === "GET" && path.startsWith("/mappings/")) return await read("table_mapping", { mappingId: decodeURIComponent(path.slice(10)) });
     if (request.method === "GET" && path.startsWith("/artifacts/")) return await read("artifact_open", { artifactId: decodeURIComponent(path.slice(11)) });
     if (request.method === "GET" && path.startsWith("/approvals/")) return await read("approval_detail", { approvalId: decodeURIComponent(path.slice(11)) });
     if (request.method === "POST" && path === "/commands") {

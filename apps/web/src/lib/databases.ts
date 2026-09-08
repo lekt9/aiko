@@ -1,6 +1,6 @@
-import type { DatabaseArtifactResult, DatabaseCatalog, DatabaseCommandInput, DatabaseOperationResult, DatabaseQuery, DatabaseQueryResult, AikoMessages } from "@unlock/sdk/aiko";
+import type { DatabaseArtifactResult, DatabaseCatalog, DatabaseCommandInput, DatabaseFieldInput, DatabaseFieldResult, DatabaseOperationResult, DatabaseQuery, DatabaseQueryResult, AikoMessages } from "@unlock/sdk/aiko";
 import { connectorRequest } from "./connectors";
-export type { DatabaseArtifactResult, DatabaseCatalog, DatabaseQueryResult };
+export type { DatabaseArtifactResult, DatabaseCatalog, DatabaseQueryResult, DatabaseFieldResult };
 export type DatabaseColumn = DatabaseQueryResult["columns"][number];
 export type DatabaseRow = DatabaseQueryResult["rows"][number];
 export interface ApprovalDetail {
@@ -15,6 +15,8 @@ export function artifactLaunchId(search: string): string | undefined {
 export function databaseClient(authentication?: DatabaseAuthentication) {
   const request = <T>(path: string, body?: object, signal?: AbortSignal) => connectorRequest<T>(path, body, signal, authentication);
   return {
+    field: (input: DatabaseFieldInput, signal?: AbortSignal) => request<DatabaseFieldResult>("/databases/field", input, signal),
+    operation: (id: string, signal?: AbortSignal) => request<DatabaseOperationResult>(`/databases/operations/${encodeURIComponent(id)}`, undefined, signal),
     artifact: (id: string, signal?: AbortSignal) => request<DatabaseArtifactResult>(`/databases/artifacts/${encodeURIComponent(id)}`, undefined, signal),
     catalog: (signal?: AbortSignal) => request<DatabaseCatalog>("/databases", undefined, signal),
     query: (query: DatabaseQuery, signal?: AbortSignal) => request<DatabaseQueryResult>("/databases/query", { query }, signal),
@@ -24,6 +26,7 @@ export function databaseClient(authentication?: DatabaseAuthentication) {
     decide: (detail: ApprovalDetail, decision: "approve" | "reject", signal?: AbortSignal) => request<ApprovalDetail>("/observed-actions/approval", { id: detail.prepared.id, hash: detail.prepared.hash, decision }, signal),
     commit: async (input: DatabaseCommandInput, signal?: AbortSignal): Promise<DatabaseOperationResult> => {
       let operation = await request<DatabaseOperationResult>("/databases/commands", input, signal);
+      operation = await request<DatabaseOperationResult>(`/databases/operations/${encodeURIComponent(operation.operationId)}`, undefined, signal);
       const deadline = Date.now() + 20000;
       while (operation.status === "queued" && Date.now() < deadline) {
         await new Promise<void>((resolve, reject) => {

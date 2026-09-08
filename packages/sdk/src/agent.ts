@@ -59,20 +59,29 @@ export function createVaultAgent(options: VaultOptions) {
 export type VaultAgent = ReturnType<typeof createVaultAgent>;
 export interface PrivateBrowserAdapter {
   /** Replace the ENTIRE scoped jar (including deletions). Preserve unlisted domains and partitions. */
-  replaceCookies(cookies: VaultCookie[], domains: string[]): Promise<void>;
-  exportCookies(domains: string[]): Promise<VaultCookie[]>;
+  replaceCookies(
+    cookies: VaultCookie[],
+    domains: string[],
+    includeSubdomains?: boolean,
+  ): Promise<void>;
+  exportCookies(
+    domains: string[],
+    includeSubdomains?: boolean,
+  ): Promise<VaultCookie[]>;
 }
 export interface VaultBinding {
   connectionId: string;
   profileId: string;
   runtimeId: string;
   domains: string[];
+  /** Trusted native app custody may explicitly include descendants; default is exact domains. */
+  includeSubdomains?: boolean;
 }
 const safeError = (code: string) =>
   new UnlockError(code, 0, "The private browser session needs recovery.");
 /** One bridge per exclusively owned task-browser context. Hydrates once, never before every action. */
 export function createVaultBridge(
-  client: VaultAgent,
+  client: Pick<VaultAgent, "retrieve" | "sync">,
   browser: PrivateBrowserAdapter,
   inputBinding: VaultBinding,
 ) {
@@ -92,7 +101,11 @@ export function createVaultBridge(
     for (const c of cookies) {
       const domain = c.domain.replace(/^\./, "");
       if (
-        !binding.domains.includes(domain) ||
+        !binding.domains.some(
+          (d) =>
+            domain === d ||
+            (binding.includeSubdomains === true && domain.endsWith(`.${d}`)),
+        ) ||
         !c.secure ||
         c.hostOnly !== !c.domain.startsWith(".")
       )
@@ -112,7 +125,11 @@ export function createVaultBridge(
       throw safeError("BINDING_MISMATCH");
     validate(material.cookies);
     try {
-      await browser.replaceCookies(material.cookies, binding.domains);
+      await browser.replaceCookies(
+        material.cookies,
+        binding.domains,
+        binding.includeSubdomains,
+      );
     } catch {
       blocked = true;
       throw safeError("BROWSER_UNAVAILABLE");
@@ -128,7 +145,11 @@ export function createVaultBridge(
     } catch (error) {
       if (current) {
         try {
-          await browser.replaceCookies([], binding.domains);
+          await browser.replaceCookies(
+            [],
+            binding.domains,
+            binding.includeSubdomains,
+          );
         } catch {
           /* Stop subsequent actions even if clearing fails. */
         }
@@ -147,7 +168,10 @@ export function createVaultBridge(
   const sync = async (opts?: RequestOptions) => {
     if (!current || blocked) throw safeError("RECOVERY_REQUIRED");
     try {
-      const cookies = await browser.exportCookies(binding.domains);
+      const cookies = await browser.exportCookies(
+        binding.domains,
+        binding.includeSubdomains,
+      );
       validate(cookies);
       const result = await client.sync(
         binding.connectionId,
@@ -165,7 +189,11 @@ export function createVaultBridge(
     } catch (error) {
       blocked = true;
       try {
-        await browser.replaceCookies([], binding.domains);
+        await browser.replaceCookies(
+          [],
+          binding.domains,
+          binding.includeSubdomains,
+        );
       } catch {
         /* Best effort; stop all future wrapped actions regardless. */
       }

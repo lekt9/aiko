@@ -55,6 +55,89 @@ test("database read adapter uses owned Merkle contracts and transient selection 
 
 const STALE_SID = { name: "sid", value: "SECRET_COOKIE", domain: ".vendor.com", path: "/", expires: -1, secure: true, httpOnly: true, sameSite: "Lax" as const, hostOnly: false };
 
+async function approvalFixture() {
+  const events = await compiledWrite(), action = ownedObservedActions(events)[0]!;
+  const input = { artifactDigest: action.artifactDigest, inputs: Object.fromEntries(action.artifact.actions[0]!.inputs.map(i => [i.name, i.name.includes("title") ? "final-owner-text" : "items"])) };
+  const session = { connectionId: "fixture-connection", revision: "1", domains: ["vendor.com"], cookies: [STALE_SID] };
+  const pending = await run(events, input, { session, send: async () => { throw Error("No dispatch before consent"); } });
+  expect(pending.status).toBe("authorization_required");
+  const service = () => createActionApprovals({ owner: "123", thread: "user-123" });
+  const get = () => Effect.runPromise(service().get(pending.approvalId).pipe(Effect.provideService(EventLog, logOf(events))));
+  const approve = () => Effect.runPromise(service().decide({ owner: "123", subject: "fixture-owner", authenticated: true }, { id: pending.approvalId, hash: pending.hash, decision: "approve" }).pipe(Effect.provideService(EventLog, logOf(events))));
+  return { events, action, input, session, pending, get, approve, dispatch: { ...input, approvalId: pending.approvalId, hash: pending.hash } };
+}
+
+test("new repeated intent gets fresh consent while exact replay preserves expiry and consumed identity", async () => {
+  const f = await approvalFixture();
+  const original = await f.get();
+  const clock = Date.now; Date.now = () => clock() + 5000;
+  try {
+    const replay = await run(f.events, f.input, { session: f.session });
+    expect(replay.approvalId).toBe(f.pending.approvalId); expect(replay.hash).toBe(f.pending.hash);
+    expect((await f.get())?.prepared.expiresAt).toBe(original!.prepared.expiresAt);
+    const changed = await run(f.events, { ...f.input, inputs: { ...f.input.inputs, changed: "different" } }, { session: f.session });
+    expect(changed.status).toBe("rejected");
+    await f.approve();
+    let effects = 0;
+    const send = async () => { effects++; return { status: 201, headers: {}, classification: "application" as const, body: { ok: true } }; };
+    expect((await run(f.events, f.dispatch, { session: f.session, callId: "execute", send })).status).toBe("completed");
+    expect((await run(f.events, f.dispatch, { session: f.session, callId: "execute", send })).status).toBe("completed");
+    expect((await run(f.events, { ...f.dispatch, inputs: { ...f.input.inputs, changed: "different" } }, { session: f.session, callId: "execute", send })).status).toBe("rejected");
+    const fresh = await run(f.events, f.input, { session: f.session, turn: "new-owner-intent", send });
+    expect(fresh.status).toBe("authorization_required"); expect(fresh.approvalId).not.toBe(f.pending.approvalId);
+    const consumedReplay = await run(f.events, f.input, { session: f.session });
+    expect(consumedReplay.hash).toBe(f.pending.hash);
+    await run(f.events, f.dispatch, { session: f.session, callId: "different-call", send });
+    expect(effects).toBe(1);
+  } finally { Date.now = clock; }
+});
+
+test("expired preparation retains its identity and concurrent changed inputs never replace first consent", async () => {
+  const f = await approvalFixture();
+  const clock = Date.now; Date.now = () => clock() + 700_000;
+  try {
+    expect((await run(f.events, f.input, { session: f.session })).hash).toBe(f.pending.hash);
+    expect((await f.get())?.state).toBe("expired");
+  } finally { Date.now = clock; }
+  const [a, b] = await Promise.all([
+    run(f.events, f.input, { session: f.session, callId: "race" }),
+    run(f.events, { ...f.input, inputs: { ...f.input.inputs, changed: "different" } }, { session: f.session, callId: "race" }),
+  ]);
+  expect([a.status, b.status].sort()).toEqual(["authorization_required", "rejected"]);
+});
+
+for (const loss of ["response-loss", "http-500", "aborted-after-commit"]) test(`ambiguous POST ${loss} is durable unknown and never retried after reconstruction`, async () => {
+  const f = await approvalFixture(); await f.approve();
+  let effects = 0; const controller = new AbortController();
+  const send = async (request: HarnessTransportRequest): Promise<HarnessTransportResponse> => {
+    expect(request.method).toBe("POST"); effects++;
+    if (loss === "http-500") return { status: 500, headers: {}, classification: "application", body: { error: "after_commit" } };
+    if (loss === "aborted-after-commit") controller.abort();
+    throw Error("Synthetic response lost after remote commit");
+  };
+  const result = await run(f.events, f.dispatch, { session: f.session, callId: "dispatch", signal: controller.signal, send });
+  expect(result.status).toBe("unknown"); expect(effects).toBe(1);
+  expect(await f.get()).toMatchObject({ state: "unknown", reason: "uncertain_outcome" });
+  const restarted = structuredClone(f.events);
+  for (const callId of ["dispatch", "a-new-execution-call"]) {
+    expect((await run(restarted, f.dispatch, { session: f.session, callId, send })).status).toBe("unknown");
+  }
+  expect(effects).toBe(1);
+  expect(JSON.stringify(restarted)).not.toContain("SECRET_COOKIE");
+});
+
+test("authorization rejection and cancellation before dispatch never contact the provider", async () => {
+  const f = await approvalFixture(); let effects = 0;
+  const send = async () => { effects++; throw Error("Unexpected dispatch"); };
+  expect((await run(f.events, f.dispatch, { session: f.session, callId: "not-approved", send })).status).toBe("rejected");
+  await f.approve();
+  expect((await run(f.events, f.dispatch, { session: { ...f.session, revision: "2" }, callId: "revoked", send })).status).toBe("rejected");
+  expect((await run(f.events, { ...f.dispatch, inputs: { ...f.input.inputs, changed: "different" } }, { session: f.session, callId: "changed", send })).status).toBe("rejected");
+  await Effect.runPromise(createActionApprovals({ owner: "123", thread: "user-123" }).cancel(f.pending.approvalId, "cancelled").pipe(Effect.provideService(EventLog, logOf(f.events))));
+  expect((await run(f.events, f.dispatch, { session: f.session, callId: "cancelled", send })).status).toBe("rejected");
+  expect(effects).toBe(0);
+});
+
 function logOf(events: Event[]) {
   return {
     read: Effect.sync(() => events),
@@ -63,7 +146,7 @@ function logOf(events: Event[]) {
     append: (items: Event[]) => Effect.sync(() => { events.push(...items); }),
   } as any;
 }
-async function run(events: Event[], input: unknown, extra: { send?: (request: any) => Promise<HarnessTransportResponse>; arcade?: () => Promise<boolean>; session?: any; callId?: string } = {}): Promise<Record<string, any>> {
+async function run(events: Event[], input: unknown, extra: { send?: (request: any) => Promise<HarnessTransportResponse>; arcade?: () => Promise<boolean>; session?: any; callId?: string; turn?: string; signal?: AbortSignal } = {}): Promise<Record<string, any>> {
   const tool = createObservedNetworkTools({
     owner: "123",
     thread: "user-123",
@@ -72,7 +155,7 @@ async function run(events: Event[], input: unknown, extra: { send?: (request: an
     ...(extra.send ? { send: extra.send } : {}),
     ...(extra.session ? { session: extra.session } : {}),
   }).find(t => t.spec.name === "observed_network_run")!;
-  return Effect.runPromise(tool.run(input, { callId: extra.callId ?? "c1", turn: "turn-1", signal: new AbortController().signal }).pipe(
+  return Effect.runPromise(tool.run(input, { callId: extra.callId ?? "c1", turn: extra.turn ?? "turn-1", signal: extra.signal ?? new AbortController().signal }).pipe(
     Effect.provideService(Self, { actor: "aiko", instance: "test", thread: "user-123" }),
     Effect.provideService(EventLog, logOf(events)),
   )) as Promise<Record<string, any>>;
@@ -182,6 +265,10 @@ test("real observed HTTP adapter sends scoped current cookies and response-deriv
     expect(result).toMatchObject({ status: "completed", session: true, effect: "write" });
     expect(resolved).toEqual(["api.vendor.com", "api.vendor.com"]);
     expect(received.map(r => r.path)).toEqual(["/csrf", "/items"]);
+    // This transport is authenticated host HTTP, not a byte-for-byte browser clone.
+    expect(received[0]!.headers["user-agent"]).toBe("Aiko/1.0 (observed-network)");
+    expect(received[0]!.headers["accept-encoding"]).toBe("identity");
+    expect(received[0]!.headers["sec-ch-ua"]).toBeUndefined();
     expect(received[0]!.headers.cookie).toBe("sid=SECRET_COOKIE; logout=BASE_DELETED; path=ONLY_CSRF");
     expect(received[1]!.headers.cookie).toBe("sid=ROTATED_SESSION");
     expect(received[1]!.headers["x-csrf-token"]).toBe("RUNTIME_CSRF");
@@ -218,6 +305,48 @@ test("transport preserves public admission and rejects unsafe dispatch headers b
   await expect(sendObservedHttp({ ...request, url: "http://api.vendor.com/items", headers: { cookie: "sid=secret" } }, new AbortController().signal, transport)).rejects.toThrow("Unsafe observed dispatch headers");
   await expect(sendPublicHarnessRequest({ ...request, headers: { Authorization: "Bearer secret" } }, new AbortController().signal)).rejects.toThrow("Public replay cannot carry credentials");
   expect(sockets).toBe(0);
+});
+
+test("physical HTTP authority runs after DNS and denies before any socket, including cancellation", async () => {
+  const request: HarnessTransportRequest = { stepId: "send", attempt: 1, method: "POST", url: "https://api.vendor.com/items", headers: {}, body: "fixed", redirect: "manual" };
+  let resolved = false, permitted = 0, sockets = 0, dispatched = 0;
+  const options: ObservedHttpOptions = { lookup: async () => { resolved = true; return ["93.184.216.34"]; },
+    request: (() => { sockets++; throw Error("unexpected socket"); }) as typeof httpRequest,
+    beforeDispatch: async prepared => { expect(resolved).toBe(true); expect(prepared.address).toBe("93.184.216.34"); permitted++; throw Error("revoked during DNS"); },
+    onDispatch: () => { dispatched++; } };
+  await expect(sendObservedHttp(request, new AbortController().signal, options)).rejects.toThrow("revoked during DNS");
+  const cancellation = new AbortController();
+  await expect(sendObservedHttp(request, cancellation.signal, { ...options, beforeDispatch: () => { cancellation.abort(); } })).rejects.toThrow();
+  expect(permitted).toBe(1); expect(sockets).toBe(0); expect(dispatched).toBe(0);
+});
+
+test("the physical HTTP permit binds immutable prepared bytes despite caller mutation", async () => {
+  const received: { method?: string; body: string; header?: string }[] = [];
+  const server = createServer((request, response) => {
+    let body = ""; request.on("data", chunk => { body += chunk; }); request.on("end", () => {
+      received.push({ method: request.method, body, header: request.headers["x-request-id"] as string });
+      response.setHeader("content-type", "application/json"); response.end("{}");
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as { port: number }).port;
+  const request: HarnessTransportRequest = { stepId: "send", attempt: 1, method: "POST", url: "https://api.vendor.com/items", headers: { "x-request-id": "original" }, body: "fixed", redirect: "manual" };
+  let permits = 0, dispatched = 0;
+  try {
+    await sendObservedHttp(request, new AbortController().signal, { lookup: async () => ["93.184.216.34"],
+      request: ((_target: string, options: any, callback: any) => {
+        expect(options.agent).toBe(false);
+        return httpRequest({ ...options, hostname: "127.0.0.1", port, path: "/items" }, callback);
+      }) as typeof httpRequest,
+      beforeDispatch: async prepared => {
+        expect(prepared).toMatchObject({ method: "POST", body: "fixed", headers: { "x-request-id": "original" } });
+        expect(Object.isFrozen(prepared)).toBe(true); expect(Object.isFrozen(prepared.headers)).toBe(true);
+        const caller = request as unknown as { method: string; body: string; headers: Record<string, string> };
+        caller.method = "DELETE"; caller.body = "changed"; caller.headers["x-request-id"] = "changed"; permits++;
+      }, onDispatch: () => { dispatched++; } });
+    expect(received).toEqual([{ method: "POST", body: "fixed", header: "original" }]);
+    expect(permits).toBe(1); expect(dispatched).toBe(1);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
 test("captured cookie and authorization headers remain forbidden in learned artifacts", async () => {

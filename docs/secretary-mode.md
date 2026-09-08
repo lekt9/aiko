@@ -34,6 +34,8 @@ With the owner she speaks as Aiko. With a contact she follows that conversation'
 
 The model can resolve “I'll handle Maya” and invoke `commitment_contact_takeover`; this persists owner handling and cannot resume the contact. Ambiguous names require clarification. Fixed work notices are currently English; the inference policy follows the owner's current language. See the [conversation design and example exchange](secretary-operating-model.md#the-language-of-the-relationship).
 
+An unanswered decision stays in **Needs you** while its work is active. Aiko describes it as unanswered, rather than saying you chose to take over. Saved review times on paused or owner-handled work do not run automatically; resume or hand back the work first. If a reminder was stopped before sending, the work status says so. Accepting a review decision does not authorize an extra message.
+
 ## Telegram boundaries
 
 - Account-level replies work in eligible private chats, with `rights.can_reply`, an enabled connection, and an incoming message less than 24 hours old. Groups cannot be enabled through this connection.

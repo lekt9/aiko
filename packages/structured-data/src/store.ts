@@ -1,9 +1,11 @@
-import { canonical, clone, fieldValue, identifier, integer, label, validateColumns } from "./codec.js";
+import { canonical, clone, fieldValue, identifier, integer, label, selectJsonPointer, validateColumns, validateViewPresentation } from "./codec.js";
 import { evaluateQuery } from "./query.js";
-import { DataError, type ArtifactDefinition, type Cell, type Column, type Command, type DatabaseDefinition, type Json, type Query, type QueryDependency, type QueryResult, type Receipt, type RecordRevision, type RowData, type Storage, type TableDefinition, type ViewDefinition } from "./types.js";
+import { DataError, type ArtifactDefinition, type Cell, type Column, type Command, type DatabaseDefinition, type EntityMapping, type Json, type Query, type QueryDependency, type QueryResult, type Receipt, type RecordRevision, type RowData, type Storage, type TableDefinition, type ViewDefinition } from "./types.js";
 
 export interface DomainCollection {
   definition: TableDefinition;
+  /** Host-owned record detail routes; these do not grant domain mutation authority. */
+  actions?: readonly { kind: string; label: string }[];
   rows(): { rows: RecordRevision<RowData>[]; revision: number; complete: boolean };
   revision?: () => string;
   coverage?: string;
@@ -14,6 +16,8 @@ export interface StoreOptions {
   canRead?: (tableId: string, columnId?: string, rowId?: string) => boolean;
   /** Host checks current source grants and suppression against exact historical evidence. */
   canReadDependency?: (dependency: QueryDependency) => boolean;
+  /** Inspect host-owned local evidence (such as entity observations) without I/O awaits. */
+  dependencyState?: (dependency: QueryDependency) => "fresh" | "stale" | "changed";
   domains?: ReadonlyMap<string, DomainCollection>;
 }
 export interface SavedCell {
@@ -21,6 +25,7 @@ export interface SavedCell {
   rowRevision: number;
   cell: Cell;
   retention: "reference-only" | "materialized" | "snapshot";
+  dependencies?: QueryDependency[];
 }
 type Kind = "database" | "table" | "row" | "view" | "artifact" | "cell" | "mapping" | "schedule";
 const key = (...parts: string[]) => JSON.stringify(parts);
@@ -65,6 +70,28 @@ export class StructuredStore {
     this.table(dependency.tableId);
     this.assertRead(dependency.tableId, dependency.columnId, dependency.rowId);
     if (this.options.canReadDependency && !this.options.canReadDependency(dependency)) throw new DataError("forbidden", "Source evidence is unavailable under current access");
+  }
+  /** Validate captured input identities within the caller's local transaction.
+   * Unchanged source checks keep their value version and do not invalidate inputs. */
+  assertCurrentDependencies(dependencies: readonly QueryDependency[], requireFresh = false): boolean {
+    let fresh = true;
+    for (const dependency of dependencies) {
+      this.assertDependency(dependency);
+      const state = this.options.dependencyState?.(dependency);
+      if (state === "changed") throw new DataError("conflict", "Input evidence changed during evaluation");
+      if (state === "stale") fresh = false;
+      const table = this.table(dependency.tableId);
+      if (table.revision !== dependency.tableRevision) throw new DataError("conflict", "Input table changed during evaluation");
+      if (dependency.rowId !== undefined && this.row(table.id, dependency.rowId)?.revision !== dependency.rowRevision) throw new DataError("conflict", "Input row changed during evaluation");
+      if (dependency.valueVersion !== undefined && dependency.rowId !== undefined && dependency.columnId !== undefined) {
+        const saved = this.cell(table.id, dependency.rowId, dependency.columnId);
+        if (saved?.cell.valueVersion !== dependency.valueVersion) throw new DataError("conflict", "Input source value changed during evaluation");
+        const definition = table.value.columns.find(column => column.id === dependency.columnId)?.binding;
+        if (saved.cell.state !== "ready" || saved.cell.freshness !== "fresh" || definition?.kind === "request" && (saved.cell.checkedAt === undefined || saved.cell.checkedAt + definition.refresh.maxAgeSeconds * 1000 < this.now())) fresh = false;
+      }
+    }
+    if (requireFresh && !fresh) throw new DataError("unavailable", "Input source freshness expired during evaluation");
+    return fresh;
   }
   private decode<T>(row: Record<string, unknown>): RecordRevision<T> {
     return { id: String(row.id), revision: Number(row.revision), value: JSON.parse(String(row.value)) as T, at: Number(row.at), producer: String(row.producer), deleted: !!row.deleted };
@@ -132,6 +159,62 @@ export class StructuredStore {
     const row = this.storage.prepare("SELECT receipt FROM structured_operations WHERE owner=? AND id=?").get(this.owner, id);
     return row ? JSON.parse(String(row.receipt)) as Receipt : undefined;
   }
+  mapping(id: string): RecordRevision<EntityMapping> {
+    identifier(id); const mapping = this.record<EntityMapping>("mapping", id);
+    if (!mapping || mapping.deleted) throw new DataError("missing", "Entity mapping unavailable");
+    this.table(mapping.value.tableId); this.assertRead(mapping.value.tableId, undefined, mapping.value.rowId);
+    for (const field of mapping.value.fields) this.assertRead(mapping.value.tableId, field.columnId, mapping.value.rowId);
+    return mapping;
+  }
+  bridgePlan(operationId: string): { planRef: string } | undefined {
+    const row = this.storage.prepare("SELECT payload FROM structured_outbox WHERE owner=? AND id=?").get(this.owner, `bridge:${operationId}`);
+    return row ? JSON.parse(String(row.payload)) : undefined;
+  }
+  stageBridge(operationId: string, planRef: string, dependencies: QueryDependency[], mappingId: string, mappingRevision: number): void {
+    identifier(operationId); label(planRef);
+    this.storage.transaction(() => {
+      const existing = this.bridgePlan(operationId);
+      if (existing) { if (existing.planRef !== planRef) throw new DataError("conflict", "Bridge plan changed"); return; }
+      if (this.mapping(mappingId).revision !== mappingRevision) throw new DataError("conflict", "Entity mapping changed");
+      this.assertCurrentDependencies(dependencies, true);
+      this.enqueue(`bridge:${operationId}`, "entity-bridge", { operationId, planRef });
+    });
+  }
+  finishBridge(operationId: string, input: { planRef: string; mappingId: string; mappingRevision: number; tableId: string; rowId: string; tableRevision: number; rowRevision: number; observationId: string; evidenceId: string; canUpdate: boolean; advanceBaseline?: boolean; projectionUpdated?: boolean; conflictReason?: "cancelled_after_memory_commit" | "authority_changed_after_memory_commit" | "memory_changed_after_memory_commit" | "projection_unavailable_after_memory_commit" }, at: number): Receipt {
+    return this.storage.transaction(() => {
+      const previous = this.receipt(operationId); if (previous) return previous;
+      if (this.bridgePlan(operationId)?.planRef !== input.planRef) throw new DataError("conflict", "Bridge plan changed");
+      const mapping = this.record<EntityMapping>("mapping", input.mappingId), row = this.record<RowData>("row", key(input.tableId, input.rowId));
+      let current = input.canUpdate && !!mapping && !mapping.deleted && mapping.revision === input.mappingRevision && mapping.value.tableId === input.tableId && mapping.value.rowId === input.rowId && !row?.deleted && row?.revision === input.rowRevision && row?.value.entity?.mappingId === mapping.id && row.value.entity.subject === mapping.value.subject;
+      let conflictReason = input.conflictReason;
+      if (input.canUpdate) try {
+        this.mapping(input.mappingId); // Reauthorize the row and every mapped field inside the commit.
+        current = current && this.table(input.tableId).revision === input.tableRevision;
+      } catch (error) {
+        if (!(error instanceof DataError)) throw error;
+        current = false;
+        if (error.code === "forbidden") conflictReason = "authority_changed_after_memory_commit";
+      }
+      const baselineUpdated = current && input.advanceBaseline !== false;
+      if (baselineUpdated) this.write("mapping", mapping!.id, { ...mapping!.value, baseline: { rowRevision: input.rowRevision, observationId: input.observationId, evidenceId: input.evidenceId, operationId } }, mapping!.revision, at, "bridge");
+      const receipt: Receipt = { operationId, at, revision: this.nextRevision(), outcome: current ? "committed" : "conflict", result: { kind: "entity-bridge", appliedToMemory: true, mappingId: input.mappingId, observationId: input.observationId, evidenceId: input.evidenceId, rowRevision: input.rowRevision, mappingRevision: baselineUpdated ? mapping!.revision + 1 : mapping?.revision ?? 0, baselineUpdated, ...(input.projectionUpdated === undefined ? {} : { projectionUpdated: input.projectionUpdated }), ...(current ? {} : { reason: conflictReason ?? (input.canUpdate ? "table_changed_after_memory_commit" : "authority_changed_after_memory_commit") }) } };
+      this.storage.prepare("INSERT INTO structured_operations(owner,id,command,receipt) VALUES (?,?,?,?)").run(this.owner, operationId, `bridge:${input.planRef}`, canonical(receipt));
+      this.settleDelivery(`bridge:${operationId}`);
+      this.enqueue(`bridge-result:${operationId}`, "change", { operationId, revision: receipt.revision });
+      return receipt;
+    });
+  }
+  failBridge(operationId: string, planRef: string, reason: string, evidenceId: string | undefined, outcome: "cancelled" | "conflict" | "rejected" | "unavailable", at: number): Receipt {
+    return this.storage.transaction(() => {
+      const prior = this.receipt(operationId); if (prior) return prior;
+      if (this.bridgePlan(operationId)?.planRef !== planRef) throw new DataError("conflict", "Bridge plan changed");
+      const receipt: Receipt = { operationId, at, revision: this.nextRevision(), outcome, result: { kind: "entity-bridge", appliedToMemory: false, evidenceRecorded: !!evidenceId, ...(evidenceId ? { evidenceId } : {}), reason } };
+      this.storage.prepare("INSERT INTO structured_operations(owner,id,command,receipt) VALUES (?,?,?,?)").run(this.owner, operationId, `bridge:${planRef}`, canonical(receipt));
+      this.settleDelivery(`bridge:${operationId}`);
+      this.enqueue(`bridge-result:${operationId}`, "change", { operationId, revision: receipt.revision });
+      return receipt;
+    });
+  }
   private writable(tableId: string) {
     const table = this.table(tableId);
     if (table.value.mode !== "stored" || tableId.startsWith("system.")) throw new DataError("forbidden", "Domain collections require their host commands");
@@ -163,7 +246,7 @@ export class StructuredStore {
     });
   }
   private apply(command: Command, { at, producer }: { at: number; producer: string }): unknown {
-    if (command.kind === "table.refresh") throw new DataError("invalid", "Refresh requires the native host executor");
+    if (command.kind === "table.refresh" || command.kind === "mapping.promote" || command.kind === "mapping.correct") throw new DataError("invalid", "Source operation requires the native host executor");
     switch (command.kind) {
       case "database.create": {
         const d = command.database; identifier(d.id); label(d.name);
@@ -202,6 +285,8 @@ export class StructuredStore {
         const ids = new Set<string>();
         const prepared = command.rows.map(input => {
           identifier(input.id); if (ids.has(input.id)) throw new DataError("invalid", "Duplicate batch row ID"); ids.add(input.id);
+          this.assertRead(table.id, undefined, input.id);
+          for (const columnId of new Set([...Object.keys(input.values), ...Object.keys(input.overrides ?? {})])) this.assertRead(table.id, columnId, input.id);
           const prior = this.record<RowData>("row", key(table.id, input.id));
           if (prior?.deleted) throw new DataError("conflict", "Deleted row IDs cannot be reused");
           const value: RowData = { values: { ...prior?.value.values, ...input.values }, ...(prior?.value.entity ? { entity: prior.value.entity } : {}) };
@@ -223,6 +308,7 @@ export class StructuredStore {
         const table = this.writable(command.tableId);
         if (!command.rows.length || command.rows.length > 500) throw new DataError("limit", "Delete needs 1..500 rows");
         return { rows: command.rows.map(input => {
+          for (const column of table.value.columns) this.assertRead(table.id, column.id, input.id);
           const prior = this.row(table.id, input.id);
           if (!prior) throw new DataError("missing", "Row not found");
           const result = this.write("row", key(table.id, input.id), prior.value, input.expectedRevision, at, producer, true);
@@ -231,10 +317,57 @@ export class StructuredStore {
           return { id: input.id, revision: result.revision };
         }) };
       }
+      case "row.link_entity": {
+        const table = this.writable(command.tableId); identifier(command.rowId);
+        if (command.subject !== null) label(command.subject);
+        const prior = this.row(table.id, command.rowId);
+        if (!prior) throw new DataError("missing", "Row not found");
+        if (prior.value.entity?.mappingId) throw new DataError("conflict", "Update the versioned mapping before changing this link");
+        const value = clone(prior.value);
+        if (command.subject === null) delete value.entity;
+        else value.entity = { subject: command.subject };
+        // Identity metadata does not change who supplied the row's values. The
+        // admitted command records who linked it; preserve value attribution.
+        const row = this.write("row", key(table.id, prior.id), value, command.expectedRevision, at, prior.producer);
+        this.enqueue(`row:${key(table.id, prior.id)}:${row.revision}`, "row", { tableId: table.id, rowId: prior.id, rowRevision: row.revision });
+        return { rowId: prior.id, rowRevision: row.revision, subject: command.subject };
+      }
+      case "mapping.define": {
+        const mapping = clone(command.mapping); identifier(mapping.id); identifier(mapping.rowId); label(mapping.subject);
+        if (Object.hasOwn(mapping, "baseline")) throw new DataError("invalid", "Mapping baselines are host-owned");
+        if (Object.keys(mapping).some(key => !["id", "tableId", "rowId", "subject", "fields"].includes(key))) throw new DataError("invalid", "Unexpected mapping fields");
+        const table = this.writable(mapping.tableId), row = this.row(table.id, mapping.rowId);
+        if (!row || row.revision !== command.expectedRowRevision) throw new DataError("conflict", "Mapping row changed");
+        const previous = this.record<EntityMapping>("mapping", mapping.id);
+        if (previous && (previous.value.tableId !== table.id || previous.value.rowId !== row.id || previous.value.subject !== mapping.subject)) throw new DataError("conflict", "Detach before changing mapping identity");
+        if (row.value.entity?.mappingId && row.value.entity.mappingId !== mapping.id) throw new DataError("conflict", "Row already has an entity mapping");
+        if (!Array.isArray(mapping.fields) || !mapping.fields.length || mapping.fields.length > 32) throw new DataError("invalid", "Mapping requires 1..32 fields");
+        const fields = new Set<string>(), paths: string[] = [];
+        for (const field of mapping.fields) {
+          if (!field || Object.keys(field).some(key => !["columnId", "path", "authority"].includes(key))) throw new DataError("invalid", "Unexpected field mapping");
+          const column = table.value.columns.find(c => c.id === field.columnId);
+          if (!column || fields.has(field.columnId)) throw new DataError("invalid", "Mapping fields must name distinct columns");
+          this.assertRead(table.id, field.columnId, row.id);
+          fields.add(field.columnId); selectJsonPointer(undefined, field.path);
+          if (field.path.slice(1).split("/").some(part => ["__proto__", "prototype", "constructor"].includes(part.replace(/~1/g, "/").replace(/~0/g, "~")))) throw new DataError("invalid", "Reserved mapping path");
+          if (paths.some(path => path === field.path || path === "" || field.path === "" || path.startsWith(field.path + "/") || field.path.startsWith(path + "/"))) throw new DataError("invalid", "Mapping paths cannot overlap");
+          paths.push(field.path);
+          if (!["table", "entity", "external"].includes(field.authority)) throw new DataError("invalid", "Mapping authority required");
+          if (field.authority === "table" && (column.binding && column.binding.kind !== "literal" || column.authority && column.authority !== "table")) throw new DataError("invalid", "Table-authoritative mappings require local fields");
+          if (field.authority === "entity" && (column.authority && column.authority !== "entity" || column.binding?.kind !== "entity" || column.binding.path !== field.path || column.binding.observationId || column.binding.subjectField || column.binding.subject && column.binding.subject !== mapping.subject)) throw new DataError("invalid", "Entity-authoritative mapping must follow the matching entity field");
+          if (field.authority === "external" && (column.binding?.kind !== "request" || column.authority && column.authority !== "external")) throw new DataError("invalid", "External-authoritative mappings require request fields");
+        }
+        const linked = row.value.entity?.mappingId === mapping.id ? row : this.write("row", key(table.id, row.id), { ...row.value, entity: { subject: mapping.subject, mappingId: mapping.id } }, row.revision, at, row.producer);
+        if (linked.revision !== row.revision) this.enqueue(`row:${key(table.id, row.id)}:${linked.revision}`, "row", { tableId: table.id, rowId: row.id, rowRevision: linked.revision });
+        const baseline = previous?.value.baseline && canonical(previous.value.fields) === canonical(mapping.fields) ? previous.value.baseline : undefined;
+        const result = this.write("mapping", mapping.id, { ...mapping, ...(baseline ? { baseline } : {}) }, command.expectedRevision, at, producer);
+        return { mappingId: mapping.id, mappingRevision: result.revision, rowRevision: linked.revision };
+      }
       case "view.save": {
         identifier(command.view.id); label(command.view.title);
-        if (!["table", "list", "board", "calendar", "chart"].includes(command.view.layout)) throw new DataError("invalid", "Unknown view layout");
-        evaluateQuery(this, clone({ ...command.view.query, limit: 1 }));
+        if (command.view.query.cursor !== undefined) throw new DataError("invalid", "Saved views cannot retain a pagination cursor");
+        const result = evaluateQuery(this, clone({ ...command.view.query, limit: 1 }));
+        validateViewPresentation(command.view, result.columns);
         return this.write("view", command.view.id, command.view, command.expectedRevision, at, producer);
       }
       case "artifact.create": {
@@ -304,7 +437,7 @@ export class StructuredStore {
     return { artifact, view: view.value, result: this.query(view.value.query) };
   }
   /** Host evaluator commits selected materialized cells; raw source responses never enter this API. */
-  completeEvaluation(operationId: string, planDigest: string, result: Json, at: number): Receipt {
+  completeEvaluation(operationId: string, planDigest: string, result: Json, at: number, outcome?: Receipt["outcome"]): Receipt {
     identifier(operationId); label(planDigest); integer(at, 0, Number.MAX_SAFE_INTEGER);
     return this.storage.transaction(() => {
       const previous = this.storage.prepare("SELECT command,receipt FROM structured_operations WHERE owner=? AND id=?").get(this.owner, operationId);
@@ -312,13 +445,13 @@ export class StructuredStore {
         if (previous.command !== `refresh:${planDigest}`) throw new DataError("conflict", "Refresh identity changed");
         return JSON.parse(String(previous.receipt)) as Receipt;
       }
-      const receipt: Receipt = { operationId, result: clone(result), at, revision: this.nextRevision() };
+      const receipt: Receipt = { operationId, result: clone(result), at, revision: this.nextRevision(), ...(outcome ? { outcome } : {}) };
       this.storage.prepare("INSERT INTO structured_operations(owner,id,command,receipt) VALUES (?,?,?,?)").run(this.owner, operationId, `refresh:${planDigest}`, canonical(receipt));
       this.enqueue(`refresh:${operationId}`, "refresh", { operationId, revision: receipt.revision });
       return receipt;
     });
   }
-  async commitCells(operationId: string, input: { tableId: string; tableRevision: number; rows: { rowId: string; rowRevision: number; cells: Record<string, { cell: Cell; retention: SavedCell["retention"] }> }[]; check?: { calls: number; bytes: number; status: "completed" | "failed"; code?: string } }, at: number): Promise<Receipt> {
+  async commitCells(operationId: string, input: { tableId: string; tableRevision: number; mapping?: { id: string; revision: number }; dependencies?: QueryDependency[]; sourceEvidence?: QueryDependency[]; rows: { rowId: string; rowRevision: number; cells: Record<string, { cell: Cell; retention: SavedCell["retention"] }> }[]; check?: { calls: number; bytes: number; status: "completed" | "failed"; code?: string; budgetAccounting?: "measured" | "reserved" } }, at: number, assertCommit?: () => void): Promise<Receipt> {
     identifier(operationId); input = clone(input); integer(at, 0, Number.MAX_SAFE_INTEGER);
     // Persist only the digest of source inputs, especially for reference-only values.
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical({ owner: this.owner, input })));
@@ -326,17 +459,28 @@ export class StructuredStore {
     return this.storage.transaction(() => {
       const existing = this.storage.prepare("SELECT command,receipt FROM structured_operations WHERE owner=? AND id=?").get(this.owner, operationId);
       if (existing) { if (existing.command !== encoded) throw new DataError("conflict", "Evaluation operation conflict"); return JSON.parse(String(existing.receipt)); }
+      // Hashing yields before the transaction. Recheck host cancellation at the
+      // actual commit boundary, not only before entering this asynchronous API.
+      assertCommit?.();
       const table = this.writable(input.tableId);
       if (table.revision !== input.tableRevision) throw new DataError("conflict", "Table binding changed during evaluation");
+      if (input.mapping) {
+        const mapping = this.mapping(input.mapping.id);
+        if (mapping.revision !== input.mapping.revision || mapping.value.tableId !== table.id || input.rows.some(row => row.rowId !== mapping.value.rowId)) throw new DataError("conflict", "Mapping changed during projection");
+      }
+      this.assertCurrentDependencies(input.dependencies ?? [], true);
+      this.assertCurrentDependencies(input.sourceEvidence ?? []);
       const changed: string[] = [];
       for (const evaluated of input.rows) {
         const row = this.row(table.id, evaluated.rowId);
         if (!row || row.revision !== evaluated.rowRevision) throw new DataError("conflict", "Row changed during evaluation");
         for (const [columnId, selected] of Object.entries(evaluated.cells)) {
+          this.assertRead(table.id, columnId, row.id);
           const column = table.value.columns.find(c => c.id === columnId);
           if (!column?.binding || !["entity", "request"].includes(column.binding.kind)) throw new DataError("invalid", "Only source fields can be materialized");
           const declared = column.binding as Extract<NonNullable<Column["binding"]>, { kind: "entity" | "request" }>;
           if (declared.retention !== selected.retention) throw new DataError("forbidden", "Retention differs from binding");
+          if (selected.retention !== "reference-only" && input.dependencies?.some(dependency => dependency.retention === "reference-only")) throw new DataError("forbidden", "Input retention forbids materialization");
           const id = key(table.id, row.id, columnId), previous = this.record<SavedCell>("cell", id);
           const cell = clone(selected.cell);
           if (cell.state === "ready") {
@@ -346,8 +490,8 @@ export class StructuredStore {
           }
           cell.checkedAt = at;
           if (selected.retention === "reference-only") { delete cell.value; cell.state = "unavailable"; cell.freshness = "unknown"; }
-          const same = previous && canonical({ value: previous.value.cell.value ?? null, state: previous.value.cell.state, lineage: previous.value.cell.lineage ?? [] }) === canonical({ value: cell.value ?? null, state: cell.state, lineage: cell.lineage ?? [] });
-          if (cell.state === "error" && previous?.value.cell.value !== undefined && selected.retention !== "reference-only" && previous.value.retention === selected.retention && previous.value.tableRevision === table.revision && previous.value.rowRevision === row.revision && previous.value.cell.sourceGeneration === cell.sourceGeneration) {
+          const same = previous && canonical({ value: previous.value.cell.value ?? null, state: previous.value.cell.state, sourceGeneration: previous.value.cell.sourceGeneration ?? null, lineage: previous.value.cell.lineage ?? [] }) === canonical({ value: cell.value ?? null, state: cell.state, sourceGeneration: cell.sourceGeneration ?? null, lineage: cell.lineage ?? [] });
+          if (cell.state === "error" && previous?.value.cell.value !== undefined && selected.retention !== "reference-only" && previous.value.retention === selected.retention && previous.value.tableRevision === table.revision && previous.value.rowRevision === row.revision && previous.value.cell.sourceGeneration === cell.sourceGeneration && canonical(previous.value.dependencies ?? []) === canonical(input.dependencies ?? [])) {
             cell.value = previous.value.cell.value; cell.state = "ready"; cell.freshness = "stale"; cell.observedAt = previous.value.cell.observedAt ?? previous.at; cell.valueVersion = previous.value.cell.valueVersion;
             if (previous.value.cell.lineage) cell.lineage = previous.value.cell.lineage;
           } else {
@@ -355,7 +499,7 @@ export class StructuredStore {
             if (same && previous?.value.cell.observedAt !== undefined) cell.observedAt = previous.value.cell.observedAt;
           }
           if (cell.valueVersion !== previous?.value.cell.valueVersion) changed.push(`${row.id}.${columnId}`);
-          const saved: SavedCell = { tableRevision: table.revision, rowRevision: row.revision, retention: selected.retention, cell };
+          const saved: SavedCell = { tableRevision: table.revision, rowRevision: row.revision, retention: selected.retention, cell, ...(input.dependencies ? { dependencies: input.dependencies } : {}) };
           this.write("cell", id, saved, previous?.revision ?? 0, at, "source");
           // Receipts record freshness/lineage only, not a second copy of selected values.
           const { value: _value, ...check } = cell;

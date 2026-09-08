@@ -1,12 +1,15 @@
 import { harnessDigest, validateHarnessArtifact, type HarnessArtifact, type HarnessContext, type HarnessContract, type HarnessJson, type HarnessLibraryBinding } from "./harness-library.ts";
 import { validateSiteHarnessArtifact } from "@unbrowse/browser-harness/harness-artifact";
 import { sandboxArtifactDependencies, sandboxDigest, verifySandboxReceipt, type SandboxArtifact, type SandboxDigest, type SandboxJob, type SandboxJobReceipt } from "./sandbox-job.ts";
+import type { SandboxDispatchChallenge } from "./sandbox-dispatch.ts";
 
 /** CodegraffSandbox implements this interface; the local adapter below uses the same runner. */
 export interface HarnessSandboxClient {
   readonly pythonRuntimeLockDigest?: SandboxDigest;
   harnessEnvironment(signal?: AbortSignal): Promise<SandboxDigest>;
   harnessJob(job: SandboxJob, signal?: AbortSignal): Promise<SandboxJobReceipt>;
+  harnessGuardedJob?(job: SandboxJob, authorize: (challenge: SandboxDispatchChallenge) => boolean | Promise<boolean>, signal?: AbortSignal): Promise<SandboxJobReceipt>;
+  harnessReceipt?(job: SandboxJob, signal?: AbortSignal): Promise<SandboxJobReceipt>;
 }
 /** Resolved by trusted host code from current authority, never from candidate source/origins.
  * Revisions and references are public metadata. Do not place credentials in this object. */
@@ -83,7 +86,7 @@ async function executable(artifact: HarnessArtifact, contract: HarnessContract, 
 
 /** Spread this into HarnessLibraryBinding. execute repeats admission because a
  * previous authorize result cannot survive revocation or a session/runtime change. */
-export function createHarnessSandboxBinding(options: HarnessSandboxOptions): Pick<HarnessLibraryBinding,"context"|"authorize"|"execute"> {
+export function createHarnessSandboxBinding(options: HarnessSandboxOptions): Pick<HarnessLibraryBinding,"context"|"authorize"|"execute"|"reconcile"> {
   const current = async (signal:AbortSignal) => {
     signal.throwIfAborted();
     const authority = structuredClone(await options.current(signal));
@@ -103,12 +106,7 @@ export function createHarnessSandboxBinding(options: HarnessSandboxOptions): Pic
     const program = await executable(artifact,contract,selected.authority);
     return {...selected,program};
   };
-  return {
-    context: async signal => (await current(signal)).context,
-    authorize: async (artifact,contract,context,_input,signal) => {
-      try { await admit(artifact,contract,context,signal); return true; } catch {return false;}
-    },
-    execute: async (input,signal) => {
+  const perform = async (input: Parameters<HarnessLibraryBinding["execute"]>[0], signal: AbortSignal, receiptOnly = false): ReturnType<HarnessLibraryBinding["execute"]> => {
       // Keep mutable caller objects from changing after digest validation.
       input = structuredClone(input);
       if(input.owner !== options.owner || input.artifactDigest !== harnessDigest(input.artifact)) throw Error("Sandbox artifact owner/pin mismatch");
@@ -125,9 +123,11 @@ export function createHarnessSandboxBinding(options: HarnessSandboxOptions): Pic
       const latest = await current(signal);
       if (harnessDigest(latest.context) !== harnessDigest(input.context)) throw Error("Sandbox context/session changed before dispatch");
       signal.throwIfAborted();
-      const receipt = await verifySandboxReceipt(job,await options.sandbox.harnessJob(job,signal));
+      if (receiptOnly && !options.sandbox.harnessReceipt) return { status: "unknown", evidence: ["sandbox-receipt-reader-unavailable"] };
+      const receipt = await verifySandboxReceipt(job, receiptOnly ? await options.sandbox.harnessReceipt!(job,signal) : await options.sandbox.harnessJob(job,signal));
       const pureCode = program.kind === "code" || program.kind === "library";
-      const measurements = {networkRequests:receipt.requests,browserStarts:receipt.browserStarts,modelCalls:pureCode ? 0 : null,tokens:pureCode ? 0 : null};
+      const measurements = receiptOnly ? { networkRequests: 0, browserStarts: 0, modelCalls: 0, tokens: 0 }
+        : {networkRequests:receipt.requests,browserStarts:receipt.browserStarts,modelCalls:pureCode ? 0 : null,tokens:pureCode ? 0 : null};
       // The operation links to the sealed sandbox receipt. Job and output hashes
       // include private values and stay in its private journal: small domains are
       // dictionary-recoverable even when the underlying payload is encrypted.
@@ -138,6 +138,13 @@ export function createHarnessSandboxBinding(options: HarnessSandboxOptions): Pic
       if(receipt.status !== "completed") return {status:receipt.status === "unknown" ? "unknown" : "failed",evidence,measurements};
       const output = program.kind === "network" ? (receipt.output as {terminal:HarnessJson}).terminal : receipt.output as HarnessJson;
       return {status:"succeeded",output,evidence,measurements};
+    };
+  return {
+    context: async signal => (await current(signal)).context,
+    authorize: async (artifact,contract,context,_input,signal) => {
+      try { await admit(artifact,contract,context,signal); return true; } catch {return false;}
     },
+    execute: (input, signal) => perform(input, signal),
+    reconcile: (input, signal) => perform(input, signal, true),
   };
 }

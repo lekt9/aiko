@@ -15,6 +15,7 @@ import { parsePlaneCredentials, type PlaneCredential } from "./plane-auth.ts";
 import { DEFAULT_MODEL_LIMITS, type ModelLimits } from "./model-budget-policy.ts";
 import { parseMcpServers, type ConfiguredMcpServers } from "./general-mcp-config.ts";
 import { safeUserId } from "./security.ts";
+import { parseBrowserWatchDeployment, type BrowserWatchDeployment } from "./browser-watch-config.ts";
 import {
   parseManagerKey,
 } from "./password-managers.ts";
@@ -31,6 +32,15 @@ export function parseDatabaseWriteOwners(enabled?: string, owners?: string): rea
 }
 
 export const PERSONA = "3c36e929-50ac-4971-919f-70e6fc6273b7";
+export function parseContributionOwners(value?: string): readonly string[] {
+  const owners = value?.split(",").map(v => v.trim()).filter(Boolean) ?? [];
+  if (owners.length > 64 || owners.some(v => !safeUserId(v))) throw Error("Invalid cognitive contribution owner list");
+  return [...new Set(owners)];
+}
+export function contributionModeFor(config: Pick<AikoConfig, "cognitiveContributionOwners" | "cognitiveContributionShadowOwners">, owner: string) {
+  return config.cognitiveContributionOwners?.includes(owner) ? "enabled" as const
+    : config.cognitiveContributionShadowOwners?.includes(owner) ? "shadow" as const : "disabled" as const;
+}
 export type AikoConfig = {
   mode: "demo" | "live";
   instanceId?: string;
@@ -77,6 +87,10 @@ export type AikoConfig = {
   replyStyle?: "thinkfeel" | "direct";
   verboseFallbacks?: boolean;
   verboseFallbacksSince?: number;
+  /** Explicit owner-scoped rollout. Missing/empty retains legacy reflection. */
+  cognitiveContributionOwners?: readonly string[];
+  cognitiveContributionShadowOwners?: readonly string[];
+  cognitiveRecoveryOwners?: readonly string[];
   botToken?: string;
   webhookSecret?: string;
   allowedUsers: ReadonlySet<string>;
@@ -87,6 +101,7 @@ export type AikoConfig = {
   /** null/omitted: no tool-count ceiling. A positive integer opts into a native budget. */
   toolCallLimit?: number | null;
   browser?: { executablePath: string; domains: readonly string[] };
+  browserWatchDeployment?: BrowserWatchDeployment;
 };
 
 /** Parse data, never source/evaluate a shell file. Secrets never enter actor definitions or event logs. */
@@ -356,6 +371,7 @@ export async function loadConfig(
     publicWeb,
     toolCallLimit,
     browser,
+    browserWatchDeployment: parseBrowserWatchDeployment(get("AIKO_BROWSER_WATCH_CONFIG")),
     port,
     stateDir,
     operatorToken,
@@ -390,6 +406,9 @@ export async function loadConfig(
     codeMode: get("AIKO_CODE_MODE") === "true",
     databaseWriteOwners: parseDatabaseWriteOwners(get("AIKO_DATABASES"), get("AIKO_DATABASE_WRITE_OWNERS")),
     ...parseFallbackVerbosity(get("AIKO_VERBOSE_FALLBACKS"), get("AIKO_VERBOSE_FALLBACKS_SINCE")),
+    cognitiveContributionOwners: parseContributionOwners(get("AIKO_COGNITIVE_CONTRIBUTION_OWNERS")),
+    cognitiveContributionShadowOwners: parseContributionOwners(get("AIKO_COGNITIVE_CONTRIBUTION_SHADOW_OWNERS")),
+    cognitiveRecoveryOwners: parseContributionOwners(get("AIKO_COGNITIVE_RECOVERY_OWNERS")),
     connectorVault: parseConnectorVault(get("AIKO_CONNECTOR_VAULT_JSON")),
     managerKey: parseManagerKey(get("AIKO_MANAGER_KEY")),
     managerProviders: parseManagerProviders(get("AIKO_MANAGER_PROVIDERS_JSON")),

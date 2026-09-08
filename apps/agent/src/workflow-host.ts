@@ -354,7 +354,7 @@ export class WorkflowController {
           operation === "run"
             ? "Execute a bounded tool workflow program. Independent reads run in parallel; result bindings feed dependencies. Pass runtime values via input parameters. Supply program (version:1,id,parameters,steps:[id,toolId,dependsOn,arguments bindings],limits) or a saved workflowId. Bindings: {kind:input,name}, {kind:result,step,path:string[]}, {kind:literal,value}. Only registered owner read tools are available. No Python/shell evaluation."
             : operation === "crystallize"
-              ? "Promote a successfully executed workflowId/runId into a reusable tool-router harness. Stores the program and success provenance, never its result values."
+              ? "Save a successfully executed workflowId/runId with pinned tool schemas and effect types. This is one successful example, not independent verification of its outcome. Changed prerequisites block reuse; use a new definition and run to establish new evidence. Stores no result values."
               : "List saved workflow programs and reusable status.",
         inputSchema:
           operation === "run"

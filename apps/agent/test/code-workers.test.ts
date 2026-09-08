@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect, Layer } from "effect";
+import { Validator } from "@cfworker/json-schema";
 import {
   actor,
   agentMessageMethod,
@@ -37,6 +38,7 @@ import {
   type WorkerGrant,
 } from "../src/code-agents.ts";
 import { CodeHarness } from "../src/code-harness.ts";
+import { BROWSER_ACTOR_PROFILE, BROWSER_ACTOR_INSTRUCTIONS, BROWSER_DELEGATION_INSTRUCTIONS, browserTaskOutput } from "../src/browser-actor.ts";
 import { runCodeSegment } from "../src/code-sandbox-runner.ts";
 import { createService } from "../src/server.ts";
 import { PERSONA } from "../src/config.ts";
@@ -161,6 +163,25 @@ function runTool(
       ),
   );
 }
+test("worker discovery results match their advertised schemas and expose usable model references", async () => {
+  const route={provider:"codegraff",model_id:"configured-model",efforts:["high"],contextWindowTokens:65536,maxOutputTokens:4096,protocol:"openai-chat-completions"};
+  const workers=scopedAgentsPackage("123",{models:()=>[route],scopes:["research","browser"],browserOperations:["navigate"],mcp:()=>[{id:"inventory",revision:"v1",tools:{list_projects:"read"}}]});
+  const discover=(package_:typeof workers,name:"models"|"providers")=>Effect.runPromise(package_.methods[name]!({},{callId:name}).pipe(
+    Effect.provideService(Self,parentAddress),
+    Effect.provideService(EventLog,withWatermark({read:Effect.succeed([]),append:()=>Effect.die(Error("Discovery must not append"))})),
+    Effect.provideService(Router,{send:()=>Effect.die(Error("Discovery must not dispatch"))}),
+  ));
+  const models=await discover(workers,"models");
+  const providers=await discover(workers,"providers");
+  expect(new Validator(workers.docs!.models!.output as any).validate(models).valid).toBe(true);
+  expect(new Validator(workers.docs!.providers!.output as any).validate(providers).valid).toBe(true);
+  expect(models).toMatchObject({items:[{provider:route.provider,model_id:route.model_id,efforts:["high"]}],browserOperations:["navigate"],mcp:[{id:"inventory"}]});
+  expect(providers).toEqual({items:[{provider:route.provider,status:"configured"}]});
+  expect(new Validator(workers.docs!.models!.input as any).validate({sort:"promptUsdPerToken"}).valid).toBe(false);
+  const empty=scopedAgentsPackage("123");
+  expect(new Validator(empty.docs!.models!.output as any).validate(await discover(empty,"models")).valid).toBe(true);
+});
+
 test("a rejected durable worker grant cannot dispatch an unowned child", async () => {
   const rows: Event[] = [
     threadCreated(parentAddress, undefined, 0),
@@ -199,6 +220,40 @@ test("a rejected durable worker grant cannot dispatch an unowned child", async (
   );
   expect(result).toMatchObject({ status: "blocked" });
   expect(sends).toBe(0);
+});
+
+test("worker UI controls require current explicit operation and origin grants", async () => {
+  const f=grantFixture("browser");let calls=0;
+  const native={spec:{name:"worker_browser_navigate",description:"Scoped navigation fixture",inputSchema:{type:"object" as const}},run:()=>Effect.sync(()=>{calls++;return {status:"completed"};})};
+  const tool=scopedWorkerTools(f.binding,[native])[0]!,input={origin:"https://api.vendor.com",url:"https://api.vendor.com/new"};
+  expect(await runTool(tool,input,f)).toMatchObject({status:"blocked"});
+  f.grant.browserOperations=["navigate"];
+  expect(await runTool(tool,input,f)).toMatchObject({status:"completed"});
+  expect(await tool.authorizeRetained!(input)).toBe(true);
+  expect(await runTool(tool,{...input,origin:"https://foreign.vendor.com"},f)).toMatchObject({status:"blocked"});
+  f.grant.scope="research";
+  expect(await runTool(tool,input,f)).toMatchObject({status:"blocked"});
+  f.grant.scope="browser";f.grant.actions=["sha256:"+"a".repeat(64)];
+  expect(await runTool(tool,input,f)).toMatchObject({status:"blocked"});
+  expect(await tool.authorizeRetained!(input)).toBe(false);
+  expect(calls).toBe(1);
+});
+
+test("delegation rejects unmounted or ambiguous browser operation grants before dispatch", async () => {
+  for(const input of [
+    {scope:"research",browserOperations:["navigate"]},
+    {scope:"browser",browserOperations:["navigate","navigate"]},
+    {scope:"browser",browserOperations:["click"]},
+    {scope:"browser",browserOperations:["arbitrary_command"]},
+    {scope:"browser",browserOperations:["navigate"],actions:["sha256:"+"a".repeat(64)]},
+  ]){
+    const rows:Event[]=[threadCreated(parentAddress,undefined,0),{type:"MessageReceived",id:"turn",text:"Delegate",at:1},{type:"PackageCalled",callId:"call",name:"agents.run",arguments:{},turn:"turn",at:2}];
+    let sends=0;
+    const result=await Effect.runPromise(scopedAgentsPackage("123",{scopes:["research","browser"],browserOperations:["navigate"]}).methods.run!({text:"Run browser task",origins:["https://api.vendor.com"],...input},{callId:"call"}).pipe(
+      Effect.provideService(Self,parentAddress),Effect.provideService(EventLog,withWatermark({read:Effect.sync(()=>rows),append:events=>Effect.sync(()=>{rows.push(...events);})})),Effect.provideService(Router,{send:()=>Effect.sync(()=>{sends++;})}),
+    ));
+    expect(result).toMatchObject({status:"blocked"});expect(sends).toBe(0);expect(rows.some(event=>event.type==="AikoWorkerGranted")).toBe(false);
+  }
 });
 
 test("worker authority requires exact durable lineage and is revoked by parent cancellation", () => {
@@ -354,7 +409,7 @@ test("browser worker discovers and replays the actual indexed Merkle DAG only wi
   expect(await tools[0]!.authorizeRetained!(args)).toBe(true);
   f.grant.origins = ["https://other.vendor.com"];
   expect(await tools[0]!.authorizeRetained!(args)).toBe(false);
-  expect(await runTool(discovery, {}, f)).toEqual({ definitions: [] });
+  expect(await runTool(discovery, {}, f)).toMatchObject({ definitions: [] });
   expect(await runTool(tools[0]!, args, f)).toMatchObject({
     status: "blocked",
   });
@@ -497,6 +552,91 @@ test("native background independent worker dispatch keeps ownership and complete
     workerGrantOf(binding(child), rows, await host.read(child))?.scope,
   ).toBe("compute");
 });
+test.each(["completed", "blocked", "uncertain", "invalid", "cancelled"] as const)("Bun chat delegates to the browser specialist and preserves the %s outcome", async outcome => {
+  const stateDir=await mkdtemp("/tmp/aiko-worker-browser-control-");cleanup.push(()=>rm(stateDir,{recursive:true,force:true}));
+  const result = { status: outcome, summary: `TASK_SUMMARY_${outcome}`, sources: [{ url: "https://vendor.com/new-page", finding: "Continue button observed" }], receipts: [], nextStep: outcome === "completed" ? "" : "Check the original action before continuing" };
+  let navigations=0,clicks=0;
+  const model=Layer.succeed(Infer,{
+    resolve:()=>({model:{provider:"fixture",model_id:"fixture"}}),
+    react:request=>{
+      const child=request.identity.thread.startsWith("ag."),done=request.trajectory.some(event=>event.type==="ToolReturned");
+      expect(request.system).toContain(child ? BROWSER_ACTOR_INSTRUCTIONS : BROWSER_DELEGATION_INSTRUCTIONS);
+      if(done&&child) {
+        expect(request.trajectory.find(event => event.type === "MessageReceived")?.output).toEqual({ name: browserTaskOutput.name, schema: browserTaskOutput.schema });
+        if (outcome === "completed" || outcome === "invalid") expect(JSON.stringify(request.trajectory)).toContain("WORKER_BROWSER_CLICKED_73142");
+        else expect(JSON.stringify(request.trajectory)).toContain(outcome === "uncertain" ? "unknown" : "blocked");
+      }
+      if(done&&!child) {
+        expect(JSON.stringify(request.trajectory)).toContain(outcome === "invalid" ? "declared output contract" : result.summary);
+        expect(JSON.stringify(request.trajectory)).not.toContain("WORKER_BROWSER_CLICKED_73142");
+      }
+      const mode = { kind: "local" as const, name: "validate-once" as const };
+      return Effect.succeed(done?{kind:"complete" as const,mode,output:child?JSON.stringify(result):"Parent complete"}:{kind:"call" as const,mode,name:"execute",callId:"browser-execute",arguments:{code:child
+        ? "const navigate=await tools.call({name:'worker_browser_navigate',arguments:{origin:'https://vendor.com',url:'https://vendor.com/new-page'}});const click=await tools.call({name:'worker_browser_click',arguments:{origin:'https://vendor.com',selector:'#continue'}});return {navigate,click};"
+        : "const catalog=await agents.models({});if(!catalog.browserOperations.includes('navigate'))throw Error('Browser operation catalogue missing');return await agents.run({text:'Open the new vendor page and click Continue after approval',scope:'browser',origins:['https://vendor.com'],browserOperations:['navigate','click'],placement:'independent'});"}});
+    },
+  });
+  const config={mode:"demo" as const,port:4242,stateDir,operatorToken:"worker-browser-operator-12345678901234",persona:PERSONA,voiceEnabled:false,allowedUsers:new Set<string>(),codeMode:true,browser:{executablePath:"/fixture/browser",domains:["*"]}};
+  const service=await createService(config,{
+    model,
+    browserFactory:async()=>({
+      execute:async()=>{throw Error("Worker bypassed scoped driver");},
+      executeScoped:async(action,policy)=>{
+        expect(policy).toEqual({origin:"https://vendor.com",origins:["https://vendor.com"]});
+        if(action.action==="navigate"){navigations++;return {url:action.url};}
+        if(action.action==="url")return {url:"https://vendor.com/new-page"};
+        if(action.action==="snapshot")return {text:"Continue button #continue"};
+        if(action.action==="click"){clicks++;if(outcome==="uncertain")throw Error("Lost acknowledgement after dispatch");return {text:"WORKER_BROWSER_CLICKED_73142"};}
+        throw Error("Unexpected scoped browser action");
+      },
+      authorizeInspection:async()=>true,
+      close:async()=>{},
+    }),
+    registrySandbox:()=>({placement:"local",codeTransport:runCodeSegment,sandbox:{harnessEnvironment:async()=>`sha256:${"1".repeat(64)}`,harnessJob:async()=>{throw Error("Unexpected harness job");}}}),
+  });cleanup.push(()=>service.close());
+  await service.host.commitRoot(service.host.self("user-local"),{type:"MessageReceived",id:"browser-turn",text:"Delegate browser operation",at:1});
+  const driving=service.host.drive();
+  const headers={authorization:`Bearer ${config.operatorToken}`};
+  let pending:any;
+  for(let attempt=0;attempt<600&&!pending;attempt++){
+    const state=await (await service.fetch(new Request("http://localhost/api/browser",{headers}))).json() as any;
+    pending=state.pending?.[0];
+    if(!pending)await new Promise(resolve=>setTimeout(resolve,5));
+  }
+  if (!pending) throw Error(JSON.stringify(await Promise.all((await service.host.threads()).map(async thread => ({ thread, events: await service.host.read(thread) })))));
+  expect(pending).toMatchObject({name:"agent_browser_click",args:{selector:"#continue"}});
+  expect(navigations).toBe(1);expect(clicks).toBe(0);
+  expect((await service.host.read("user-local")).some(event=>event.type==="AikoBrowserApprovalRequested")).toBe(true);
+  if (outcome === "cancelled") {
+    const cancelled = await service.fetch(new Request("http://localhost/api/cancel", { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify({ id: "browser-turn" }) }));
+    expect(cancelled.status).toBe(202);
+    await driving;
+    await service.host.drive();
+    const rows = await service.host.read("user-local"), claim = rows.find(event => event.type === "ChildCreated")!;
+    expect(rows.find(event => event.type === "AikoWorkerGranted")).toMatchObject({ profile: BROWSER_ACTOR_PROFILE });
+    expect((await service.host.read((claim.address as any).thread)).some(event => event.type === "TurnCancelled")).toBe(true);
+    expect(clicks).toBe(0);
+    await service.host.recover();
+    expect(navigations).toBe(1); expect(clicks).toBe(0);
+    return;
+  }
+  const response=await service.fetch(new Request("http://localhost/api/browser/approval",{method:"POST",headers:{...headers,"content-type":"application/json"},body:JSON.stringify({id:pending.id,approve:outcome!=="blocked"})}));
+  expect(response.status).toBe(202);
+  await driving;
+  expect(clicks).toBe(outcome==="blocked"?0:1);
+  const rows=await service.host.read("user-local"),claim=rows.find(event=>event.type==="ChildCreated")!;
+  expect(rows.some(event=>event.type==="AikoBrowserApprovalGranted")).toBe(outcome!=="blocked");
+  expect(rows.find(event=>event.type==="AikoWorkerGranted")).toMatchObject({profile:BROWSER_ACTOR_PROFILE,browserOperations:["navigate","click"]});
+  const child=await service.host.read((claim.address as any).thread);
+  if (outcome === "invalid") {
+    expect(child.find(event => event.type === "TurnFailed")).toMatchObject({ cause: "output_validation_failed" });
+    expect(child.some(event => event.type === "TurnCompleted")).toBe(false);
+  } else expect(JSON.parse(String(child.find(event=>event.type==="TurnCompleted")?.output))).toEqual(result);
+  expect(rows.find(event=>event.type==="TurnCompleted")?.output).toBe("Parent complete");
+  expect(JSON.stringify([...rows,...child])).not.toContain("WORKER_BROWSER_CLICKED_73142");
+  await service.host.recover();expect(navigations).toBe(1);expect(clicks).toBe(outcome==="blocked"?0:1);
+});
+
 test("the actual Bun service resolves worker owners from its native directory and resumes private child threads", async () => {
   const stateDir = await mkdtemp("/tmp/aiko-worker-bun-");
   cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
@@ -1434,16 +1574,28 @@ test("captured browser requests flow through a real pointer index and cited memo
           ? {
               kind: "complete" as const,
               output: child
-                ? "Observed catalog with a pinned memory citation."
+                ? JSON.stringify({ status: "completed", summary: "Observed catalog with a pinned memory citation.", sources: [{ url: "https://api.vendor.com/catalog", finding: "Catalog inspected through the recorded request." }], receipts: [], nextStep: "" })
                 : "Worker returned observed evidence.",
+              mode: { kind: "local" as const, name: "validate-once" as const },
             }
           : {
               kind: "call" as const,
+              mode: { kind: "local" as const, name: "validate-once" as const },
               name: "execute",
               callId: "index-exec",
               arguments: {
                 code: child
-                  ? "const memory=await tools.call({name:'memory_recall',arguments:{search:'AikoRequestMemoryIndexed',limit:2}});const citation=memory.result.items[0]?.observation.id;if(!citation)throw Error('Missing source citation');const index=await tools.call({name:'worker_index_search',arguments:{query:'vendor.com'}});const d=index.definitions[0];if(!d?.pointerId)throw Error('Missing indexed pointer');const replay=await tools.call({name:'observed_network_run',arguments:{toolDigest:d.toolDigest,inputs:Object.fromEntries(d.inputs.map(i=>[i.name,'catalog']))}});if(replay.status!=='completed')throw Error('Replay failed');return {citation,pointerId:d.pointerId,digest:d.toolDigest,replay};"
+                  ? `const memory=await tools.call({name:'memory_recall',arguments:{search:'AikoRequestMemoryIndexed',limit:2}});
+                    const citation=memory.result.items[0]?.observation.id;if(!citation)throw Error('Missing source citation');
+                    const contract=await tools.describe({name:'worker_index_describe'});
+                    if(!contract.inputSchema.properties.toolDigest)throw Error('Missing native graph contract');
+                    let index=await tools.call({name:'worker_index_search',arguments:{query:'find catalog'}});
+                    if(!index.definitions.length)index=await tools.call({name:'worker_index_search',arguments:{query:'vendor.com'}});
+                    const d=index.definitions[0];if(!d?.pointerId)throw Error('Missing indexed pointer');
+                    const graph=await tools.call({name:'worker_index_describe',arguments:{toolDigest:d.toolDigest}});
+                    if(graph.graph.totalSteps!==1||graph.graph.steps[0].method!=='GET'||graph.graph.nextOffset!==null)throw Error('Incomplete graph');
+                    const replay=await tools.call({name:d.executeWith,arguments:{toolDigest:d.toolDigest,inputs:Object.fromEntries(d.inputs.map(i=>[i.name,'catalog']))}});
+                    if(replay.status!=='completed')throw Error('Replay failed');return {citation,pointerId:d.pointerId,digest:d.toolDigest,replay};`
                   : "return await agents.run({text:'Use cited memory and the recorded catalog request to inspect current catalog evidence',scope:'browser',origins:['https://api.vendor.com'],placement:'independent'});",
               },
             },

@@ -113,7 +113,9 @@ export function safeAuthorizationUrl(value?: string): string | undefined {
   }
 }
 
-export class MiniAppAuthenticationError extends Error {}
+export class MiniAppAuthenticationError extends Error {
+  constructor(message: string, readonly status: 401 | 403 = 401) { super(message); this.name = "MiniAppAuthenticationError"; }
+}
 const reopenMessage =
   "Your Telegram session expired. Close this mini app and reopen it from Aiko’s chat menu, then try again.";
 let miniAppSession: { initData: string; token: Promise<string> } | undefined;
@@ -135,7 +137,7 @@ async function sessionFor(initData: string) {
       signal: AbortSignal.timeout(15_000),
     });
     if (response.status === 401 || response.status === 403)
-      throw new MiniAppAuthenticationError(reopenMessage);
+      throw new MiniAppAuthenticationError(reopenMessage, response.status);
     if (!response.ok)
       throw new Error("Could not open your Telegram session. Try again.");
     const value = (await response.json()) as { token?: string };
@@ -180,7 +182,7 @@ export async function connectorRequest<T>(
   const timeout = AbortSignal.timeout(privateSignIn ? 120_000 : path.startsWith("/password-managers") ? 40_000 : 20_000);
   const settled = signal ? AbortSignal.any([signal, timeout]) : timeout;
   const response = await fetch(
-    path.startsWith("/secretary") || path.startsWith("/approvals") || path === "/messages" || path.startsWith("/databases") || path === "/observed-actions/approval"
+    (path === "/harness/library" || path.startsWith("/harness/library/")) || (path === "/channels/browser-watches" || path.startsWith("/channels/browser-watches/")) || path.startsWith("/secretary") || path.startsWith("/approvals") || path === "/messages" || path === "/promises" || path === "/promises/decision" || path.startsWith("/databases") || path === "/observed-actions/approval"
       ? `/api${path}`
       : `/api/connectors${path}`,
     {
@@ -195,7 +197,21 @@ export async function connectorRequest<T>(
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
       clearMiniAppSession();
-      throw new MiniAppAuthenticationError(reopenMessage);
+      throw new MiniAppAuthenticationError(authentication?.bearer || authentication?.telegram === false || !telegram?.initData
+        ? "Your account access changed. Sign in with an Aiko account credential to continue." : reopenMessage, response.status);
+    }
+    if (path === "/channels/browser-watches" || path.startsWith("/channels/browser-watches/")) {
+      const error = new Error(response.status === 503 ? "Browser watches are unavailable for this account right now."
+        : response.status === 409 ? "The watch changed or its update could not be confirmed. Refresh its status before trying again."
+        : "The watch request could not be completed. Refresh and try again.");
+      Object.assign(error, {status: response.status}); throw error;
+    }
+    if (path === "/harness/library" || path.startsWith("/harness/library/")) {
+      const error = new Error(response.status === 503 ? "Saved tools are unavailable for this account right now. Try Refresh tools."
+        : path === "/harness/library/output" ? "No checked result is available yet. This action has not been sent again."
+        : response.status === 409 ? "The tool changed or this operation could not be confirmed. Your draft is retained. Refresh its status before continuing."
+        : "The saved tool request could not be completed. Your inputs are retained.");
+      Object.assign(error, {status: response.status}); throw error;
     }
     if (path.startsWith("/databases") || path === "/observed-actions/approval") {
       const error = new Error(response.status === 409 ? "This record changed. Reload it before saving again." : response.status === 404 ? "This table or record is no longer available." : "The database request could not be completed. Try again.");

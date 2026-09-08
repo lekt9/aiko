@@ -186,6 +186,35 @@ test("disabled sources stay disabled and forgotten evidence cannot return to sna
   expect(memorySnapshot(binding)).toMatchObject({ leaves: [], complete: true });
 });
 
+test("semantic roots remove revoked evidence and stale dependencies while preserving unchanged authorized content", async () => {
+  const binding = await fixture();
+  const first = await indexLearning(binding, input, redactor());
+  const memory = openMemory(binding);
+  try {
+    const dependent = memory.remember({ subject: "derived/release", title: "Release conclusion", type: "note",
+      payload: { conclusion: "Original release" }, dependsOn: [first.observation] },
+      { key: "freshness-dependent", producer: { kind: "agent", reference: "controlled-derivation" } });
+    const original = memorySnapshot(binding), source = memory.sources()[0]!;
+    expect(original.leaves).toHaveLength(2);
+    memory.approveSource(source.id, source.revision, false, "freshness-revoke");
+    expect(memory.get(first.observation)).toMatchObject({ state: "current", freshness: "stale" });
+    expect(memory.get(dependent.id)?.freshness).toBe("stale");
+    const revoked = memorySnapshot(binding);
+    expect(revoked).toMatchObject({ complete: true, leaves: [], hashPolicyVersion: "aiko-memory-semantic/v2" });
+    expect(revoked.root).not.toBe(original.root);
+    memory.approveSource(source.id, source.revision, true, "freshness-restore");
+    expect(memorySnapshot(binding).root).toBe(original.root);
+    const correction = await indexLearning(binding, { ...input, id: "freshness-correction", payload: { status: "closed", owner: "Sam" } }, redactor());
+    expect(memory.get(first.observation)?.state).toBe("superseded");
+    expect(memory.get(dependent.id)?.freshness).toBe("stale");
+    const corrected = memorySnapshot(binding);
+    expect(corrected.leaves.map(leaf => leaf.observation)).toEqual([correction.observation]);
+    expect(corrected.root).not.toBe(original.root);
+    await indexLearning(binding, { ...input, id: "freshness-correction", payload: { status: "closed", owner: "Sam" } }, redactor());
+    expect(memorySnapshot(binding)).toEqual(corrected);
+  } finally { memory.close(); }
+});
+
 test("an interrupted native registration resumes its exact approval and ingestion after reopening", async () => {
   const binding = await fixture();
   await interruptBeforeApproval(binding);
@@ -567,7 +596,7 @@ test("snapshot corpus version advances independently of the unchanged semantic h
   } finally { memory.close(); }
   const after = memorySnapshot(binding);
   expect(after.scope).toBe(`aiko:${binding.owner}`);
-  expect(after.hashPolicyVersion).toBe("aiko-memory-semantic/v1");
+  expect(after.hashPolicyVersion).toBe("aiko-memory-semantic/v2");
   expect(after.root).toBe(before.root);
   expect(after.leaves).toEqual(before.leaves);
   expect(after.scopeVersion).toBe(before.scopeVersion + 1);

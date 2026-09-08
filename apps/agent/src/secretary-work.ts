@@ -23,6 +23,7 @@ import {
   saveWork,
   workDigest,
   workEvent,
+  workEvaluationFailure,
   WorkError,
   workState,
   workTerminal,
@@ -266,6 +267,8 @@ export async function applyWorkCommand(
           409,
         );
       if (input.choice === "approve") {
+        if (d.kind === "review" && w.status !== "candidate")
+          throw new WorkError("Choose a later review, take over, or confirm completion. This decision does not authorize another message.", 409);
         if (d.kind === "authorize") {
           const c = contactForWork(
             await binding.readSecretary(),
@@ -322,14 +325,7 @@ export async function applyWorkCommand(
       if (workTerminal(w) && !["reopen", "retry"].includes(change))
         throw new WorkError("Reopen this work before changing it", 409);
       if (change === "retry") {
-        if (
-          !events.some(
-            (e) =>
-              e.type === "AikoWorkEvaluationFailed" &&
-              e.workId === w.id &&
-              e.workVersion === previous,
-          )
-        )
+        if (!workEvaluationFailure(events, { ...w, version: previous }))
           throw new WorkError("No failed check remains on this version", 409);
       } else if (change === "pause") {
         w.control = "paused";

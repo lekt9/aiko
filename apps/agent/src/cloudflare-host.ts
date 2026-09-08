@@ -89,6 +89,9 @@ export interface CloudflareAccountHostOptions<R> {
   nextWake?(): Promise<number | undefined>;
   /** Synchronous application precondition checked inside the append transaction, after all awaits. */
   canAppend?(thread: string, events: readonly Event[], read: () => readonly Event[]): boolean;
+  /** Narrow Router delivery precondition, checked synchronously in its storage
+   * transaction. Rejection throws; an undelivered call must not be acknowledged. */
+  canDeliver?(thread: string, events: readonly Event[], read: () => readonly Event[]): boolean;
 }
 
 /** One owner's physical DO host; Tardigrade owns reconciliation, effects, cancellation and scheduling. */
@@ -220,10 +223,10 @@ export async function createCloudflareAccountHost<R>(
     const at = armAt(current, Date.now(), delay);
     if (at !== null) await storage.setAlarm(at);
   };
-  function appendSync(thread: string, events: readonly Event[], guarded = false, inTransaction = false) {
+  function appendSync(thread: string, events: readonly Event[], guarded = false, inTransaction = false, sidecar?: () => undefined) {
     const operation = () => {
       let head = headSync(thread);
-      if (guarded && options.canAppend && !options.canAppend(thread, events, () => readSync(thread))) return { appended: 0, head };
+      if (guarded && options.canAppend && options.canAppend(thread, events, () => readSync(thread)) !== true) return { appended: 0, head };
       let appended = 0;
       for (const event of events) {
         const key = keyOf(thread, event) ?? null;
@@ -248,6 +251,11 @@ export async function createCloudflareAccountHost<R>(
         appended++;
       }
       if (appended) {
+        // Host metadata and its same-storage materialization must commit together.
+        // Do not run the sidecar on rejected or duplicate-only appends.
+        const result: unknown = sidecar?.();
+        if (result && typeof (result as { then?: unknown }).then === "function")
+          throw new Error("Control append sidecar must be synchronous");
         revision++;
         const runtime = runtimes.get(thread);
         if (runtime) {
@@ -264,6 +272,7 @@ export async function createCloudflareAccountHost<R>(
     events: readonly Event[] | (() => readonly Event[]),
     mark = true,
     guarded = false,
+    sidecar?: () => undefined,
   ) {
     checkThread(thread);
     // Recovery coverage is persisted before any executable event, including events from effects.
@@ -273,6 +282,8 @@ export async function createCloudflareAccountHost<R>(
       thread,
       typeof events === "function" ? events() : events,
       guarded,
+      false,
+      sidecar,
     );
     if (mark && result.appended) driver.mark(thread);
     await storage.sync();
@@ -431,6 +442,8 @@ export async function createCloudflareAccountHost<R>(
       const rows = creation
         ? [landed]
         : [threadCreated(target, envelope.lineage, at as number), landed];
+      if (options.canDeliver && options.canDeliver(target.thread, rows, () => readSync(target.thread)) !== true)
+        throw new Error("Actor delivery admission denied");
       return appendSync(target.thread,rows,false,true);
     });
     if (result.appended) driver.mark(target.thread);
@@ -536,6 +549,27 @@ export async function createCloudflareAccountHost<R>(
     threads: async () => threadsSync(),
     self: (thread: string) => formatThreadAddress(addressOf(thread)),
     commit,
+    /** Guarded host metadata, with optional same-SQL materialization. Never arms
+     * or marks execution. A zero append is not an acknowledgement: callers must
+     * verify their exact retained fact, including immutable replay payloads. */
+    appendControl: async (thread: string, events: readonly Event[], control?: { sidecar?: () => undefined }) => {
+      if (!options.canAppend) throw new Error("Control append requires a synchronous guard");
+      // Reject native async callbacks before invocation: rejecting their returned
+      // Promise cannot stop writes after an await. This is a trusted host hook;
+      // synchronous callbacks must not schedule work or retain the transaction.
+      if (Object.prototype.toString.call(control?.sidecar) === "[object AsyncFunction]")
+        throw new Error("Control append sidecar must be synchronous");
+      return append(thread, () => {
+        const existing = readPageSync(thread, 0, 1).map(row => row.event);
+        const imported = threadCreatedOf(events);
+        threadCreatedForDelivery(imported ? [imported] : existing, addressOf(thread), undefined);
+        if (existing.length || imported || !events.length) return events;
+        const at = events[0]?.at;
+        if (typeof at !== "number" || !Number.isFinite(at))
+          throw new Error("First control event requires a finite timestamp");
+        return [threadCreated(addressOf(thread), undefined, at), ...events];
+      }, false, true, control?.sidecar);
+    },
     commitRoot: async (address: string, event: Event) => {
       const target = parseThreadAddress(address);
       checkAddress(target);

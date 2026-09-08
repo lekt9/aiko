@@ -32,7 +32,7 @@ const items = (w: Commitment) =>
   `${w.plan!.count} agenda item${w.plan!.count === 1 ? "" : "s"}`;
 const contact = (w: Commitment) => plain(w.plan!.contactName, 80);
 const ownReceipts = (w: Commitment, receipts: readonly WorkReceipt[]) =>
-  receipts.filter((r) => r.workId === w.id);
+  receipts.filter((r) => r.workId === w.id && r.owner === w.owner);
 const uncertain = (receipts: readonly WorkReceipt[]) =>
   receipts.find((r) => r.status === "started" || r.status === "unknown");
 
@@ -54,6 +54,16 @@ export function workStatusLanguage(
     return w.evidenceMessageId && w.plan
       ? `${contact(w)}’s ${items(w)} are in your preparation note.`
       : "I’ve recorded your confirmation that this is complete.";
+  if (w.decision?.status === "expired")
+    return (
+      "The decision window passed without an answer. This work is still open, and I won’t start another message without your direction." +
+      (uncertainty ? " " + uncertainty : "")
+    );
+  if (w.decision?.status === "declined")
+    return (
+      "You declined this proposal. The work stays open for your next instruction." +
+      (uncertainty ? " " + uncertainty : "")
+    );
   if (w.handling === "owner")
     return (
       "You’re handling this. I won’t start another message for this work unless you hand it back." +
@@ -72,6 +82,8 @@ export function workStatusLanguage(
       reminder = receipts.find((r) => r.action === "reminder");
     if (request?.status === "blocked")
       return "The request was stopped before sending. This still needs your attention.";
+    if (reminder?.status === "blocked")
+      return "The reminder was stopped before sending. I’m still waiting for the complete agenda; review the reply permission before arranging another follow-up.";
     if (request?.status === "delivered")
       return reminder?.status === "delivered"
         ? `I’ve sent ${contact(w)} the reminder. I’m still waiting for the complete agenda.`
@@ -168,7 +180,9 @@ export function workCommandLanguage(
   if (change === "reopen")
     return "I’ve reopened this. I’ll need fresh evidence before marking it complete again.";
   if (change === "review")
-    return `I’ll review this on ${secretaryTime(w.nextReviewAt!, w.timeZone)}. I won’t send another follow-up without fresh authorization.`;
+    return w.control === "paused" || w.handling === "owner"
+      ? `I’ve saved ${secretaryTime(w.nextReviewAt!, w.timeZone)} as the next review time. ${w.control === "paused" ? "This is still paused; resume it" : "You’re still handling this; hand it back"} before Aiko can check it automatically.`
+      : `I’ll review this on ${secretaryTime(w.nextReviewAt!, w.timeZone)}. I won’t send another follow-up without fresh authorization.`;
   if (change === "resume")
     return "I’ve resumed this. I’ll check what’s still authorized before continuing.";
   if (action === "decide" && w.decision?.status === "approved")
@@ -210,7 +224,8 @@ export function workBriefLanguage(
   const lines = ordered.slice(0, 5).map((w) => {
     const speech = workDecisionLanguage(w, w.receipts, now);
     const expired =
-      w.decision?.status === "pending" && now >= w.decision.expiresAt;
+      w.decision?.status === "expired" ||
+      (w.decision?.status === "pending" && now >= w.decision.expiresAt);
     const status = w.recoveryIssue
       ? plain(w.recoveryIssue)
       : expired
@@ -221,13 +236,15 @@ export function workBriefLanguage(
             : plain(w.decision!.issue)
           : workStatusLanguage(w, w.receipts);
     const time =
-      w.decision?.status === "pending" && !expired
-        ? ` Decision ${w.decision.neededBy <= now ? "needed now" : "by " + secretaryTime(w.decision.neededBy, w.timeZone)}.`
-        : expired
-          ? ""
-          : w.nextReviewAt
-            ? ` Next review: ${secretaryTime(w.nextReviewAt, w.timeZone)}.`
-            : "";
+      w.control === "paused" || w.handling === "owner"
+        ? ""
+        : w.decision?.status === "pending" && !expired
+          ? ` Decision ${w.decision.neededBy <= now ? "needed now" : "by " + secretaryTime(w.decision.neededBy, w.timeZone)}.`
+          : expired
+            ? ""
+            : w.nextReviewAt
+              ? ` Next review: ${secretaryTime(w.nextReviewAt, w.timeZone)}.`
+              : "";
     return `• ${plain(w.outcome, 100)}: ${status}${time}`;
   });
   return (

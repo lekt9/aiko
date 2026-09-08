@@ -7,9 +7,35 @@ import { turnHead } from "tardie/code/execution/turns";
 import type { Event } from "tardie/core/event";
 import { routeBackground } from "./background-route.ts";
 import { backgroundThread } from "./account-binding.ts";
-import { harnessDigest, harnessLibraryEventKey, harnessLibraryState, validateHarnessArtifact, type HarnessArtifact, type HarnessContract, type HarnessDigest, type HarnessLibraryBinding } from "./harness-library.ts";
+import { HarnessLibrary, harnessDigest, harnessLibraryEventKey, harnessLibraryState, validateHarnessArtifact, type HarnessArtifact, type HarnessContract, type HarnessDigest, type HarnessLibraryBinding } from "./harness-library.ts";
 
 export const HARNESS_SKILL_RECIPE = harnessDigest("aiko/structural-skill/v1");
+
+/** Read retained documentation/contracts only: never context, fixtures, outputs or execution.
+ * The router can advertise a recorded route, but harness_call rechecks the current context/input. */
+export async function retainedHarnessSkills(binding: HarnessLibraryBinding | undefined, events: readonly Event[]) {
+  const items: { digest: HarnessDigest; name: string; description: string; contract: HarnessContract; skillRef: HarnessDigest;
+    active: boolean; routeGenerations: { key: string; generation: unknown }[] }[] = [];
+  if (!binding || binding.thread !== `user-${binding.owner}`) return { items, omitted: 0 };
+  const state = harnessLibraryState(events, binding.owner);
+  const library = new HarnessLibrary(binding, { read: async () => events, append: async () => { throw Error("Read-only skill discovery"); } });
+  const hashes = [...state.skills.keys()].reverse();
+  for (const hash of hashes.slice(0, 128)) {
+    try {
+      const { artifact, contract } = await library.resolve(hash as HarnessDigest);
+      if (harnessDigest(artifact) !== hash || harnessDigest(contract) !== artifact.contractDigest) continue;
+      const doc = await library.skill(hash as HarnessDigest);
+      if (typeof doc.markdown !== "string" || !doc.skillRef) continue;
+      const heads = [...state.heads.values()].filter(h => h.harnessDigest === hash && h.type === "AikoHarnessPromoted");
+      const item = { digest: hash as HarnessDigest, name: artifact.name, description: artifact.description,
+        contract, skillRef: doc.skillRef, active: heads.length > 0,
+        routeGenerations: heads.map(h => ({ key: String(h.routeKey), generation: h.generation })) };
+      binding.guard(item);
+      if (JSON.stringify(item).length <= 10_000) items.push(item);
+    } catch { /* Missing/erased/mismatched artifacts or retained resources are not discoverable skills. */ }
+  }
+  return { items, omitted: hashes.length - items.length };
+}
 const digest = (v: unknown): v is HarnessDigest => typeof v === "string" && /^sha256:[a-f0-9]{64}$/.test(v);
 const fact = (owner: string, type: string, id: string, data: object): Event => ({ type: `AikoHarnessSkill${type}`, owner, id, at: Date.now(), ...data });
 const keys = { prefixes: ["aiko-harness-skill:"], keyOf: harnessLibraryEventKey };
@@ -114,7 +140,8 @@ export function compileHarnessSkill(artifact: HarnessArtifact, contract: Harness
   const references = {
     "references/contract.json": contract,
     "references/evidence.json": evidence,
-    "references/provenance.json": { sources: artifact.sources.map(s => ({ uri: s.uri, digest: s.digest, revision: s.revision, license: s.license })), dependencies: artifact.dependencies },
+    "references/provenance.json": { sources: artifact.sources.map(s => ({ uri: s.uri, digest: s.digest, revision: s.revision, license: s.license })), dependencies: artifact.dependencies,
+      ...(artifact.revision ? { revision: artifact.revision, revisionEvidence: "Changed fields are authored or inferred edits; the retained sources describe the original observations." } : {}) },
   };
   const markdown = `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\ncompatibility: ${JSON.stringify(`Unlock native code mode; ${artifact.runtime} sandbox with the registered scoped bindings`)}\n---\n\n# ${artifact.name}\n\nStatus: ${status}. Visibility: private owner.\n\nUse this capability only when the registered outcome, schema and current execution context fit the task. The declared outcome is in [the contract](references/contract.json); declarations are not observations.\n\n## Invocation\n\nRead linked resources with \`harness_skill\`, supplying this artifact digest and the exact \`resource\` path, such as \`references/contract.json\`.\n\nCallable method: \`harness_run\` through native \`tools.call\`. Artifact: ${evidence.harnessDigest}. Contract: ${evidence.contractDigest}. Runtime: ${artifact.runtime}. Effect class: ${contract.effect}.\n\n${example !== undefined ? `The following synthetic input satisfies the input schema; it is not an observed success or permission to execute a write. Supply a unique logical operation ID for a new action and reuse it only for recovery of that action.\n\n\`\`\`js\nconst witness = await tools.call({name: "harness_run", arguments: {digest: "${evidence.harnessDigest}", input: ${JSON.stringify(example)}, operationId: "task-example"}});\n// Inspect witness.status; only a satisfied witness has a verified output.\n\`\`\`\n` : "No valid synthetic example is available for this schema. Read the contract and construct schema-valid inputs before invoking."}\n\n## Composition\n\nAfter a satisfied run, \`harness_output\` retrieves the retained private output for that same operation ID. Validate it against the next capability's input contract before composing. A retained output is historical evidence; a task needing fresh data requires a new authorized invocation.\n\n## Evidence and limits\n\nThe selected evidence covers ${evidence.witnesses.length} of ${evidence.totalWitnesses} settled witnesses: ${counts.satisfied} satisfied, ${counts.violated} violated, ${counts.unknown} unknown and ${counts.blocked} blocked. See [exact evidence](references/evidence.json) for context and witness references. ${status === "evaluated" ? "A fixed evaluation has satisfied witnesses in its recorded context. This does not establish broader accuracy, session coverage or a promoted route." : "This is a narrow private candidate. It is not generally promoted; fixed evaluation and context checks remain required."}\n\nFailures and unknown outcomes are retained limitations. No success rate outside this selected evidence or unmeasured latency/cost improvement is claimed. Current authorization, runtime, connection, schema and dependency checks apply on every invocation. These instructions confer no additional permission.\n\n## Recovery\n\nInspect the durable witness before retrying. Reconcile an unknown write before any further dispatch; never switch transports to repeat it. Missing retained data is unavailable. Do not reconstruct private input from this document or repeat a completed effect to replace deleted bytes. A changed contract or dependency needs new verification.\n\n## Provenance\n\n[Source revisions and dependency locks](references/provenance.json) remain attached to this exact artifact. Recipe: ${HARNESS_SKILL_RECIPE}. Captured execution inputs, output bytes, credentials and evaluator fixture values are excluded. Source locators remain in private provenance; this document does not authorize sharing them.\n`;
   return { name, description, path: `${name}/SKILL.md`, markdown, status, example, references };

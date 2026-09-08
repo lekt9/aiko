@@ -9,6 +9,7 @@ import { deriveComponent } from "tardie/core/component";
 import { REPLY_SUFFIX } from "tardie/core/communication/message";
 import { createCloudflareAccountHost, type AccountStorage } from "../src/cloudflare-host.ts";
 import { CodeHarness } from "../src/code-harness.ts";
+import { createToolRouterActor, type RouterMethod, type ToolRouterBinding } from "../src/tool-router.ts";
 import { runCodeSegment } from "../src/code-sandbox-runner.ts";
 import { sqliteWorkflowKV } from "../src/workflow-store.ts";
 import { HarnessLibrary, harnessBlobStore, harnessDigest, harnessLibraryComponent, harnessLibraryTools, type HarnessContract, type HarnessLibraryBinding } from "../src/harness-library.ts";
@@ -41,6 +42,10 @@ async function fixture() {
   };
   const journal = { read: () => host.read(foreground), append: async (events: Event[]) => { for (const e of events) await host.commitRoot(host.self(foreground), e); } };
   const library = new HarnessLibrary(binding, journal);
+  const routerBinding: ToolRouterBinding = { owner: "123", readOwnedEvents: journal.read, harnessLibrary: () => binding,
+    engine: { listCatalog: async () => [], connections: async () => [], describe: async () => { throw Error("No connector"); },
+      search: async () => ({ status: "unavailable", connectors: [], fallbackAllowed: false, message: "No provider discovery" }) } };
+  const router = createToolRouterActor(routerBinding); let routerCalls = 0;
   const open = async () => {
     db = new Database(join(dir, "native.sqlite"));
     const storage: AccountStorage = { sql: { exec: (q, ...args) => { const rows = db.query(q).all(...args as any); return { toArray: () => rows as never }; } }, transactionSync: fn => db.transaction(fn)(), sync: async () => {}, getAlarm: async () => null, setAlarm: async () => {}, deleteAlarm: async () => {} };
@@ -52,7 +57,7 @@ async function fixture() {
       if (!request.trajectory.some((e: Event) => e.type === "ToolReturned")) return Effect.succeed({ kind: "call" as const, name: "execute", callId: "skill-program", arguments: { code: program } });
       return Effect.succeed({ kind: "complete" as const, output: "Foreground result is ready" });
     } });
-    host = await createCloudflareAccountHost({ storage, actorName: "aiko", actorInstance: "passive-skill", ownsThread: t => [foreground, background].includes(t), actorFor: thread => thread === foreground ? primary : indexer, layersFor: () => Layer.merge(harness.inference(model), harness.sandboxLayer()) });
+    host = await createCloudflareAccountHost({ storage, actorName: "aiko", actorInstance: "passive-skill", ownsThread: t => [foreground, background, "router-123"].includes(t), actorFor: thread => thread === "router-123" ? router : thread === foreground ? primary : indexer, layersFor: () => Layer.merge(harness.inference(model), harness.sandboxLayer()) });
   };
   await open(); cleanups.push(async () => { docGate?.resolve(); await host.close(); db.close(); });
   const contract: HarnessContract = { version: 1, outcome: "Return twice the input number", inputSchema: { type: "object", properties: { n: { type: "number" }, note: { type: "string" } }, required: ["n"], additionalProperties: false }, outputSchema: { type: "number" }, effect: "read", verifierDigest: verifier.digest, evaluatorDigest: verifier.evaluatorDigest, applicability: {}, timeoutMs: 2000 };
@@ -62,6 +67,14 @@ async function fixture() {
     return { hash: await library.record(artifact), artifact, contract };
   };
   return { binding, library, contract, seed, counts, privateDb,
+    routerCall: async (method: RouterMethod, input: unknown): Promise<any> => {
+      const invocation = { method, id: `router-${++routerCalls}`, epoch: 0 };
+      await host.commitRoot(host.self("router-123"), router.methods[method].eventOf({ input, invocation, at: Date.now() }));
+      await host.drive();
+      const result = router.methods[method].state(await host.read("router-123"), invocation);
+      expect(result?.status).toBe("completed");
+      return result?.status === "completed" ? result.output : undefined;
+    },
     get host() { return host; },
     events: (thread = foreground) => host.read(thread),
     block: () => { docGate = deferred(); docEntered = deferred(); return { entered: docEntered.promise, release: docGate.resolve }; },
@@ -99,6 +112,52 @@ test("settled native foreground coalesces passive derivation without awaiting do
   expect([await f.events(), await f.events(background)]).toEqual(before);
   expect((await f.library.skill(hash)).markdown).toBe(doc.markdown);
   expect(f.counts()).toEqual(counts);
+});
+
+test("retained skills share native router discovery without execution and recheck promotion, input authority and retirement", async () => {
+  const f = await fixture(), { hash } = await f.seed();
+  await f.library.run(hash, { n: 3 }, "example", signal()); await f.host.drive();
+  const query = { tasks: [{ id: "double", query: "find double number" }] };
+  const before = f.counts(), context = f.binding.context;
+  f.binding.context = async () => { throw Error("Discovery must not provision a context"); };
+  const candidate = await f.routerCall("route", query);
+  expect(candidate.tasks[0].tools[0]).toMatchObject({ provider: "skill", connected: false, requirements: { executable: false } });
+  expect(candidate.tasks[0].tools[0].requirements.execution).toBeUndefined();
+  expect(f.counts()).toEqual(before); f.binding.context = context;
+  await f.library.evaluate(hash, "fixed-cases", signal());
+  await f.library.promote(hash, "fixed-cases", 0, signal()); await f.host.drive();
+  await f.restart();
+  const routed = await f.routerCall("route", query), tool = routed.tasks[0].tools[0];
+  expect(tool).toMatchObject({ id: `skill:${hash}`, provider: "skill", connected: true, inputSchema: f.contract.inputSchema,
+    requirements: { contextChecked: false, outputSchema: { type: "number" }, execution: { tool: "harness_call" } } });
+  expect((await f.routerCall("describe", { toolIds: [tool.id] })).tools[0].requirements.documentation.arguments).toEqual({ digest: hash });
+  const mapping = tool.requirements.execution;
+  await f.start(`return await tools.call({name:${JSON.stringify(mapping.tool)},arguments:${JSON.stringify({ ...mapping.arguments, input: { n: 19 }, operationId: "fresh-routed" })}});`);
+  await f.host.drive(); expect((await f.library.output("fresh-routed")).output).toBe(38);
+  const executions = f.counts().executes; f.binding.authorize = async () => false;
+  expect((await f.library.call(mapping.arguments.name, mapping.arguments.contractDigest, { n: 20 }, "denied-fresh", signal())).status).toBe("blocked");
+  expect(f.counts().executes).toBe(executions);
+  const head = (await f.library.list()).active[0]!;
+  await f.host.commitRoot(f.host.self(foreground), { type: "AikoHarnessRetired", owner: "123", id: "retire-fixture", at: Date.now(),
+    routeKey: head.routeKey, harnessDigest: hash, previousGeneration: head.generation, generation: Number(head.generation) + 1 });
+  expect(await f.routerCall("status", { decisionId: routed.id })).toMatchObject({ current: false });
+  expect((await f.routerCall("route", query)).tasks[0].tools[0].requirements.execution).toBeUndefined();
+  await expect(f.library.call(mapping.arguments.name, mapping.arguments.contractDigest, { n: 21 }, "retired", signal())).rejects.toThrow("No verified harness");
+  const doc = await f.library.skill(hash); f.erase(String(doc.skillRef));
+  expect((await f.routerCall("describe", { toolIds: [tool.id] })).tools ?? []).toEqual([]);
+  expect(f.counts().executes).toBe(executions);
+});
+
+test("private or write skill prose cannot supply owner authority or masquerade as a read", async () => {
+  const f = await fixture(); f.contract.effect = "write";
+  const { hash } = await f.seed("Find and read numbers");
+  await f.library.run(hash, { n: 2 }, "write-example", signal()); await f.host.drive();
+  expect((await f.routerCall("route", { tasks: [{ id: "read", query: "find read numbers" }] })).tasks[0].tools).toEqual([]);
+  const describe = await f.routerCall("describe", { toolIds: [`skill:${hash}`] });
+  expect(describe.tools[0].requirements.effect).toBe("write");
+  f.binding.owner = "456"; const before = f.counts();
+  expect((await f.routerCall("describe", { toolIds: [`skill:${hash}`] })).tools ?? []).toEqual([]);
+  expect(f.counts()).toEqual(before);
 });
 
 test("a narrow candidate is documented before promotion and failures revise its exact evidence", async () => {

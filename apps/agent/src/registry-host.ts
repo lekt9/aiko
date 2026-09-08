@@ -12,6 +12,7 @@ import type { WorkflowKV } from "./workflow-host.ts";
 import type { CodeSegmentTransport } from "./code-sandbox.ts";
 import type { HarnessSandboxOptions } from "./harness-sandbox.ts";
 import { mediaProcessingNextWake } from "./media-processing.ts";
+import { browserWatchNextWake } from "./browser-watches.ts";
 import {
   channelWiringNextWake,
   type ChannelWiringBindings,
@@ -117,7 +118,7 @@ export const hostedChannelDeadlineKey = (e: Event) =>
 /** One native method alarm covers retained registry work, including an internal
  * media acquisition waiter without any external channel binding. */
 export function hostedRegistryNextWake(events: readonly Event[], owner: string) {
-  const times = [channelWiringNextWake(events, owner), mediaProcessingNextWake(events, owner)]
+  const times = [channelWiringNextWake(events, owner), mediaProcessingNextWake(events, owner), browserWatchNextWake(events, owner)]
     .filter((at): at is number => at !== undefined);
   return times.length ? Math.min(...times) : undefined;
 }
@@ -209,7 +210,9 @@ export const registryExternalEventAllowed = (e: Event) =>
   !e.type.startsWith("AikoMedia") &&
   !e.type.startsWith("AikoHarness") &&
   !e.type.startsWith("AikoChannel") &&
-  !["BlockedOn", "AikoHostedChannelDeadline", "BrowserToolResultObserved", "AikoKnowledgeChanged", "AikoKnowledgeUnchanged", "AikoPrivateLoginObserved"].includes(e.type) &&
+  !e.type.startsWith("AikoBrowserWatch") &&
+  !["BlockedOn", "AikoHostedChannelDeadline", "BrowserToolResultObserved", "AikoKnowledgeChanged", "AikoKnowledgeUnchanged", "AikoPrivateLoginObserved",
+    "AikoBrowserPushObserved", "AikoBrowserNotificationObserved", "AikoBrowserNetworkObserved"].includes(e.type) &&
   e.source !== "channel-waiter" &&
   (e.call as any)?.invocation?.method !== "channelWait";
 

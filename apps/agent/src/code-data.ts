@@ -253,6 +253,7 @@ export class CodeData {
       );
     for (const source of unique)
       if (!(await this.binding.authorizeSource(source))) throw Error(denied);
+    const dependencies = [...new Set(unique.flatMap(source => source.dependencies ?? []))];
     const chunks: HarnessDigest[] = [];
     for (let offset = 0; offset < bytes.length; offset += CHUNK_BYTES) {
       await this.current();
@@ -262,7 +263,7 @@ export class CodeData {
           data: Buffer.from(
             bytes.subarray(offset, offset + CHUNK_BYTES),
           ).toString("base64"),
-        }),
+        }, dependencies),
       );
     }
     const type = Array.isArray(value)
@@ -282,6 +283,7 @@ export class CodeData {
     const ref = await this.binding.blobs.putPrivate(
       this.binding.owner,
       manifest,
+      dependencies,
     );
     await this.current();
     await this.binding.append([

@@ -116,6 +116,7 @@ const kinds = new Set([
   "Claimed",
   "Handoff",
   "Cursor",
+  "Consumed",
   "Started",
   "Settled",
   "Reconcile",
@@ -219,6 +220,11 @@ export function channelWiringAppendAllowed(
     }
     const local = own(rows, String(e.owner));
     const open = (port: unknown) => hookPortOpen(rows, String(e.owner), port, Date.now());
+    if (e.type === "AikoChannelWiringConsumed") {
+      const source = at(local, "Accepted", e.source);
+      if (!source?.invocation || !local.some(row => row.type === "AikoChannelWiringSettled" && row.invocation === source.invocation && row.status === "satisfied") ||
+        typeof e.consumer !== "string" || e.id !== channelDigest([e.owner, e.source, e.consumer])) return false;
+    }
     if (e.type === "AikoChannelWiringBound" && String(e.operationId).startsWith("child:")) {
       const g = hookLifetimes(rows,String(e.owner)).find(g=>String(e.operationId).startsWith(g.namespace+":"));
       if (!g || hookClosure(rows,String(e.owner),g,Date.now())) return false;
@@ -466,7 +472,7 @@ export function createChannelWiring(
         const pending = sources(rows, a.port).filter(
           (e) =>
             !rows.some(
-              (r) => r.type === "AikoChannelWiringCursor" && r.source === e.id,
+              (r) => ["AikoChannelWiringCursor", "AikoChannelWiringConsumed"].includes(r.type) && r.source === e.id,
             ),
         );
         if (
@@ -1163,8 +1169,17 @@ export function createChannelWiring(
         const request = rows.findLast(
           (e) => e.type === "AikoChannelWiringReconcile" && e.invocation === id,
         );
-        if (settled && (!request || settled.request === request.id)) continue;
-        const attempt = request?.id ?? "initial";
+        // Checked bytes held solely by output capacity need publication, not an
+        // external-effect retry. Consumer progress wakes this native transition.
+        const publication = settled?.status === "pending" && settled.reason === "output_backpressure" && !!settled.outputRef;
+        const outputSources = sources(rows, { channel: wire.output.channel, generation: wire.output.generation });
+        const outputReleased = rows.filter(e => ["AikoChannelWiringCursor", "AikoChannelWiringConsumed"].includes(e.type) && outputSources.some(source => source.id === e.source)).length;
+        if (publication) {
+          const port = state.ports.get(portKey(wire.output));
+          if (!port || outputSources.filter(source => !rows.some(e => ["AikoChannelWiringCursor", "AikoChannelWiringConsumed"].includes(e.type) && e.source === source.id)).length >= port.backlog ||
+            settled.publicationCursor === outputReleased) continue;
+        } else if (settled && (!request || settled.request === request.id)) continue;
+        const attempt = publication ? `publish:${outputReleased}` : request?.id ?? "initial";
         transitions.push(
           effect({
             key: `aiko-channel-wiring:dispatch:${id}:${attempt}`,
@@ -1176,6 +1191,18 @@ export function createChannelWiring(
                 let result: HandlerResult = yield* Effect.promise(async (): Promise<HandlerResult> => {
                   const authorized = async () => { try { return await portAuthorized(wire.input) && await portAuthorized(wire.output) && await bindings.authorize(owner, wire.authority, "connect", wire); } catch { return false; } };
                   if (!await authorized()) return { status: "rejected", evidence: "channel_capability_revoked" };
+                  if (publication) {
+                    try {
+                      const resolved = await bindings.resolve(wire.handler, signal);
+                      if (!resolved.eligible || resolved.accepts !== wire.accepts || resolved.emits !== wire.emits ||
+                        !equal(resolved.inputSchema, wire.inputSchema) || !equal(resolved.outputSchema, wire.outputSchema))
+                        return { status: "rejected", evidence: "checked_handler_unavailable" };
+                      const output = await channelHydrate(bindings.blobs, owner, settled.outputRef);
+                      const evidence = await channelHydrate(bindings.blobs, owner, settled.evidenceRef);
+                      if (!await authorized()) return { status: "rejected", evidence: "channel_capability_revoked" };
+                      return { status: "satisfied", output, evidence };
+                    } catch { return { status: "unavailable", evidence: "checked_output_unavailable" }; }
+                  }
                   let started = !!at(await journal.read(), "Started", id);
                   let value: unknown, correlation: unknown;
                   if (!started) {
@@ -1267,7 +1294,7 @@ export function createChannelWiring(
                           (e) =>
                             !current.some(
                               (c) =>
-                                c.type === "AikoChannelWiringCursor" &&
+                                ["AikoChannelWiringCursor", "AikoChannelWiringConsumed"].includes(c.type) &&
                                 c.source === e.id,
                             ),
                         ).length >= output.backlog
@@ -1306,7 +1333,7 @@ export function createChannelWiring(
                       }
                     }
                     if (
-                      result.status === "pending" &&
+                      result.status === "pending" && !(result.evidence === "output_backpressure" && outputRef) &&
                       current.filter(
                         (e) =>
                           e.type === "AikoChannelWiringReconcile" &&
@@ -1323,6 +1350,10 @@ export function createChannelWiring(
                         invocation: id,
                         status: result.status,
                         ...(inputUnavailable ? { reason: "input_unavailable" } : {}),
+                        ...(result.status === "pending" && result.evidence === "output_backpressure" && outputRef ? {
+                          reason: "output_backpressure", outputRef,
+                          publicationCursor: outputReleased,
+                        } : {}),
                         evidenceRef,
                         request: attempt,
                       }),
@@ -1609,6 +1640,14 @@ export function createChannelWiring(
       }),
     ).pipe(Layer.provide(base));
   return {
+    /** Trusted native consumer only. Never exposed in the sandbox package. */
+    consume: (source: string, consumer: string) => transaction(rows => {
+      const id = channelDigest([owner, source, consumer]);
+      if (at(rows, "Consumed", id)) return { events: [], result: undefined };
+      const input = at(rows, "Accepted", source);
+      if (!input?.invocation || !rows.some(e => e.owner === owner && e.type === "AikoChannelWiringSettled" && e.invocation === input.invocation && e.status === "satisfied")) throw Error("checked_channel_output_required");
+      return { events: [fact(owner, "Consumed", id, { source, consumer })], result: undefined };
+    }),
     // Trusted source adapters prepare the existing admission and commit it with their cursor.
     prepareAdmission,
     /** Trusted factory initialization only; not included in channels package. */

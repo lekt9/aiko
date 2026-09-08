@@ -46,6 +46,82 @@ function fixture() {
 }
 const signal = () => AbortSignal.timeout(5000);
 
+test("procedure metadata distinguishes a saved example from independently checked input transfer without launching learning", async () => {
+  const f = fixture(), hash = await f.seed();
+  await f.library.run(hash, { n: 7 }, "saved-example", signal());
+  const before = f.events.length, calls = f.calls();
+  const saved = await f.library.procedure(hash, signal());
+  expect(saved).toMatchObject({ basis: "saved-example", currentRoute: false, transfer: null });
+  expect(saved.measurements.taskRuns).toMatchObject({ executions: 1, satisfied: 1, executorModelCalls: null, executorTokens: null });
+  expect(saved.measurements.breakEvenUses).toBeNull();
+  expect(f.events).toHaveLength(before); expect(f.calls()).toBe(calls);
+  await f.library.evaluate(hash, "transfer", signal()); await f.library.promote(hash, "transfer", 0, signal());
+  const learned = await f.library.procedure(hash, signal());
+  expect(learned).toMatchObject({ basis: "verified-transfer", currentRoute: true, transfer: { eligible: true, novelHeldOutInputs: 1, checkedCases: 2 } });
+  expect(learned.parameters).toEqual(f.contract.inputSchema);
+  expect(JSON.stringify(learned)).not.toContain('"n":-13');
+  expect(learned.measurements.coldEvaluation).toMatchObject({ executions: 2, satisfied: 2 });
+  expect(harnessLibraryTools(f.binding).some(t => t.spec.name === "harness_procedure")).toBe(true);
+});
+
+test("renamed development inputs cannot satisfy an opted-in transfer contract", async () => {
+  const f = fixture();
+  f.contract.transfer = { version: 1, minimumNovelHeldOutInputs: 1 };
+  (f.verifier.cases[1] as any).input = { n: 2 };
+  const hash = await f.seed();
+  expect((await f.library.evaluate(hash, "duplicated-input", signal())).eligible).toBe(true);
+  expect(await f.library.transferEvidence(hash, "duplicated-input", signal())).toMatchObject({ eligible: false, novelHeldOutInputs: 0, reason: "insufficient-novel-held-out-inputs" });
+  await expect(f.library.promote(hash, "duplicated-input", 0, signal())).rejects.toThrow("Independent transfer evidence");
+  expect(harnessLibraryState(f.events, "123").heads.size).toBe(0);
+});
+
+test("transfer counts unique new inputs, and reuse still checks exact current authority and context", async () => {
+  const f = fixture(); f.contract.transfer = { version: 1, minimumNovelHeldOutInputs: 2 };
+  (f.verifier.cases as any[]).push({ id: "another-input", input: { n: 19 }, split: "held-out" });
+  const hash = await f.seed();
+  await f.library.evaluate(hash, "diverse-inputs", signal()); await f.library.promote(hash, "diverse-inputs", 0, signal());
+  const before = f.calls();
+  expect((await f.library.call("scale", harnessDigest(f.contract), { n: 103 }, "warm-new-input", signal())).status).toBe("satisfied");
+  expect(f.calls()).toBe(before + 1);
+  f.binding.authorize = async () => false;
+  expect((await f.library.call("scale", harnessDigest(f.contract), { n: 104 }, "revoked-warm-input", signal())).status).toBe("blocked");
+  expect(f.calls()).toBe(before + 1);
+  f.binding.context = async () => ({ placement: "local", runtimeDigest: harnessDigest("changed-runtime"), bindings: {} });
+  expect(await f.library.procedure(hash, signal())).toMatchObject({ basis: "saved-example", currentRoute: false });
+  await expect(f.library.call("scale", harnessDigest(f.contract), { n: 105 }, "stale-warm-input", signal())).rejects.toThrow("No verified harness");
+  expect(f.calls()).toBe(before + 1);
+});
+
+test("erased or mismatched held-out input custody cannot retain transfer eligibility", async () => {
+  for (const change of ["mismatch", "erased"] as const) {
+    const f = fixture(); f.contract.transfer = { version: 1, minimumNovelHeldOutInputs: 1 };
+    const hash = await f.seed();
+    await f.library.evaluate(hash, "current", signal()); await f.library.promote(hash, "current", 0, signal());
+    const heldIndex = f.events.findIndex(e => e.type === "AikoHarnessRunStarted" && e.caseId === "negative");
+    if (change === "mismatch") {
+      const development = f.events.find(e => e.type === "AikoHarnessRunStarted" && e.caseId === "positive")!;
+      f.events[heldIndex] = { ...f.events[heldIndex]!, inputRef: development.inputRef };
+    } else await f.binding.blobs.erase!("123", f.events[heldIndex]!.inputRef as any, "forget-held-out-input");
+    expect((await f.library.transferEvidence(hash, "current", signal())).eligible).toBe(false);
+    const before = f.calls();
+    await expect(f.library.call("scale", harnessDigest(f.contract), { n: 7 }, "after-evidence-loss", signal())).rejects.toThrow("Independent transfer evidence");
+    expect(f.calls()).toBe(before);
+  }
+});
+
+test("procedure cost summaries retain failed work and separate executor measurements from unknown learning costs", async () => {
+  const f = fixture(), execute = f.binding.execute;
+  f.binding.execute = async (job, s) => ({ ...await execute(job, s), costUsd: 0.02, measurements: { networkRequests: 0, browserStarts: 0, modelCalls: 2, tokens: 40 } });
+  const hash = await f.seed("return input.n === 5 ? 0 : input.n * 2;");
+  await f.library.evaluate(hash, "checked", signal()); await f.library.promote(hash, "checked", 0, signal());
+  await f.library.run(hash, { n: 5 }, "failed-transfer-example", signal());
+  const procedure = await f.library.procedure(hash, signal());
+  expect(procedure.measurements.coldEvaluation).toMatchObject({ executions: 2, costUsd: 0.04, executorModelCalls: 4, executorTokens: 80 });
+  expect(procedure.measurements.taskRuns).toMatchObject({ executions: 1, failed: 1, costUsd: 0.02 });
+  expect(procedure.measurements.acquisitionAndGenerationCostUsd).toBeNull();
+  expect(procedure.measurements.breakEvenUses).toBeNull();
+});
+
 test("verified promotion remains independent of passive documentation and reuses fresh inputs after replay", async () => {
   const f = fixture(), hash = await f.seed();
   const evaluation = await f.library.evaluate(hash, "baseline", signal());
@@ -368,8 +444,9 @@ test("native codeMode invokes the library with scoped tools and durable receipt 
   const definition = actor({ name: "aiko", methods: { message: agentMessageMethod }, components: [keys, infer([codeMode([harness.package(harnessLibraryTools(f.binding))]), outputValidateOnce])] });
   const model = Layer.succeed(Infer, { resolve: () => ({ model: { provider: "fixture", model_id: "fixture" } }), react: (request: any) => {
     const returned = request.trajectory.find((e: Event) => e.type === "ToolReturned");
-    if (!returned) return Effect.succeed({ kind: "call" as const, name: "execute", callId: "verify", arguments: { code: `return await tools.call({name:'harness_run',arguments:{digest:'${hash}',input:{n:9},operationId:'native-run'}});` } });
+    if (!returned) return Effect.succeed({ kind: "call" as const, name: "execute", callId: "verify", arguments: { code: `const witness = await tools.call({name:'harness_run',arguments:{digest:'${hash}',input:{n:9},operationId:'native-run'}}); const procedure = await tools.call({name:'harness_procedure',arguments:{digest:'${hash}'}}); return {...witness,procedureBasis:procedure.basis};` } });
     expect(returned.result.result.status).toBe("satisfied");
+    expect(returned.result.result.procedureBasis).toBe("saved-example");
     return Effect.succeed({ kind: "complete" as const, output: "Witness verified" });
   } });
   const host = await createCloudflareAccountHost({ storage, actorName: "aiko", actorInstance: "library-fixture", ownsThread: t => t === "user-123", actorFor: () => definition, layersFor: () => Layer.merge(harness.inference(model), harness.sandboxLayer()) });

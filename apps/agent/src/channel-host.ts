@@ -1,4 +1,9 @@
+import { browserWatchHarnessActions } from "./browser-watch-actions.ts";
+import { browserWatchActorActions } from "./browser-watch-actor-actions.ts";
+import { browserWatchWebhookActions, browserWatchWebhookPermitRequired, type BrowserWatchWebhookBinding } from "./browser-watch-webhook-actions.ts";
 import { channelControlState, controlOperationId } from "./channel-controls.ts";
+import { browserEventKey, browserEventAppendAllowed, createBrowserEventAdmission, type BrowserProducerGrant } from "./browser-events.ts";
+import { browserWatchEventKey, browserWatchAppendAllowed, createBrowserWatches, type BrowserWatchBindings, type BrowserWatchDispatch } from "./browser-watches.ts";
 import {
   createChannelLogSources,
   channelLogSourceEventKey,
@@ -12,6 +17,7 @@ import { EventLog, withWatermark } from "tardie/core/log";
 import { Self } from "tardie/core/runtime";
 import { parseThreadAddress } from "tardie/core/communication/endpoint";
 import type { Event } from "tardie/core/event";
+import { methodCallKeys } from "tardie/core/method";
 import {
   channelAppendAllowed,
   channelBindings,
@@ -22,6 +28,7 @@ import {
 import {
   createChannelRuntime,
   channelRuntimeView,
+  channelOperationKey,
   type ChannelRuntimePorts,
 } from "./channel-runtime.ts";
 import {
@@ -59,7 +66,31 @@ export interface ChannelHost {
   read(thread: string): Promise<readonly Event[]>;
   seed(thread: string, events: readonly Event[]): Promise<void>;
   commitRoot(address: string, event: Event): Promise<void>;
+  /** Actual guarded native metadata commit. History seed is not this capability. */
+  appendControl?(thread: string, events: readonly Event[]): Promise<unknown>;
 }
+
+/** Host-owned capabilities only. Owner, custody journal and native channel
+ * components always come from this account's assembly. */
+export interface BrowserWatchNativeActions {
+  actor?: { timeoutMs?: number; commitCurrent(intent: BrowserWatchDispatch): boolean };
+  webhook?: { resolve: BrowserWatchWebhookBinding["resolve"]; commitCurrent?: BrowserWatchWebhookBinding["commitCurrent"] };
+}
+/** Used even when a capability is absent: queued native watch admission cannot
+ * silently lose its application authority fence after host reconstruction. */
+export const browserWatchActorAdmissionRequired = (events: readonly Event[]) => events.some(e => e.type === "MessageReceived" &&
+  (!!(e.input as {browserWatch?:unknown}|undefined)?.browserWatch || String(e.id).startsWith("watch:")));
+export const browserWatchDispatchAdmissionRequired = (events: readonly Event[]) => browserWatchActorAdmissionRequired(events) || browserWatchWebhookPermitRequired(events);
+export type BrowserWatchHostPolicy = (context: {
+  owner: string;
+  thread: string;
+  journal: WiringJournal;
+  wiring: ReturnType<typeof createChannelWiring>;
+  sources: ReturnType<typeof createChannelLogSources>;
+}) => Omit<BrowserWatchBindings, "owner" | "journal" | "wiring" | "sources" | "execute" | "reconcile"> & Partial<Pick<BrowserWatchBindings, "execute" | "reconcile">> & {
+  /** Explicit trusted host capabilities. Discovery alone cannot enable actions. */
+  nativeActions?: BrowserWatchNativeActions;
+};
 
 /** One instance per owner per physical host. All channel writers (native effects and
  * HTTP admission) use this same serialized gate. Native seed commits each batch in
@@ -78,6 +109,8 @@ export function createHostedChannels(
     wiring?: ChannelWiringBindings;
     bridge?: ChannelBridgeBindings;
     logSources?: ChannelLogSourceBindings;
+    browserProducers?: { grant(producer: string): BrowserProducerGrant | undefined; current(): boolean };
+    browserWatches?: BrowserWatchHostPolicy;
   } = {},
 ) {
   const thread = `user-${owner}`;
@@ -175,13 +208,18 @@ export function createHostedChannels(
       )
         throw new Error("channel_source_capability_expired");
     }
+    const nativeWatchPlan = (e: Event) => !!policy.browserWatches && e.type === "CallPlanned" && (e.owner === undefined || e.owner === owner) &&
+      (e.input as {input?:{browserWatch?:{owner?:unknown}}}|undefined)?.input?.browserWatch?.owner === owner;
     const keyOf = (e: Event) =>
       channelEventKey(e) ??
       channelWiringEventKey(e) ??
       channelBridgeEventKey(e) ??
-      channelLogSourceEventKey(e);
+      channelLogSourceEventKey(e) ?? browserEventKey(e) ?? browserWatchEventKey(e) ??
+      (nativeWatchPlan(e) ? methodCallKeys.keyOf(e) : undefined);
     for (const event of events) {
       const previous = before.find((e) => keyOf(e) === keyOf(event));
+      if (previous && nativeWatchPlan(event) && harnessDigest(previous) !== harnessDigest(event))
+        throw Error("watch_actor_plan_conflict");
       if (
         previous &&
         channelEventKey(event) &&
@@ -194,21 +232,29 @@ export function createHostedChannels(
         );
     }
     if (
-      !events.every((e) => keyOf(e) && e.owner === owner) ||
+      !events.every((e) => keyOf(e) && (e.owner === owner || nativeWatchPlan(e))) ||
       !channelAppendAllowed(
         events.filter((e) => !!channelEventKey(e)),
         () => before,
       ) ||
       !channelWiringAppendAllowed(events, () => before) ||
       !channelBridgeAppendAllowed(events, () => before) ||
-      !channelLogSourceAppendAllowed(events, () => before)
+      !channelLogSourceAppendAllowed(events, () => before) ||
+      !browserEventAppendAllowed(events, () => before) ||
+      !browserWatchAppendAllowed(events, () => before)
     )
       throw new Error("channel_commit_conflict");
     if (!events.length) return;
+    if (browserWatchWebhookPermitRequired(events)) {
+      if (events.some(e => e.type !== "AikoBrowserWatchWebhookPermitted") || !host().appendControl)
+        throw Error("watch_webhook_guarded_commit_required");
+      await host().appendControl!(thread, events);
+      return;
+    }
     if (!before.length) {
       if (
         events.length !== 1 ||
-        !["AikoChannelBindingIntent", "AikoChannelWiringBound"].includes(
+        !["AikoChannelBindingIntent", "AikoChannelWiringBound", ...(policy.browserWatches ? ["AikoBrowserWatchPrepared"] : [])].includes(
           events[0]!.type,
         )
       )
@@ -314,6 +360,10 @@ export function createHostedChannels(
   const wiring = policy.wiring
     ? createChannelWiring(owner, wiringJournal, { ...policy.wiring, blobs })
     : undefined;
+  if (policy.browserWatches && !wiring)
+    throw new Error("browser_watch_wiring_required");
+  let watchWebhook: ReturnType<typeof browserWatchWebhookActions> | undefined;
+  let watchActor: ReturnType<typeof browserWatchActorActions> | undefined;
   const runtime = createChannelRuntime(owner, {
     ...(adapters ?? {
       artifactAllowed: async () => false,
@@ -324,6 +374,26 @@ export function createHostedChannels(
       },
       validateReceipt: async () => false,
     }),
+    execute: async (binding, operation, input, key, signal) => {
+      if (!adapters) throw Error("channel_provider_unconfigured");
+      if (!watchWebhook && (operation === "send" || operation === "reconcile")) {
+        const value = input as {operationId?:unknown;task?:unknown}|undefined;
+        const retainedWatch = (await journal.read()).some(e => e.type === "AikoChannelOutputPrepared" && e.owner === owner &&
+          e.channel === binding.id && e.generation === binding.generation && String(e.id).startsWith("watch:") &&
+          (operation === "send" ? e.id === value?.operationId : channelOperationKey(binding,"send",String(e.id)) === value?.operationId));
+        if (retainedWatch || String(value?.operationId).startsWith("watch:") || String(value?.task).startsWith("watch:"))
+          throw Error("watch_webhook_capability_unavailable");
+      }
+      const managed = await watchWebhook?.authorizeDispatch(binding, operation, input, key, signal);
+      if (managed === false || managed === true && !adapters.dispatchGuardSupported?.(binding))
+        throw Error("watch_webhook_dispatch_authority_unavailable");
+      return adapters.execute(binding, operation, input, key, signal,
+        managed === undefined ? undefined : { beforeDispatch: async () => {
+          if (await watchWebhook!.authorizeDispatch(binding, operation, input, key, signal) !== true)
+            throw Error("watch_webhook_authority_unavailable");
+        }, permit: (identity, permitSignal, policyCurrent) => watchWebhook!.permit(binding, operation, input, key, identity,
+          permitSignal ? AbortSignal.any([signal, permitSignal]) : signal, policyCurrent) });
+    },
     activateIngress: async (b) => {
       if (
         !bridge ||
@@ -352,6 +422,16 @@ export function createHostedChannels(
       if (!(await adapters?.authorize(account, authority, operation, input)))
         return false;
       if (operation !== "send") return true;
+      const value = input as { operationId?: string; destination?: string } | undefined;
+      if (watchWebhook && value?.operationId && value.destination) {
+        const events = await journal.read();
+        const b = [...channelBindings(events, owner).values()].find(b => b.destination === value.destination);
+        // Initial prepare has no outbox row yet; the watch adapter checks that
+        // admission. Existing queued sends recheck their retained scope here.
+        if (b && events.some(e => e.type === "AikoChannelOutputPrepared" && e.owner === owner && e.channel === b.id && e.id === value.operationId) &&
+          await watchWebhook.authorizeDispatch(b, "send", input, channelOperationKey(b, "send", value.operationId), AbortSignal.timeout(15_000)) === false)
+          return false;
+      }
       const scope = await channelBridgeSendScope(
         await journal.read(),
         owner,
@@ -485,22 +565,90 @@ export function createHostedChannels(
       publicRequests.delete(request);
     }
   };
+  let watches: ReturnType<typeof createBrowserWatches> | undefined;
+  let watchBinding: ReturnType<BrowserWatchHostPolicy> | undefined;
+  const logSources = wiring && (policy.logSources || policy.browserWatches)
+    ? createChannelLogSources(owner, wiringJournal, wiring, {
+        current: () => !!policy.logSources?.current() || !!watchBinding?.current(),
+        grants: () => [
+          ...(policy.logSources?.grants() ?? []).map(grant => ({
+            ...grant, active: grant.active && !!policy.logSources?.current(),
+          })),
+          ...(watches?.sourceGrants() ?? []),
+        ].filter((grant, _index, all) => all.filter(other => other.id === grant.id).length === 1),
+      }, (thread) => host().read(thread))
+    : undefined;
+  if (policy.browserWatches) {
+    watchBinding = policy.browserWatches({ owner, thread, journal: wiringJournal, wiring: wiring!, sources: logSources! });
+    if (watchBinding.library.binding.owner !== owner || watchBinding.library.binding.thread !== thread)
+      throw new Error("browser_watch_library_owner_mismatch");
+    const selected = watchBinding;
+    const current = (intent: import("./browser-watches.ts").BrowserWatchDispatch, signal: AbortSignal, operation: "execute" | "reconcile") =>
+      watches?.authorizeAction(intent, operation, signal) ?? Promise.resolve(false);
+    if (selected.nativeActions?.actor) watchActor = browserWatchActorActions({ owner, thread, journal: wiringJournal,
+      self: () => parseThreadAddress(host().self(thread)), current,
+      timeoutMs: selected.nativeActions.actor.timeoutMs, commitCurrent: intent =>
+        !!watches?.dispatchCurrent(intent) && selected.nativeActions!.actor!.commitCurrent(intent) });
+    if (selected.nativeActions?.webhook) {
+      if (!adapters) throw Error("browser_watch_webhook_adapter_required");
+      watchWebhook = browserWatchWebhookActions({ owner, journal: wiringJournal, runtime, run, current,
+        resolve: selected.nativeActions.webhook.resolve,
+        commitCurrent: selected.nativeActions.webhook.commitCurrent && ((intent, operation) =>
+          !!selected.current() && (operation === "reconcile" || !!watches?.dispatchCurrent(intent)) &&
+          selected.nativeActions!.webhook!.commitCurrent!(intent, operation)) });
+    }
+    const harnessActions = browserWatchHarnessActions({ library: selected.library, current });
+    const adapter = (kind: import("./browser-watches.ts").BrowserWatchAction["kind"]) =>
+      kind === "harness" ? harnessActions : kind === "actor" ? watchActor : watchWebhook;
+    const actions: Pick<BrowserWatchBindings,"execute"|"reconcile"> = selected.execute
+      ? {execute:selected.execute,reconcile:selected.reconcile} : {
+        execute: (intent,signal) => adapter(intent.action.kind)?.execute(intent,signal) ?? Promise.resolve({status:"failed",result:{reason:"watch_action_unsupported"}}),
+        reconcile: (intent,signal) => adapter(intent.action.kind)?.reconcile?.(intent,signal) ?? Promise.resolve({status:"unknown"}),
+      };
+    watches = createBrowserWatches({ ...selected, ...actions, owner, journal: wiringJournal, wiring: wiring!, sources: logSources!,
+      authorize: (config, operation, signal) => !selected.execute && !adapter(config.action.kind)
+        ? Promise.resolve(false) : selected.authorize(config, operation, signal),
+      discovery: selected.discovery && (selected.execute ? selected.discovery : async signal => {
+        const choices = await selected.discovery!(signal);
+        return {...choices,actions:choices.actions.filter(choice=>!!adapter(choice.action.kind))};
+      }),
+    });
+  }
+  const refresh = async () => { await watches?.refresh(); };
+  const admitBrowser = policy.browserProducers || watches
+    ? createBrowserEventAdmission({ owner, journal: wiringJournal,
+        current: () => !!policy.browserProducers?.current() || !!watchBinding?.current(),
+        grant: producer => {
+          const configured = policy.browserProducers?.grant(producer);
+          const watched = watches?.producerGrants().filter(grant => grant.producer === producer) ?? [];
+          // An explicit host producer cannot silently replace a retained watch.
+          if ((configured ? 1 : 0) + watched.length !== 1) return undefined;
+          if (configured) return { ...configured, active: configured.active && !!policy.browserProducers?.current() };
+          return watched[0];
+        },
+      })
+    : undefined;
   return {
     owner,
     thread,
     runtime,
     wiring,
     wiringJournal,
-    logSources:
-      wiring && policy.logSources
-        ? createChannelLogSources(
-            owner,
-            wiringJournal,
-            wiring,
-            policy.logSources,
-            (thread) => host().read(thread),
-          )
-        : undefined,
+    browserAdmission: admitBrowser ? async (...args: Parameters<typeof admitBrowser>) => {
+      await refresh();
+      return admitBrowser(...args);
+    } : undefined,
+    logSources,
+    watches,
+    watchActor,
+    /** Called synchronously inside the owning host's actual append transaction. */
+    actorAdmissionAllowed: (events: readonly Event[], read: () => readonly Event[]) => !browserWatchActorAdmissionRequired(events) ||
+      !!watchBinding?.current() && !!watchActor?.admissionAllowed(events, read),
+    dispatchAdmissionAllowed: (events: readonly Event[], read: () => readonly Event[]) =>
+      (!browserWatchActorAdmissionRequired(events) || !!watchBinding?.current() && !!watchActor?.admissionAllowed(events, read)) &&
+      (!browserWatchWebhookPermitRequired(events) || !!watchBinding?.current() && !!watchWebhook?.admissionAllowed(events, read)),
+    /** Restore private watch grant projections before native recovery. */
+    refresh,
     bridge,
     receiveScoped,
     journal,

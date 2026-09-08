@@ -9,7 +9,7 @@ import { isDeepStrictEqual } from "node:util";
  */
 const ROOT = resolve(import.meta.dir, "..");
 const MANIFEST = "scripts/self-composing-harness-requirements.json";
-const REQUIREMENTS_SHA256 = "9941c7fc14717216299f110afa0b87cba53358169431a71ebc2acf3f32e50887";
+const REQUIREMENTS_SHA256 = "e831c2928e7b6327577ad44f925b76bdb5f6e1ee380dca8e441a427f8fb46452";
 const sha = (x: string | Uint8Array) => createHash("sha256").update(x).digest("hex");
 type Check = { id: string; outcome: string; kind: string; verifier: string | null; gap: string };
 type Requirement = { id: string; section: number; title: string; sourceLine: number; sourceSha256: string; sourceText: string; mandatory: boolean; reuseCandidates: string[]; checks: Check[] };

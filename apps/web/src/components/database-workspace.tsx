@@ -46,6 +46,9 @@ function DatabaseLibrary({ client, open }: { client: DatabaseClient; open: (id: 
     return () => { clearInterval(timer); abort.abort(); };
   }, [client]);
   const openTable = async (tableId: string, title: string) => {
+    const existingArtifact = catalog?.artifacts.find(artifact => artifact.tableId === tableId && artifact.dataMode === "live") ?? catalog?.artifacts.find(artifact => artifact.tableId === tableId);
+    if (existingArtifact) { open(existingArtifact.artifactId); return; }
+    if (!catalog?.capabilities?.saveView) return;
     if (busy) return; setBusy(true); setError("");
     try {
       const existingView = catalog?.views.find(view => view.value.query.tableId === tableId && view.value.layout === "table");
@@ -67,8 +70,11 @@ function DatabaseLibrary({ client, open }: { client: DatabaseClient; open: (id: 
     {error && <p role="alert">{error}</p>}{!catalog && !error && <p role="status">Loading your databases…</p>}
     {tab === "tables" && catalog && <>
       <h2>Saved artifacts</h2><div className="db-catalog-list">{catalog.artifacts.map(artifact => <button key={artifact.artifactId} onClick={() => open(artifact.artifactId)}>{artifact.title}{artifact.dataMode === "snapshot" ? " · Snapshot" : " · Live"}</button>)}</div>
-      {!catalog.artifacts.length && <p>No saved artifacts yet. Open a table below, or ask Aiko to create one.</p>}
-      <h2>Tables</h2><div className="db-catalog-list">{catalog.tables.map(table => <button key={table.id} disabled={busy} onClick={() => void openTable(table.id, table.value.name)}>{table.value.name}{table.value.mode === "domain" ? " · Live system view" : ""}</button>)}</div>
+      {!catalog.artifacts.length && <p>No saved artifacts yet. {catalog.capabilities?.saveView ? "Open a table below, or ask Aiko to create one." : "Ask Aiko or someone with edit access to publish a view."}</p>}
+      <h2>Tables</h2><div className="db-catalog-list">{catalog.tables.map(table => {
+        const canOpen = catalog.capabilities?.saveView || catalog.artifacts.some(artifact => artifact.tableId === table.id);
+        return <button key={table.id} disabled={busy || !canOpen} onClick={() => void openTable(table.id, table.value.name)}>{table.value.name}{table.value.mode === "domain" ? " · Live system view" : ""}{!canOpen ? " · No saved view" : ""}</button>;
+      })}</div>
     </>}
     {tab === "conversation" && messages && <div className="db-conversation">
       {messages.messages.filter(message => message.artifacts?.length).map(message => <section key={message.id} aria-label="Conversation reply"><p>{message.text}</p>{message.artifacts!.map(artifact => artifact.state === "available" ? <DatabaseArtifact key={artifact.artifactId} artifactId={artifact.artifactId} client={client} /> : <p key={artifact.artifactId}>This table is no longer available.</p>)}</section>)}

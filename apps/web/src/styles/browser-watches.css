@@ -1,0 +1,170 @@
+.browser-watches {
+  margin: 24px 0;
+  padding-top: 20px;
+  border-top: 1px solid var(--app-line);
+}
+.browser-watches p {
+  overflow-wrap: anywhere;
+}
+.browser-watches .app-section-heading {
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.browser-watches .app-section-heading h3 {
+  margin: 0;
+}
+.watch-card {
+  padding: 18px 0;
+  border-bottom: 1px solid var(--app-line);
+}
+.watch-card:last-of-type {
+  margin-bottom: 18px;
+}
+.watch-card header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.watch-card h4,
+.watch-form h4 {
+  margin: 0;
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+.watch-status {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--app-secondary);
+}
+.watch-status-watching {
+  color: var(--app-success);
+}
+.watch-status-needs-attention {
+  color: var(--app-danger);
+}
+.watch-rule {
+  display: grid;
+  gap: 4px;
+}
+.watch-site {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px 8px;
+}
+.watch-rule b,
+.watch-site span {
+  display: inline-block;
+  min-width: 3em;
+  color: var(--app-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.watch-facts {
+  margin: 14px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+  font-size: 13px;
+}
+.watch-facts dt {
+  color: var(--app-secondary);
+}
+.watch-facts dd {
+  margin: 2px 0 0;
+}
+.watch-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.watch-actions .text-button,
+.watch-gap .text-button,
+.browser-watches > .app-section-heading .text-button {
+  min-height: 44px;
+}
+.browser-watches .watch-delete {
+  color: var(--app-danger);
+}
+.watch-gap,
+.watch-example,
+.watch-confirm {
+  padding: 12px 14px;
+  margin-top: 12px;
+  background: var(--app-field);
+  border-radius: 10px;
+}
+.watch-gap p,
+.watch-confirm p {
+  margin: 4px 0;
+  font-size: 14px;
+}
+.watch-example h5 {
+  margin: 0;
+  font-size: 14px;
+}
+.watch-example-text,
+.watch-instruction {
+  white-space: pre-wrap;
+}
+.watch-notice {
+  color: var(--app-success);
+}
+.watch-form {
+  display: grid;
+  gap: 14px;
+  margin-top: 20px;
+  padding: 18px 0;
+}
+.watch-form p {
+  margin: 0;
+}
+.watch-form label {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  font-size: 14px;
+}
+.watch-form input,
+.watch-form textarea,
+.watch-form select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--app-line);
+  border-radius: 8px;
+  padding: 10px;
+  font: inherit;
+  font-size: 16px;
+  background: var(--surface);
+  color: var(--ink);
+}
+.watch-limits {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.browser-watches :is(button, input, textarea, select):focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+.browser-watches button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+@media (max-width: 360px) {
+  .watch-limits {
+    grid-template-columns: 1fr;
+  }
+}
+.browser-watches > .button {
+  background: var(--app-field);
+  color: var(--ink);
+}
+.watch-gap .text-button {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

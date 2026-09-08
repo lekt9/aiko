@@ -10,7 +10,7 @@ const runtime = createRuntimeClient({ baseUrl: `${origin}/api` });
 const checks = [];
 const pass = (name) => {
   checks.push(name);
-  console.log(`PASS: ${name}`);
+  if (!process.argv.includes("--json")) console.log(`PASS: ${name}`);
 };
 try {
   await api.reset();
@@ -101,7 +101,7 @@ try {
   assert.equal(missing.status, 404);
   pass("Unknown route returns 404");
   console.log(
-    JSON.stringify({ origin, passed: checks.length, checks }, null, 2),
+    JSON.stringify({ origin, passed: checks.length, failed: 0, checks }, null, 2),
   );
 } finally {
   await api.reset();

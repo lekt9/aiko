@@ -117,7 +117,7 @@ const html =
   '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Aiko secretary work preview</title><link rel="stylesheet" href="/secretary-work.fixture.css"></head><body><div id="root"></div><script type="module" src="/secretary-work.fixture.js"></script></body></html>';
 const server = Bun.serve({
   hostname: "127.0.0.1",
-  port: 4129,
+  port: Number(process.env.SECRETARY_PREVIEW_PORT ?? 4129),
   async fetch(request) {
     const url = new URL(request.url);
     if (

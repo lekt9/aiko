@@ -2,6 +2,11 @@ import type { MemoryStorage } from "./storage.js";
 import { canonical, digest, fail, observationId, sourceInput, object, text, number, MAX_EVENT_BYTES } from "./codec.js";
 import type { MemoryEvent, Observation, Source, StoredEvent } from "./types.js";
 
+const SUBJECT_ERASURE_PREFIX = "entity-learn:subject-erasure:";
+const subjectErasureKey = (scope: string, key: string) => `${SUBJECT_ERASURE_PREFIX}${digest("entity-learn.erasure-operation/v1", { scope, key })}`;
+const erasedReadKey = (scope: string, key: string) => `erased-read:${digest("entity-learn.erased-read/v1", { scope, key })}`;
+const subjectFence = (scope: string, subject: string) => digest("entity-learn.erased-subject/v1", { scope, subject });
+const ERASURE_KEY = "entity-learn:scope-erasure/v1";
 const ZERO = "0".repeat(64);
 type Row = Record<string, unknown>;
 type StoredObservation = Omit<Observation, "payload">;
@@ -17,9 +22,17 @@ export interface MemoryArchive {
   journal: JournalRow[];
   artifacts: { digest: string; body: string }[];
 }
+/** Host-retained checkpoint, obtained from a verified native journal, never from the candidate archive. */
+export interface ErasureFence { version: 1; scope: string; seq: number; digest: string }
+export interface SubjectErasureInput { subject: string; expectedHead: string; expectedScopeVersion: number; key: string }
+export interface PreparedSubjectErasure { scope: string; key: string; receiptKey: string; requestDigest: string; request: { operation: "erase-subject"; subject: string; expectedHead: string; expectedScopeVersion: number } }
+export interface ArchiveErasureCheck { scope: string; fence: ErasureFence; journalRows: number; artifacts: number; chainVerified: false }
+export interface ErasureCommit { fence: ErasureFence; operation: "erase" | "erase-subject"; receipt: { key: string; seq: number; digest: string; requestDigest: string; scopeVersion: number } }
+export type OnErasure = (commit: ErasureCommit) => void;
+export type RestoreAuthority = (scope: string) => ErasureFence | null | undefined;
 /** Atomic journal + content-addressed artifacts, with disposable read projections. */
 export class Journal {
-  constructor(private readonly db: MemoryStorage) {
+  constructor(private readonly db: MemoryStorage, private readonly restoreAuthority?: RestoreAuthority, private readonly onErasure?: OnErasure) {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS journal (
         seq INTEGER PRIMARY KEY, scope TEXT NOT NULL, request_key TEXT NOT NULL,
@@ -53,7 +66,22 @@ export class Journal {
   }
   /** Host-only atomic projection updates. Does not create evidence or advance the journal. */
   derive<T>(fn: () => T): T { return this.transaction(fn); }
+  private retired(scope: string): boolean {
+    return !!this.db.prepare("SELECT 1 AS found FROM journal WHERE scope=? AND request_key=?").get(scope, ERASURE_KEY);
+  }
+  private erasedRead(scope: string, key: string): boolean {
+    return key.startsWith("erased-read:") || !!this.db.prepare("SELECT 1 AS found FROM journal WHERE scope=? AND request_key=?")
+      .get(scope, erasedReadKey(scope, key));
+  }
+  isErasedSubject(scope: string, subject: string): boolean {
+    const fence = subjectFence(scope, subject);
+    return this.db.prepare("SELECT body FROM journal WHERE scope=? AND request_key LIKE ?")
+      .all(scope, `${SUBJECT_ERASURE_PREFIX}%`).some(row =>
+        (JSON.parse(String(row.body)) as StoredMemoryEvent).erasure?.subjects?.includes(fence));
+  }
   prior(scope: string, key: string, fingerprint: string): MemoryEvent | undefined {
+    if (key !== ERASURE_KEY && this.retired(scope)) fail("erased", "Memory scope has been permanently erased");
+    if (this.erasedRead(scope, key)) fail("erased", "Original memory operation contains erased evidence");
     const row = this.db.prepare("SELECT request_digest, body FROM journal WHERE scope=? AND request_key=?").get(scope, key) as Row | undefined;
     if (!row) return undefined;
     if (row.request_digest !== fingerprint) return fail("idempotency_conflict", "This request key was already used with different input");
@@ -62,17 +90,177 @@ export class Journal {
   /** Exact retained commit plus its original scope ordinal. The key lookup uses
    * UNIQUE(scope, request_key); ordinal counting scans the covering (scope, seq)
    * index through this commit, not O(1). Only this event's artifacts are hydrated.
-   * Like prior(), this is a host journal API, not an authorization boundary. */
+   * Verifies this stored row, not the preceding chain. Like prior(), this is
+   * a host journal API, not an authorization boundary. */
   receipt(scope: string, key: string): (StoredEvent & { scopeVersion: number }) | undefined {
     return this.read(() => {
+      if (key !== ERASURE_KEY && this.retired(scope)) fail("erased", "Memory scope has been permanently erased");
+    if (this.erasedRead(scope, key)) fail("erased", "Original memory operation contains erased evidence");
       const row = this.db.prepare("SELECT * FROM journal WHERE scope=? AND request_key=?").get(scope, key) as Row | undefined;
       if (!row) return undefined;
       const scopeVersion = Number(this.db.prepare("SELECT COUNT(*) AS n FROM journal WHERE scope=? AND seq<=?").get(scope, Number(row.seq))!.n);
-      const event = this.hydrate(JSON.parse(String(row.body)) as StoredMemoryEvent);
+      const seq = Number(row.seq), previous = String(row.previous), savedDigest = String(row.digest);
+      if (!Number.isSafeInteger(seq) || seq < 1 || !Number.isSafeInteger(scopeVersion) ||
+          scopeVersion < 1 || scopeVersion > seq || !/^[a-f0-9]{64}$/.test(previous))
+        return fail("corrupt_store", "Journal receipt position mismatch");
+      let stored: StoredMemoryEvent;
+      try { stored = JSON.parse(String(row.body)) as StoredMemoryEvent; }
+      catch { return fail("corrupt_store", "Journal receipt body is invalid"); }
+      const original = digest("entity-learn.journal/v1", { seq, previous, event: stored }) === savedDigest;
+      const proof = original ? undefined : this.replacementProofs().get(seq);
+      const replaced = proof?.scope === scope && proof.digest === savedDigest && proof.replacement === digest("entity-learn.erasure-body/v1", stored);
+      if (canonical(stored) !== row.body ||
+          (!replaced && !original))
+        return fail("corrupt_store", "Journal receipt digest mismatch");
+      const event = this.hydrate(stored);
       if (event.scope !== scope || event.key !== key || event.requestDigest !== row.request_digest)
         return fail("corrupt_store", "Journal receipt identity mismatch");
-      return { seq: Number(row.seq), previous: String(row.previous), digest: String(row.digest), event, scopeVersion };
+      return { seq, previous, digest: savedDigest, event, scopeVersion };
     });
+  }
+  /** Host-authorized whole-scope erasure. Permanently retires this scope. Live
+   * SQLite contents only: old exports, WAL, backups and external logs are not erased. */
+  eraseScope(scope: string, expectedVersion: number, key: string, at: number): { scope: string; erased: true; retired: true } {
+    text(scope, "scope", 256); text(key, "key"); number(expectedVersion, "expectedVersion", 0, Number.MAX_SAFE_INTEGER);
+    if (this.retired(scope)) this.receipt(scope, ERASURE_KEY);
+    const request = { operation: "erase", expectedVersion, key };
+    this.commit(scope, ERASURE_KEY, request, requestDigest => {
+      if (this.scopeVersion(scope) !== expectedVersion) fail("scope_conflict", "Erasure requires the exact current scope version");
+      this.verifyJournal(false);
+      const rows = this.db.prepare("SELECT * FROM journal WHERE scope=? ORDER BY seq").all(scope) as JournalRow[];
+      if (rows.length > 4096) fail("too_large", "Scope erasure exceeds 4096 journal rows");
+      const replacements = rows.map(row => {
+        const tombstone: MemoryEvent = { version: 1, scope, key: `erased:${row.seq}`,
+          requestDigest: digest("entity-learn.erased/v1", { seq: row.seq, digest: row.digest }),
+          recordedAt: 0, operation: "erased", observations: [] };
+        const body = canonical(tombstone);
+        this.db.prepare("UPDATE journal SET request_key=?,request_digest=?,body=? WHERE seq=? AND scope=?")
+          .run(tombstone.key, tombstone.requestDigest, body, row.seq, scope);
+        return { seq: row.seq, digest: row.digest, replacement: digest("entity-learn.erasure-body/v1", tombstone) };
+      });
+      for (const table of ["observations", "heads", "sources"])
+        this.db.prepare(`DELETE FROM ${table} WHERE scope=?`).run(scope);
+      if (this.hasDerived()) this.db.prepare("DELETE FROM derived WHERE scope=?").run(scope);
+      // Global content deduplication: retain bytes still referenced by another scope.
+      this.db.exec(`DELETE FROM artifacts WHERE digest NOT IN
+        (SELECT json_extract(o.value, '$.payloadDigest') FROM journal j, json_each(j.body, '$.observations') o)`);
+      return { version: 1, scope, key: ERASURE_KEY, requestDigest, recordedAt: at,
+        operation: "erase", observations: [], erasure: { rows: replacements } };
+    });
+    return { scope, erased: true, retired: true };
+  }
+  /** Original caller key, not the transformed journal key. Verifies retained history
+   * before reporting absence; a retired scope no longer retains these receipts. */
+  subjectErasureReceipt(scope: string, key: string): (StoredEvent & { scopeVersion: number }) | undefined {
+    text(scope, "scope", 256); text(key, "key");
+    return this.read(() => {
+      this.verifyJournal(false);
+      if (this.restoreAuthority) {
+        const authority = this.restoreAuthority(scope), current = this.erasureFence(scope);
+        if (!authority || authority.version !== 1 || authority.scope !== scope || authority.seq !== current.seq || authority.digest !== current.digest)
+          fail("corrupt_store", "Subject receipt history conflicts with restore authority");
+      }
+      if (this.retired(scope)) fail("erased", "Subject receipt unavailable after scope retirement");
+      const receipt = this.receipt(scope, subjectErasureKey(scope, key));
+      if (receipt && (receipt.event.operation !== "erase-subject" || !receipt.event.erasure?.subjects ||
+          !receipt.event.erasure.observationIds || !Array.isArray(receipt.event.erasure.rows)))
+        fail("corrupt_store", "Invalid subject erasure receipt");
+      return receipt;
+    });
+  }
+  private subjectErasureIdentity(scope: string, input: SubjectErasureInput): PreparedSubjectErasure {
+    text(scope, "scope", 256);
+    object(input, ["subject", "expectedHead", "expectedScopeVersion", "key"]);
+    text(input.subject, "subject"); text(input.expectedHead, "expectedHead"); text(input.key, "key");
+    number(input.expectedScopeVersion, "expectedScopeVersion", 1, Number.MAX_SAFE_INTEGER);
+    const request = { operation: "erase-subject" as const, subject: subjectFence(scope, input.subject),
+      expectedHead: input.expectedHead, expectedScopeVersion: input.expectedScopeVersion };
+    return { scope, key: input.key, receiptKey: subjectErasureKey(scope, input.key),
+      requestDigest: digest("entity-learn.request/v1", request), request };
+  }
+  /** Read-only identity and current-state check, never a reservation or permission. */
+  prepareSubjectErasure(scope: string, input: SubjectErasureInput): PreparedSubjectErasure {
+    const prepared = this.subjectErasureIdentity(scope, input);
+    return this.read(() => {
+      const prior = this.subjectErasureReceipt(scope, input.key);
+      if (prior) {
+        if (prior.event.requestDigest !== prepared.requestDigest) fail("idempotency_conflict", "Erasure request key conflict");
+      } else {
+        if (this.scopeVersion(scope) !== input.expectedScopeVersion) fail("scope_conflict", "Erasure requires the exact current scope version");
+        if (this.head(scope, input.subject)?.id !== input.expectedHead) fail("head_conflict", "Erasure requires the exact current observation");
+      }
+      return prepared;
+    });
+  }
+  /** Erases one subject's complete history and known dependent subjects, retaining
+   * unrelated observations (including those in the same source refresh commit). */
+  eraseSubject(scope: string, input: { subject: string; expectedHead: string; expectedScopeVersion: number; key: string }, at: number):
+    { scope: string; erased: true; retired: false; subjects: number; observations: number; observationIds: string[]; replacements: { previous: string; observation: string }[] } {
+    const { receiptKey: key, request } = this.subjectErasureIdentity(scope, input);
+    this.receipt(scope, key);
+    const result = this.commit(scope, key, request, requestDigest => {
+      if (this.scopeVersion(scope) !== input.expectedScopeVersion) fail("scope_conflict", "Erasure requires the exact current scope version");
+      if (this.head(scope, input.subject)?.id !== input.expectedHead) fail("head_conflict", "Erasure requires the exact current observation");
+      this.verifyJournal(false);
+      const rows = this.db.prepare("SELECT * FROM journal WHERE scope=? ORDER BY seq").all(scope) as JournalRow[];
+      if (rows.length > 4096) fail("too_large", "Subject erasure exceeds 4096 journal rows");
+      const entries = rows.map(row => ({ row, event: JSON.parse(row.body) as StoredMemoryEvent }));
+      const observations = entries.flatMap(({ event }) => event.observations);
+      if (observations.length > 16384) fail("too_large", "Subject erasure exceeds 16384 observations");
+      const subjects = new Set([input.subject]);
+      let ids = new Set<string>();
+      for (;;) {
+        ids = new Set(observations.filter(o => subjects.has(o.subject)).map(o => o.id));
+        const before = subjects.size;
+        for (const o of observations)
+          if ([...o.supports, ...o.dependsOn].some(id => ids.has(id))) subjects.add(o.subject);
+        if (subjects.size > 256) fail("too_large", "Subject erasure dependency closure exceeds 256 subjects");
+        if (subjects.size === before) break;
+      }
+      const proofs = this.replacementProofs();
+      const replacements: NonNullable<MemoryEvent["erasure"]>["rows"] = [];
+      const rewritten = new Map<string, string>();
+      for (const { row, event } of entries) {
+        const kept = event.observations.filter(o => !ids.has(o.id)).map(o => {
+          const { id, ...original } = o;
+          const updated = { ...original, links: o.links.filter(link => !subjects.has(link.subject)),
+            supersedes: o.supersedes ? rewritten.get(o.supersedes) ?? o.supersedes : null,
+            supports: o.supports.map(ref => rewritten.get(ref) ?? ref),
+            dependsOn: o.dependsOn.map(ref => rewritten.get(ref) ?? ref) };
+          const next = observationId({ ...updated, payload: null });
+          if (next !== id) rewritten.set(id, next);
+          return { ...updated, id: next };
+        });
+        if (canonical(kept) === canonical(event.observations) && !(event.subject && subjects.has(event.subject))) continue;
+        const replacementKey = row.request_key.startsWith("erased-read:") ? row.request_key : erasedReadKey(scope, row.request_key);
+        const replacement: StoredMemoryEvent = { version: 1, scope, key: replacementKey,
+          requestDigest: digest("entity-learn.erased-request/v1", { seq: row.seq, digest: row.digest }),
+          recordedAt: event.recordedAt, operation: event.operation, observations: kept,
+          ...(event.source ? { source: event.source } : {}) };
+        const body = canonical(replacement);
+        this.db.prepare("UPDATE journal SET request_key=?,request_digest=?,body=? WHERE seq=? AND scope=?")
+          .run(replacement.key, replacement.requestDigest, body, row.seq, scope);
+        const prior = proofs.get(row.seq);
+        replacements.push({ seq: row.seq, digest: row.digest, replacement: digest("entity-learn.erasure-body/v1", replacement),
+          ...(prior ? { previousReplacement: prior.replacement } : {}) });
+      }
+      // Reproject this scope in original order so canonical link replacements and
+      // their supersedes/supports references agree. Other scopes remain untouched.
+      for (const table of ["observations", "heads", "sources"])
+        this.db.prepare(`DELETE FROM ${table} WHERE scope=?`).run(scope);
+      for (const row of this.db.prepare("SELECT seq,body FROM journal WHERE scope=? ORDER BY seq").all(scope))
+        this.project(this.hydrate(JSON.parse(String(row.body)) as StoredMemoryEvent), Number(row.seq));
+      // Derived vectors have no general quotation lineage; invalidate the disposable scope cache.
+      if (this.hasDerived()) this.db.prepare("DELETE FROM derived WHERE scope=?").run(scope);
+      this.db.exec(`DELETE FROM artifacts WHERE digest NOT IN
+        (SELECT json_extract(o.value, '$.payloadDigest') FROM journal j, json_each(j.body, '$.observations') o)`);
+      return { version: 1, scope, key, requestDigest, recordedAt: at, operation: "erase-subject", observations: [],
+        erasure: { rows: replacements, subjects: [...subjects].map(subject => subjectFence(scope, subject)).sort(), observationIds: [...ids].sort(), replacements: [...rewritten].map(([previous, observation]) => ({ previous, observation })) },
+        // Counts only; no erased titles, quotes or raw subject identity.
+        erasedObservations: ids.size };
+    });
+    return { scope, erased: true, retired: false, subjects: result.erasure!.subjects!.length,
+      observations: result.erasedObservations!, observationIds: result.erasure!.observationIds!, replacements: result.erasure!.replacements ?? [] };
   }
   private artifact(hash: string): Observation["payload"] {
     const row = this.db.prepare("SELECT body FROM artifacts WHERE digest=?").get(hash) as Row | undefined;
@@ -96,8 +284,12 @@ export class Journal {
     const fingerprint = digest("entity-learn.request/v1", request);
     return this.transaction(() => {
       const previous = this.prior(scope, key, fingerprint);
-      if (previous) return previous;
+      if (previous) { this.notifyErasure(previous); return previous; }
+      if (this.retired(scope)) fail("erased", "Memory scope has been permanently erased");
       const event = create(fingerprint);
+      if (key === ERASURE_KEY && event.operation !== "erase") fail("invalid_input", "Reserved scope erasure key");
+      if (key.startsWith(SUBJECT_ERASURE_PREFIX) && event.operation !== "erase-subject") fail("invalid_input", "Reserved subject erasure key");
+      if (event.observations.some(o => this.isErasedSubject(scope, o.subject))) fail("erased", "Observation subject has been erased");
       if (Buffer.byteLength(canonical(event)) > MAX_EVENT_BYTES) fail("too_large", "Atomic observation batch exceeds 1 MiB");
       const stored = this.storeArtifacts(event);
       const body = canonical(stored);
@@ -107,8 +299,18 @@ export class Journal {
       const hash = digest("entity-learn.journal/v1", { seq, previous: parent, event: stored });
       this.db.prepare("INSERT INTO journal VALUES (?,?,?,?,?,?,?)").run(seq, scope, key, fingerprint, parent, hash, body);
       this.project(event, seq);
+      this.notifyErasure(event);
       return event;
     });
+  }
+  private notifyErasure(event: MemoryEvent): void {
+    if (!this.onErasure || (event.operation !== "erase" && event.operation !== "erase-subject")) return;
+    const row = this.receipt(event.scope, event.key);
+    if (!row) fail("corrupt_store", "Erasure receipt unavailable");
+    const result: unknown = this.onErasure({ fence: this.erasureFence(event.scope), operation: event.operation,
+      receipt: { key: event.key, seq: row!.seq, digest: row!.digest, requestDigest: event.requestDigest, scopeVersion: row!.scopeVersion } });
+    if (result && typeof (result as { then?: unknown }).then === "function")
+      fail("invalid_input", "Erasure callback must be synchronous");
   }
   private project(event: MemoryEvent, seq: number): void {
     for (const observation of event.observations) {
@@ -194,13 +396,18 @@ export class Journal {
     return value;
   }
   putDerived(scope: string, namespace: string, key: string, value: unknown): void {
+    if (this.retired(scope)) fail("erased", "Memory scope has been permanently erased");
     const body = canonical(value);
     if (Buffer.byteLength(body) > MAX_EVENT_BYTES) fail("too_large", "Derived entry exceeds its bound");
     this.db.exec(`CREATE TABLE IF NOT EXISTS derived (
       scope TEXT NOT NULL, namespace TEXT NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, digest TEXT NOT NULL,
       PRIMARY KEY(scope, namespace, key))`);
-    this.db.prepare("INSERT OR IGNORE INTO derived VALUES(?,?,?,?,?)").run(scope, namespace, key, body,
-      digest("entity-learn.derived/v1", { scope, namespace, key, value }));
+    this.db.prepare(`INSERT OR IGNORE INTO derived SELECT ?,?,?,?,?
+      WHERE NOT EXISTS (SELECT 1 FROM journal WHERE scope=? AND request_key=?)
+      AND NOT EXISTS (SELECT 1 FROM journal j, json_each(j.body, '$.erasure.observationIds') o WHERE j.scope=? AND o.value=?)
+      AND NOT EXISTS (SELECT 1 FROM journal j, json_each(j.body, '$.erasure.replacements') r WHERE j.scope=? AND json_extract(r.value, '$.previous')=?)`).run(scope, namespace, key, body,
+      digest("entity-learn.derived/v1", { scope, namespace, key, value }), scope, ERASURE_KEY, scope, key, scope, key);
+    if (this.retired(scope)) fail("erased", "Memory scope has been permanently erased");
   }
   clearDerived(scope: string, namespace: string): void {
     if (!this.hasDerived()) return;
@@ -218,15 +425,41 @@ export class Journal {
       return this.verifyJournal(true);
     });
   }
+  private replacementProofs(): Map<number, { scope: string; digest: string; replacement: string }> {
+    const proofs = new Map<number, { scope: string; digest: string; replacement: string }>();
+    for (const row of this.db.prepare("SELECT * FROM journal WHERE request_key=? OR request_key LIKE ? ORDER BY seq")
+      .all(ERASURE_KEY, `${SUBJECT_ERASURE_PREFIX}%`) as JournalRow[]) {
+      const event = JSON.parse(row.body) as StoredMemoryEvent;
+      if (!["erase", "erase-subject"].includes(event.operation) || !event.erasure || event.scope !== row.scope ||
+          digest("entity-learn.journal/v1", { seq: row.seq, previous: row.previous, event }) !== row.digest)
+        fail("corrupt_store", "Invalid erasure proof");
+      for (const proof of event.erasure!.rows) {
+        const previous = proofs.get(proof.seq);
+        if (!Number.isSafeInteger(proof.seq) || proof.seq < 1 || proof.seq >= row.seq ||
+            (previous && (previous.scope !== row.scope || previous.digest !== proof.digest ||
+              (event.operation !== "erase" && proof.previousReplacement !== previous.replacement))) ||
+            (!previous && proof.previousReplacement !== undefined))
+          fail("corrupt_store", "Invalid cumulative erasure proof");
+        proofs.set(proof.seq, { ...proof, scope: row.scope });
+      }
+    }
+    return proofs;
+  }
   private verifyJournal(project: boolean): { events: number; observations: number; root: string } {
+      const erased = this.replacementProofs();
       let parent = ZERO; let seq = 0; let observations = 0;
       for (const raw of this.db.prepare("SELECT * FROM journal ORDER BY seq").iterate()) {
         const row = raw as Row;
         const stored = JSON.parse(String(row.body)) as StoredMemoryEvent;
         seq++;
+        const proof = erased.get(seq);
+        const replacement = proof !== undefined && proof.scope === row.scope && proof.digest === row.digest &&
+          proof.replacement === digest("entity-learn.erasure-body/v1", stored);
+        if (stored.operation === "erased" && !replacement) fail("corrupt_store", "Erased row lacks a valid erasure proof");
+        if (proof && !replacement) fail("corrupt_store", "Erasure proof does not match the removed row");
         if (row.seq !== seq || row.previous !== parent || stored.version !== 1 || stored.scope !== row.scope ||
             stored.key !== row.request_key || stored.requestDigest !== row.request_digest ||
-            digest("entity-learn.journal/v1", { seq, previous: parent, event: stored }) !== row.digest)
+            (!replacement && digest("entity-learn.journal/v1", { seq, previous: parent, event: stored }) !== row.digest))
           fail("corrupt_store", "Journal chain verification failed; projections were not replaced");
         const event = this.hydrate(stored);
         for (const o of event.observations) {
@@ -296,13 +529,46 @@ export class Journal {
     return archive as unknown as MemoryArchive;
   }
   /** Empty-only atomic restore retains original citations, request keys, timestamps and chain root. */
+  /** Persist externally after each erasure; host must serialize authority updates with restore. */
+  erasureFence(scope: string): ErasureFence {
+    text(scope, "scope", 256);
+    return this.read(() => {
+      this.verifyJournal(false);
+      const row = this.db.prepare("SELECT seq,digest FROM journal WHERE scope=? AND (request_key=? OR request_key LIKE ?) ORDER BY seq DESC LIMIT 1")
+        .get(scope, ERASURE_KEY, `${SUBJECT_ERASURE_PREFIX}%`);
+      return { version: 1, scope, seq: row ? Number(row.seq) : 0, digest: row ? String(row.digest) : ZERO };
+    });
+  }
+  private checkedArchiveErasure(scope: string, value: unknown, required: boolean): { archive: MemoryArchive; fence: ErasureFence | null | undefined } {
+    const fence = this.restoreAuthority?.(scope);
+    if ((required || this.restoreAuthority) && (!fence || fence.version !== 1 || fence.scope !== scope ||
+        !Number.isSafeInteger(fence.seq) || fence.seq < 0 || typeof fence.digest !== "string" ||
+        !/^[a-f0-9]{64}$/.test(fence.digest) || (fence.seq === 0 && fence.digest !== ZERO)))
+      fail("invalid_input", "Restore authority is unavailable or invalid");
+    const archive = this.checkArchive(value, scope);
+    if (fence) {
+      const latest = archive.journal.filter(row => row.request_key === ERASURE_KEY || row.request_key.startsWith(SUBJECT_ERASURE_PREFIX)).at(-1);
+      if ((latest?.seq ?? 0) !== fence.seq || (latest?.digest ?? ZERO) !== fence.digest)
+        fail("invalid_input", "Archive conflicts with retained erasure fence");
+    }
+    return { archive, fence };
+  }
+  /** Structural/artifact and current fence preflight only; does not verify the journal chain. */
+  checkArchiveErasure(scope: string, value: unknown): ArchiveErasureCheck {
+    text(scope, "scope", 256);
+    return this.read(() => {
+      const { archive, fence } = this.checkedArchiveErasure(scope, value, true);
+      return { scope, fence: { ...fence! }, journalRows: archive.journal.length, artifacts: archive.artifacts.length, chainVerified: false };
+    });
+  }
   importArchive(scope: string, value: unknown): { events: number; observations: number; root: string } {
     text(scope, "scope", 256);
-    const archive = this.checkArchive(value, scope);
     return this.transaction(() => {
+      // Refuse rollback over retained receipts before inspecting old private artifacts.
       for (const table of ["journal", "artifacts", "observations", "heads", "sources"])
         if (this.db.prepare(`SELECT 1 AS present FROM ${table} LIMIT 1`).get())
           fail("store_not_empty", "Memory archive import requires an empty destination");
+      const { archive } = this.checkedArchiveErasure(scope, value, false);
       if (this.hasDerived()) this.db.exec("DELETE FROM derived;");
       for (const row of archive.artifacts)
         this.db.prepare("INSERT INTO artifacts VALUES(?,?)").run(row.digest, row.body);

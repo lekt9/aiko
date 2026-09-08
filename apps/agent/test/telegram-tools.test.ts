@@ -789,6 +789,37 @@ test("cold replay never restarts typing for terminal turns without delivery rece
   }
 });
 
+test("native host cold recovery leaves historical terminal typing silent and history unchanged", async () => {
+  const dir = await mkdtemp("/tmp/aiko-typing-replay-");
+  cleanup.push(() => rm(dir, { recursive: true, force: true }));
+  let starts = 0;
+  const definition = () => {
+    const typing = createTelegramTyping("123", {
+      typing: () => { starts++; return async () => {}; },
+    }, { waitForDelivery: true });
+    cleanup.push(typing.close);
+    return actor({ name: "aiko", methods: {}, components: [typing.component] });
+  };
+  const options = { database: join(dir, "actor.sqlite"), actorName: "aiko", actorInstance: "test", actorFor: definition };
+  let host = await createBunHost(options);
+  cleanup.push(() => host.close());
+  const thread = "user-123";
+  await host.commitRoot(host.self(thread), event("FixtureRoot", {}));
+  for (const terminal of ["TurnCompleted", "TurnFailed", "TurnCancelled"]) {
+    const turn = `historical-${terminal}`;
+    await host.seed(thread, [incoming(turn), event("AikoTelegramTypingStarted", {
+      turn, epoch: 0, activation: "old-process",
+    }), event(terminal, { turn, epoch: 0 })]);
+  }
+  const before = await host.read(thread);
+  await host.close();
+  host = await createBunHost(options);
+  await host.recover();
+  await host.wake(thread);
+  expect(starts).toBe(0);
+  expect(await host.read(thread)).toEqual(before);
+});
+
 test("strict-provider null optional arguments do not reject a normal final reply", async () => {
   const f = fixture(true, async text => ({status:"ready",text,persona:"fixture"}));
   expect(await f.run("send_message", {kind:"text",text:"Hello",replyTo:null,buttons:null,caption:null,fileId:null,fileIds:null,final:true})).toMatchObject({status:"delivered",final:true});

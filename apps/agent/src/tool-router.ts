@@ -1,5 +1,8 @@
 import { canonicalStringify, sha256 } from "@unbrowse/browser-harness/har";
 import { executableObservedReads, ownedNetworkDefinitions, ownedObservedActions } from "./capability-builder-network.ts";
+import { endpointInterface, ownedEndpointDescriptions } from "./observed-endpoint.ts";
+import { retainedHarnessSkills } from "./harness-skill.ts";
+import { harnessDigest, type HarnessLibraryBinding } from "./harness-library.ts";
 import { createHash } from "node:crypto";
 import { Effect, Schema } from "effect";
 import { actor } from "tardie";
@@ -12,9 +15,9 @@ import { Self } from "tardie/core/runtime";
 import type { Event } from "tardie/core/event";
 import type { ConnectorEngine } from "./connectors.ts";
 import { replayCapabilities } from "./capability-builder.ts";
-import { codeSchemaDigest, codeWorkflowDigest, validateWorkflowDefinition, type CodeWorkflowRecord, type WorkflowRecord } from "./tool-workflows.ts";
+import { codeSchemaDigest, codeWorkflowDigest, workflowToolDigest, workflowApplicability, validateWorkflowDefinition, type CodeWorkflowRecord, type WorkflowRecord } from "./tool-workflows.ts";
 
-export const ROUTER_VERSION = "aiko-tool-router/9";
+export const ROUTER_VERSION = "aiko-tool-router/10";
 export type RouterMethod = "discover" | "describe" | "route" | "status";
 export type RouteState = "ready" | "needs_connection" | "needs_discovery" | "catalog_unavailable";
 export type AtomicTask = { id: string; query: string; domain?: string; arguments?: Record<string, unknown> };
@@ -25,6 +28,8 @@ export interface ToolRouterBinding {
   readOwnedEvents?: () => Promise<readonly Event[]>;
   listWorkflows?: () => Promise<WorkflowRecord[]>;
   listCodeWorkflows?: () => Promise<CodeWorkflowRecord[]>;
+  /** Owner-scoped retained skill custody. Discovery never calls context/authorize/execute. */
+  harnessLibrary?: () => HarnessLibraryBinding | undefined;
   /** Live tool contracts from this owner's mounted code harness, never historical receipts. */
   codeToolSpecs?: () => readonly { name: string; description?: string; inputSchema: unknown }[];
   /** Host-approved Unlock vault domains for this owner. Never session material. */
@@ -32,13 +37,13 @@ export interface ToolRouterBinding {
   redact?: (text: string) => string;
 }
 type Candidate = {
-  id: string; name: string; description: string; parent: string; provider: "arcade" | "generated" | "observed" | "workflow" | "native"; reviewRequired?: boolean;
+  id: string; name: string; description: string; parent: string; provider: "arcade" | "generated" | "observed" | "workflow" | "native" | "skill"; reviewRequired?: boolean;
   domains: string[]; inputSchema: Record<string, unknown>; requirements: Record<string, unknown>;
   connectionId?: string; connected: boolean; evidenceId?: string;
 };
 export type RoutedTool = Candidate & { score: number; missingArguments: string[]; history: "none" | "succeeded" | "failed" | "unknown" };
 export type TaskRoute = { taskId: string; state: RouteState; tools: RoutedTool[]; fallbackAllowed: boolean; reason: string };
-export type RouteDecision = { id: string; owner: string; version: string; snapshot: string; state: RouteState; tasks: TaskRoute[]; authority: { domain: string; signature: string }[]; createdAt: number; previousDecisionId?: string };
+export type RouteDecision = { id: string; owner: string; version: string; snapshot: string; state: RouteState; tasks: TaskRoute[]; authority: { domain: string; signature: string }[]; createdAt: number; previousDecisionId?: string; coverage: { retainedSkillsOmitted: number } };
 type E = Event & Record<string, unknown>;
 const hashCanonicalWorkflow = (value: unknown) => sha256(canonicalStringify(validateWorkflowDefinition(value)));
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -76,7 +81,7 @@ function historyFor(owner: string, events: readonly Event[]) {
 }
 /** Multi-view lexical baseline: fine-grained names + descriptions + exact schemas, with explicit parent traversal.
  * Inspired by AnyTool §4, Tool-to-Agent §2, ACE-Router §3.5 and CRAFT §2; no trained-router claims. */
-function rank(task: AtomicTask, candidates: Candidate[], history: ReturnType<typeof historyFor>): RoutedTool[] {
+export function rankToolCandidates(task: AtomicTask, candidates: Candidate[], history: ReturnType<typeof historyFor>): RoutedTool[] {
   const query = tokens(task.query);
   const documents = candidates.map(c => new Set(tokens(`${c.name} ${c.description} ${c.parent} ${JSON.stringify(c.inputSchema)}`)));
   const df = new Map(query.map(q => [q, documents.filter(d => d.has(q)).length]));
@@ -85,7 +90,9 @@ function rank(task: AtomicTask, candidates: Candidate[], history: ReturnType<typ
     const mutation = /\b(send|post|create|update|modify|change|label|mark|delete|remove|archive|move|triage|reply|forward|add|set|write|execute)\b/;
     const reading = /\b(find|search|list|read|fetch|get|show|check|unread|summarize|retrieve|lookup|what|which)\b/;
     const toolWords = (c.provider === "workflow" ? `${c.name} ${String(c.requirements.stepToolNames ?? "")}` : c.name).replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().replace(/[^a-z0-9]+/g, " ");
-    if (reading.test(requested) && !mutation.test(requested) && (mutation.test(toolWords) || (c.provider === "arcade" && !reading.test(toolWords)))) return [];
+    const declaredRead = (c.provider === "observed" || c.provider === "skill") && c.requirements.effect === "read";
+    if (reading.test(requested) && !mutation.test(requested) && (c.requirements.effect === "write" || c.requirements.effect === "mixed" ||
+      (!declaredRead && (mutation.test(toolWords) || (c.provider === "arcade" && !reading.test(toolWords)))))) return [];
     if (task.domain && c.domains.length && !c.domains.some(d => task.domain === d || task.domain!.endsWith(`.${d}`))) return [];
     const name = new Set(tokens(c.name)), description = new Set(tokens(c.description)), schema = new Set(tokens(JSON.stringify(c.inputSchema))), parent = new Set(tokens(c.parent));
     let score = query.reduce((sum, q) => sum + (name.has(q) ? 4 : description.has(q) ? 2 : schema.has(q) ? 1.5 : parent.has(q) ? 1 : 0) * Math.log(1 + candidates.length / (1 + (df.get(q) ?? 0))), 0);
@@ -135,6 +142,8 @@ async function snapshot(binding: ToolRouterBinding) {
   const uniqueCapabilities = [...new Map(capabilities.map(c => [c.url, c])).values()];
   const generated: Candidate[] = uniqueCapabilities.map(c => ({ id: c.id, name: `GET ${c.url}`, description: `Read ${c.url}`, parent: "owned-capability", provider: "generated", domains: [new URL(c.url).hostname], inputSchema: { type: "object", properties: {}, additionalProperties: false }, requirements: {}, connected: true, evidenceId: c.evidence.id }));
   const learned = executableObservedReads(events);
+  const definitions = ownedNetworkDefinitions(events), actions = ownedObservedActions(events);
+  const descriptions = ownedEndpointDescriptions(events, definitions, actions);
   // Anti-bot challenges demote host replay for the challenged origin until the vault
   // session is renewed past the challenge; fingerprint-bound origins belong to the browser actor.
   const challengeAt = new Map<string, number>();
@@ -154,11 +163,13 @@ async function snapshot(binding: ToolRouterBinding) {
   const observedCandidate = (e: (typeof learned)[number], ready: boolean): Candidate => {
     const domains = [...new Set(e.definition.steps.map(s => new URL(s.origin).hostname))];
     const blocked = domains.some(hostBlocked);
+    const contract = endpointInterface(e.definition.steps, descriptions.get(e.toolDigest));
     return {
-    id: e.toolId, name: e.actionId, description: e.definition.steps.map(s => `${s.method} ${s.origin}${s.path}`).join("; "), parent: "owned-network", provider: "observed",
+    id: e.toolId, name: contract.name, description: contract.description, parent: "owned-network", provider: "observed",
     domains,
     inputSchema: { type: "object", properties: Object.fromEntries(e.definition.inputs.filter(i => i.source === "caller").map(i => [i.name, i.type === "json" ? {} : { type: i.type }])), required: e.definition.inputs.filter(i => i.required && i.source === "caller").map(i => i.name), additionalProperties: false },
     requirements: {
+      effect: contract.effect, output: contract.output, recomputation: contract.recomputation,
       ...(ready
         ? { executeWith: "observed_network_run", merkle: e.toolDigest, sourceTraceDigest: e.sourceTraceDigest, reauthorizeEveryRun: true, execution: { tool: "observed_network_run", arguments: { toolDigest: e.toolDigest }, inputParameter: "inputs", inputEncoding: "json" } }
         : { sessionRequirements: e.definition.sessionRequirements, vaultInputs: e.definition.inputs.filter(i => i.source === "vault").map(i => i.name), approval: "review_required", executable: false }),
@@ -173,19 +184,20 @@ async function snapshot(binding: ToolRouterBinding) {
     ids.add(candidate.id);
     candidates.push(candidate);
   }
-  const observed: Candidate[] = ownedNetworkDefinitions(events).filter(e => !learnedDigests.has(e.toolDigest)).map(e => observedCandidate(e, false));
-  for (const action of ownedObservedActions(events)) {
+  const observed: Candidate[] = definitions.filter(e => !learnedDigests.has(e.toolDigest)).map(e => observedCandidate(e, false));
+  for (const action of actions) {
     const domains = [...new Set(action.artifact.allowedOrigins.map(origin => new URL(origin).hostname))];
     const blocked = domains.some(hostBlocked);
+    const contract = endpointInterface(action.artifact.actions.find(a => a.id === action.actionId)!.steps, descriptions.get(action.artifactDigest));
     const candidate: Candidate = {
-      id: action.artifactDigest, name: action.actionId,
-      description: action.artifact.actions.flatMap(a => a.steps.map(s => `${s.method} ${s.origin}${s.path}`)).join("; "),
+      id: action.artifactDigest, name: contract.name,
+      description: contract.description,
       parent: "owned-network", provider: "observed",
       domains,
       inputSchema: { type: "object", properties: Object.fromEntries((action.artifact.actions[0]?.inputs ?? []).map(i => [i.name, i.type === "json" ? {} : { type: i.type }])), required: (action.artifact.actions[0]?.inputs ?? []).filter(i => i.required).map(i => i.name), additionalProperties: false },
       requirements: {
         executeWith: "observed_network_run", merkle: action.artifactDigest, sourceTraceDigest: action.importDigest, reauthorizeEveryRun: true,
-        effect: action.effect, session: action.sessionRequired ? "unlock-vault" : "none",
+        effect: action.effect, output: contract.output, recomputation: contract.recomputation, session: action.sessionRequired ? "unlock-vault" : "none",
         execution: { tool: "observed_network_run", arguments: { artifactDigest: action.artifactDigest }, inputParameter: "inputs", inputEncoding: "json" },
         ...(action.effect === "write" ? { approval: "owner_required" } : {}),
         ...(blocked ? { blockedBy: "origin_challenge" } : {}),
@@ -196,6 +208,26 @@ async function snapshot(binding: ToolRouterBinding) {
     ids.add(candidate.id);
     candidates.push(candidate);
   }
+  const library = binding.harnessLibrary?.();
+  const skills = await retainedHarnessSkills(library?.owner === binding.owner ? library : undefined, events);
+  for (const skill of skills.items) {
+    const contractDigest = harnessDigest(skill.contract);
+    const candidate: Candidate = {
+      id: `skill:${skill.digest}`, name: skill.name, description: `${skill.description}; outcome: ${skill.contract.outcome}`,
+      parent: "owned-harness-skill", provider: "skill", domains: [], inputSchema: skill.contract.inputSchema,
+      connected: skill.active, reviewRequired: !skill.active || skill.contract.effect !== "read", evidenceId: skill.digest,
+      requirements: { merkle: skill.digest, effect: skill.contract.effect, outputSchema: skill.contract.outputSchema,
+        documentation: { tool: "harness_skill", arguments: { digest: skill.digest }, skillRef: skill.skillRef },
+        routeGenerations: skill.routeGenerations, contextChecked: false, reauthorizeEveryRun: true,
+        ...(skill.active ? { executeWith: "harness_call", execution: { tool: "harness_call", arguments: { name: skill.name, contractDigest },
+          inputParameter: "input", inputEncoding: "json-value", requiredParameters: ["operationId"] } }
+          : { executable: false, approval: "evaluated_promotion_required" }),
+        ...(skill.contract.effect !== "read" ? { approval: "owner_required" } : {}),
+      },
+    };
+    if (redact(JSON.stringify(candidate)) === JSON.stringify(candidate) && !ids.has(candidate.id)) { ids.add(candidate.id); candidates.push(candidate); }
+  }
+  const coverage = { retainedSkillsOmitted: skills.omitted };
   const history = historyFor(binding.owner, events);
   const native = new Map((binding.codeToolSpecs?.() ?? []).map(spec => [spec.name, spec]));
   for (const spec of native.values()) {
@@ -226,6 +258,10 @@ async function snapshot(binding: ToolRouterBinding) {
     try { if(hashCanonicalWorkflow(record.definition)!==record.digest)continue; } catch { continue; }
     const stepTools=record.definition.steps.map(step=>[...candidates,...generated,...observed].find(tool=>tool.id===step.toolId));
     if(stepTools.some(tool=>!tool || (tool.provider === "observed" && !tool.connected)))continue;
+    const applicability = workflowApplicability(record);
+    if (!applicability ||
+      record.definition.steps.some((step, i) => applicability.steps.find(s => s.id === step.id)?.toolDigest !==
+        workflowToolDigest({ owner: binding.owner, id: step.toolId, effect: "read", inputSchema: stepTools[i]!.inputSchema }))) continue;
     // Generated and learned-network steps retain their Arcade absence gate even inside a reusable workflow.
     let allowed = true;
     for(const tool of stepTools) if(tool!.provider === "generated" || tool!.provider === "observed") for(const domain of tool!.domains) {
@@ -239,8 +275,8 @@ async function snapshot(binding: ToolRouterBinding) {
   }
   // Observed capabilities are established by the owner's verified network graph,
   // independently of Arcade. A missing catalog still grants no discovery fallback.
-  if (!catalogAvailable && !observed.length && !candidates.some(c => c.provider === "observed" || c.provider === "native" || c.parent === "owned-code-workflow")) throw new Error("Catalog unavailable");
-  return { candidates, generated, observed, history, catalogAvailable, version: hash([ROUTER_VERSION, catalogAvailable, catalog.map(c => [c.id, c.toolkit, c.metadata]).sort((a,b) => String(a[0]).localeCompare(String(b[0]))), [...candidates].sort((a, b) => a.id.localeCompare(b.id)), generated, observed, [...history].sort(), [...vaultDomains].sort()]) };
+  if (!catalogAvailable && !observed.length && !candidates.some(c => c.provider === "observed" || c.provider === "native" || c.provider === "skill" || c.parent === "owned-code-workflow")) throw new Error("Catalog unavailable");
+  return { candidates, generated, observed, history, catalogAvailable, coverage, version: hash([ROUTER_VERSION, catalogAvailable, coverage, catalog.map(c => [c.id, c.toolkit, c.metadata]).sort((a,b) => String(a[0]).localeCompare(String(b[0]))), [...candidates].sort((a, b) => a.id.localeCompare(b.id)), generated, observed, [...history].sort(), [...vaultDomains].sort()]) };
 }
 async function searchAuthority(binding: ToolRouterBinding, domain: string) {
   return binding.engine.search(domain).catch(() => ({ status: "unavailable" as const, fallbackAllowed: false, connectors: [], message: "Catalog unavailable" }));
@@ -272,10 +308,10 @@ async function respond(binding: ToolRouterBinding, method: RouterMethod, input: 
   }
   if (method === "describe") {
     if (!object(input) || Object.keys(input).some(k => k !== "toolIds") || !Array.isArray(input.toolIds) || !input.toolIds.length || input.toolIds.length > 6 || input.toolIds.some(id => !safeString(id, 512))) throw new Error("Invalid describe arguments");
-    const selected = [...new Set(input.toolIds)].map(id => current.candidates.find(c => c.id === id));
+    const selected = [...new Set(input.toolIds)].map(id => [...current.candidates, ...current.observed].find(c => c.id === id));
     if (selected.some(c => !c)) return { state: "needs_discovery", tools: [], reason: "Tool is not in current catalog" };
     const tools = bounded(selected.map(c => ({ ...c!, score: 0, missingArguments: [], history: "none" as const })), 6);
-    return { state: tools.length === selected.length ? "ready" : "needs_discovery", tools, snapshot: current.version, omitted: selected.length - tools.length };
+    return { state: tools.length === selected.length ? "ready" : "needs_discovery", tools, snapshot: current.version, coverage: current.coverage, omitted: selected.length - tools.length };
   }
   const request = parseTasks(input);
   if (request.previousDecisionId && !log.some(e => e.type === "AikoRouterDecisionRecorded" && e.owner === binding.owner && (e.result as RouteDecision)?.id === request.previousDecisionId)) throw new Error("Previous decision is not owned");
@@ -296,9 +332,9 @@ async function respond(binding: ToolRouterBinding, method: RouterMethod, input: 
         pool = current.candidates.filter(c => found.has(c.id) || parents.has(c.parent) || c.provider==="workflow"&&c.domains.includes(task.domain!));
       } else pool = [];
     }
-    let ranked = rank(task, pool, current.history);
-    if (fallbackAllowed) ranked = rank(task, [...current.generated, ...current.observed, ...current.candidates.filter(c=>c.provider==="workflow"||c.provider==="observed")].filter(c => c.domains.includes(task.domain!)), current.history);
-    if (!ranked.length) ranked = rank(task, [...current.observed, ...current.candidates.filter(c=>c.provider==="observed")], current.history);
+    let ranked = rankToolCandidates(task, pool, current.history);
+    if (fallbackAllowed) ranked = rankToolCandidates(task, [...current.generated, ...current.observed, ...current.candidates.filter(c=>c.provider==="workflow"||c.provider==="observed")].filter(c => c.domains.includes(task.domain!)), current.history);
+    if (!ranked.length) ranked = rankToolCandidates(task, [...current.observed, ...current.candidates.filter(c=>c.provider==="observed"||c.provider==="skill")], current.history);
     const tools = bounded(ranked, 2).filter(tool => { const bytes = JSON.stringify(tool).length; if (bytes > remainingBytes) return false; remainingBytes -= bytes; return true; }); // At most 16 exact schemas for eight atomic tasks.
     const state: RouteState = tools.length ? tools.some(t => t.connected && t.history !== "unknown") ? "ready" : tools.every(t => t.history === "unknown" || t.reviewRequired) ? "needs_discovery" : "needs_connection" : current.catalogAvailable ? "needs_discovery" : "catalog_unavailable";
     tasks.push({ taskId: task.id, state, tools, fallbackAllowed, reason: tools.length ? "Ranked fine-grained schemas with parent provider, owned connection state and verified execution history; missingArguments must still be supplied; routing grants no action authority" : fallbackAllowed ? "Arcade confirms provider absence; discover or build a validated capability" : "No safe exact-schema match; refine this atomic task or provider. Absence has not been authorized" });
@@ -306,7 +342,7 @@ async function respond(binding: ToolRouterBinding, method: RouterMethod, input: 
   const version = hash([current.version, checks]);
   const id = `route_${hash([binding.owner, version, request]).slice(0, 32)}`;
   const existing = log.find(e => e.type === "AikoRouterDecisionRecorded" && e.owner === binding.owner && (e.result as RouteDecision)?.id === id)?.result as RouteDecision | undefined;
-  return existing ?? { id, owner: binding.owner, version: ROUTER_VERSION, snapshot: version, state: overall(tasks), tasks, authority: checks, createdAt: Date.now(), ...(request.previousDecisionId ? { previousDecisionId: request.previousDecisionId } : {}) } satisfies RouteDecision;
+  return existing ?? { id, owner: binding.owner, version: ROUTER_VERSION, snapshot: version, state: overall(tasks), tasks, authority: checks, coverage: current.coverage, createdAt: Date.now(), ...(request.previousDecisionId ? { previousDecisionId: request.previousDecisionId } : {}) } satisfies RouteDecision;
 }
 export function routerEventKey(e: Event) {
   if (e.type === "ResponseReceived" && typeof e.from === "string" && /^aiko:[^:]+:router-[A-Za-z0-9_-]+$/.test(e.from) && typeof e.call === "string" && ["discover", "describe", "route", "status"].includes(String(e.method))) return `aiko-router:response:${e.from}:${e.method}:${e.call}`;

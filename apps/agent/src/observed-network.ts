@@ -33,6 +33,17 @@ const WRITE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 export interface ObservedHttpOptions {
   lookup?: (hostname: string) => Promise<string[]>;
   request?: typeof httpRequest;
+  /** Trusted runner callback after all asynchronous preparation, before a socket
+   * is opened. These exact prepared bytes cannot be changed by the callback. */
+  beforeDispatch?: (request: ObservedHttpDispatch) => void | Promise<void>;
+  onDispatch?: () => void;
+}
+export interface ObservedHttpDispatch {
+  url: string;
+  method: string;
+  address: string;
+  headers: Readonly<Record<string, string>>;
+  body?: string;
 }
 
 function dispatchHeaders(input: Readonly<Record<string, string>>, authenticated: boolean) {
@@ -77,6 +88,7 @@ export async function sendObservedHttp(
   signal: AbortSignal,
   options: ObservedHttpOptions = {},
 ): Promise<HarnessTransportResponse> {
+  request = structuredClone(request);
   const url = publicTarget(request.url);
   if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("Public HTTP(S) host required");
   if (WRITE.has(request.method) && url.protocol !== "https:") throw new Error("Writes require HTTPS");
@@ -97,12 +109,19 @@ export async function sendObservedHttp(
     "accept-encoding": "identity",
     ...(incoming["content-type"] ? { "content-type": incoming["content-type"] } : bodyText ? { "content-type": "application/json" } : {}),
   };
+  await options.beforeDispatch?.(Object.freeze({ url: url.href, method: request.method, address,
+    headers: Object.freeze({ ...headers }), ...(bodyText === undefined ? {} : { body: bodyText }) }));
+  signal.throwIfAborted();
   return await new Promise((resolve, reject) => {
+    options.onDispatch?.();
     const req = (options.request ?? (url.protocol === "https:" ? httpsRequest : httpRequest))(
       url.toString(),
       {
         method: request.method,
         family: 4,
+        // The permit binds this DNS-selected address. A pooled connection could
+        // otherwise reuse a different earlier resolution for the same hostname.
+        agent: false,
         signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
         lookup: (_host, _options, callback) => callback(null, address, 4),
         headers,
@@ -265,19 +284,47 @@ export interface ObservedReadContract {
   execute(inputs: Record<string, HarnessJsonValue>, consume: (stepId: string, body: HarnessJsonValue | undefined) => void, signal: AbortSignal, budget: { maxCalls: number; maxBytes: number }): Promise<{ calls: number; bytes: number }>;
 }
 
+/** Owner-held structural catalog. Listing never fetches a source or renews a session. */
+export async function listObservedReads(binding: ObservedNetworkBinding) {
+  const events = await binding.readEvents?.() ?? [];
+  const reads = executableObservedReads(events).map(row => ({ sourceId: row.toolDigest, contractDigest: row.toolDigest, stepIds: row.definition.steps.map(step => step.id), inputs: row.definition.inputs.map(input => ({ name: input.name, type: input.type, required: input.required })), sessionRequired: false }));
+  const actions = ownedObservedActions(events).filter(row => row.effect === "read").flatMap(row => {
+    const target = row.artifact.actions.find(action => action.id === row.actionId);
+    return target ? [{ sourceId: row.artifactDigest, contractDigest: row.artifactDigest, stepIds: target.steps.map(step => step.id), inputs: target.inputs.map(input => ({ name: input.name, type: input.type, required: input.required })), sessionRequired: row.sessionRequired }] : [];
+  });
+  const items = [...reads, ...actions];
+  return { items: items.slice(0, 64), coverage: items.length > 64 ? "partial" : "complete", requiresAuthorization: true };
+}
+
 /** The database uses the same learned contracts, URL checks and session transport
  * as observed_network_run. Resolving a contract never executes a source request. */
-export async function resolveObservedRead(binding: ObservedNetworkBinding, digest: string, signal: AbortSignal): Promise<ObservedReadContract> {
+export interface ObservedReadRevision {
+  graph: import("@unbrowse/browser-harness/harness-artifact").SiteHarnessArtifact;
+  actionId: string;
+  /** Trusted host authority for these exact authored bytes and fresh inputs. */
+  authorize(input: Record<string, HarnessJsonValue>, signal: AbortSignal): Promise<boolean>;
+  /** Test/private transport override must await the fence at physical dispatch. */
+  send?(request: HarnessTransportRequest, signal: AbortSignal, beforeDispatch: () => Promise<void>): Promise<HarnessTransportResponse>;
+}
+export async function resolveObservedRead(binding: ObservedNetworkBinding, digest: string, signal: AbortSignal, revision?: ObservedReadRevision): Promise<ObservedReadContract> {
+  if (revision) revision = { ...revision, graph: structuredClone(revision.graph) };
   if (!/^sha256:[a-f0-9]{64}$/.test(digest) || !binding.readEvents) throw Error("Owned read contract unavailable");
   signal.throwIfAborted();
   const events = await binding.readEvents();
   const read = executableObservedReads(events).find(row => row.toolDigest === digest);
   const action = ownedObservedActions(events).find(row => row.artifactDigest === digest && row.effect === "read");
   if (!read && !action) throw Error("Owned read contract unavailable");
-  const definition = read ? artifact(read.definition) : action!.artifact;
-  const target = definition.actions.find(row => row.id === (read?.actionId ?? action!.actionId));
+  const source = read ? artifact(read.definition) : action!.artifact;
+  const sourceTarget = source.actions.find(row => row.id === (read?.actionId ?? action!.actionId));
+  if (!sourceTarget) throw Error("Owned read action unavailable");
+  const definition = revision ? (await import("@unbrowse/browser-harness/harness-artifact")).validateSiteHarnessArtifact(structuredClone(revision.graph)) : source;
+  const target = definition.actions.find(row => row.id === (revision?.actionId ?? sourceTarget.id));
+  if (revision && (definition.actions.length !== 1 || definition.sourceCaptureDigest !== source.sourceCaptureDigest ||
+    definition.allowedOrigins.some(origin => !source.allowedOrigins.includes(origin)))) throw Error("Authored request cannot widen source or credential scope");
   if (!target || target.steps.some(step => !["GET", "HEAD"].includes(step.method))) throw Error("Read contract required");
   const origins = [...new Set(target.steps.map(step => step.origin))];
+  if (revision && origins.some(origin => !sourceTarget.steps.some(step => step.origin === origin))) throw Error("Authored request origin outside source");
+  if (revision && binding.send && !revision.send) throw Error("Revised read requires guarded transport");
   for (const origin of origins) if (!await binding.checkArcade?.(new URL(origin).hostname)) throw Error("Source authority unavailable");
   const grant = action?.sessionRequired ? typeof binding.session === "function" ? await binding.session(origins[0]!, signal) : binding.session : undefined;
   if (action?.sessionRequired && (!grant?.cookies.length || !origins.every(origin => coversHost(grant.domains, new URL(origin).hostname)))) throw Error("Source session unavailable");
@@ -290,8 +337,16 @@ export async function resolveObservedRead(binding: ObservedNetworkBinding, diges
       if (binding.redact(JSON.stringify(inputs)) !== JSON.stringify(inputs)) throw Error("Secret in source inputs");
       // A resolver may obtain current vault material, but never implicitly renews
       // or logs it. Re-resolve before dispatch and compare the exact generation.
-      const current = await resolveObservedRead(binding, digest, requestSignal);
+      const current = await resolveObservedRead(binding, digest, requestSignal, revision);
       if (current.generation !== generation) throw Error("Source generation changed");
+      const beforeDispatch = async () => {
+        requestSignal.throwIfAborted();
+        if ((await resolveObservedRead(binding, digest, requestSignal, revision)).generation !== generation) throw Error("Source generation changed");
+        if (revision && !await revision.authorize(structuredClone(inputs), requestSignal)) throw Error("Authored request authority unavailable");
+        if (revision && (await resolveObservedRead(binding, digest, requestSignal, revision)).generation !== generation) throw Error("Source generation changed during authority check");
+        requestSignal.throwIfAborted();
+      };
+      await beforeDispatch();
       let calls = 0, bytes = 0;
       const replaced = new Set<string>();
       const result = await executeHarnessAction({ artifact: definition, actionId: target.id, input: inputs, adapters: {
@@ -299,10 +354,11 @@ export async function resolveObservedRead(binding: ObservedNetworkBinding, diges
         ...(grant ? { session: { resolve: (origin: string) => ({ origin, cookies: [], revision: grant.revision }) } } : {}),
         transport: { send: async request => {
           requestSignal.throwIfAborted(); publicTarget(request.url);
-          if ((await resolveObservedRead(binding, digest, requestSignal)).generation !== generation) throw Error("Source generation changed");
+          if ((await resolveObservedRead(binding, digest, requestSignal, revision)).generation !== generation) throw Error("Source generation changed");
           if (!origins.includes(new URL(request.url).origin) || !["GET", "HEAD"].includes(request.method) || ++calls > budget.maxCalls) throw Error("Source call budget exceeded");
           const dispatched = grant ? sessionRequest(request, grant, origins, replaced) : request;
-          const received = binding.send ? await binding.send(dispatched) : await sendObservedHttp(dispatched, requestSignal);
+          const received = revision?.send ? await revision.send(dispatched, requestSignal, beforeDispatch)
+            : binding.send ? await binding.send(dispatched) : await sendObservedHttp(dispatched, requestSignal, { beforeDispatch });
           requestSignal.throwIfAborted();
           const response = grant ? sessionResponse(received, new URL(request.url), grant, replaced) : received;
           bytes += new TextEncoder().encode(JSON.stringify(response.body ?? null)).length;
@@ -313,7 +369,7 @@ export async function resolveObservedRead(binding: ObservedNetworkBinding, diges
       } });
       requestSignal.throwIfAborted();
       if (result.status !== "completed") throw Error(`Source read did not complete: ${result.code ?? "unknown"}`);
-      if ((await resolveObservedRead(binding, digest, requestSignal)).generation !== generation) throw Error("Source generation changed");
+      if ((await resolveObservedRead(binding, digest, requestSignal, revision)).generation !== generation) throw Error("Source generation changed");
       return { calls, bytes };
     },
   };
@@ -372,7 +428,9 @@ export function createObservedNetworkTools(binding: ObservedNetworkBinding): Nat
         additionalProperties: false,
       },
     },
-    run: (input, context) => Effect.gen(function* () {
+    run: (input, context) => Effect.suspend(() => {
+      let dispatchMayHaveStarted = false;
+      return Effect.gen(function* () {
       const self = yield* Self;
       const log = yield* EventLog;
       if (self.actor !== "aiko" || self.thread !== binding.thread)
@@ -403,8 +461,20 @@ export function createObservedNetworkTools(binding: ObservedNetworkBinding): Nat
         const write = action?.effect === "write";
         const sessionNeeded = action?.sessionRequired === true;
         const identity = write ? `observed:${action!.artifactDigest}:${context.turn}:${context.callId}` : undefined;
-        if (write && events.some(e => e.type === "AikoObservedActionStarted" && e.owner === binding.owner && e.key === identity))
+        const priorAttempt = write && events.find(e => e.type === "AikoObservedActionStarted" && e.owner === binding.owner && e.key === identity);
+        if (priorAttempt) {
+          const prior = typeof priorAttempt.approvalId === "string" ? yield* consent(approvals.get(priorAttempt.approvalId)) : undefined;
+          if (prior) {
+            const stored = prior.prepared.payload as { inputs?: Record<string, HarnessJsonValue> };
+            if (canonicalStringify(stored.inputs ?? {}) !== canonicalStringify(typedInputs) ||
+              typeof args.approvalId === "string" && (args.approvalId !== prior.prepared.id || args.hash !== prior.prepared.hash))
+              throw Error("Invocation already bound to another approved payload");
+            if (prior.state === "settled") return { kind: "observed-network-receipt", status: prior.outcome === "succeeded" ? "completed" : "failed",
+              approvalId: prior.prepared.id, hash: prior.prepared.hash, effect: "write", browser: false,
+              text: "Original durable receipt; no new request was sent. Receipt is not proof the remote business action succeeded." };
+          }
           return { status: "unknown", reason: "Prior write attempt may have completed; inspect the app before retrying" };
+        }
         let grant: UnlockSessionGrant | undefined;
         if (sessionNeeded) {
           const source = binding.session;
@@ -457,16 +527,32 @@ export function createObservedNetworkTools(binding: ObservedNetworkBinding): Nat
           return executeArtifact(action!.artifact, target.id, typedInputs, send, context.signal, sessionAdapter);
         };
         if (write) {
-          const approvalId = `observed-${action!.artifactDigest.slice(7, 23)}-${sha256(JSON.stringify(typedInputs)).slice(7, 23)}`;
+          // A preparation belongs to a native invocation, not to an action forever.
+          // Replay keeps that consent; a later explicit request needs fresh consent.
+          const approvalId = `observed-${sha256(canonicalStringify([binding.owner, binding.thread, context.turn, context.callId])).slice(7)}`;
           if (typeof args.approvalId !== "string" || typeof args.hash !== "string") {
-            const prepared = yield* consent(approvals.prepare({
+            const previous = yield* consent(approvals.get(approvalId));
+            const preparation = {
               id: approvalId,
               operation: "observed_network_run",
               connectionId: grant?.connectionId ?? "unlock-session",
               connectionRevision: grant?.revision ?? "none",
-              expiresAt: Date.now() + 10 * 60_000,
+              expiresAt: previous?.prepared.expiresAt ?? Date.now() + 10 * 60_000,
               payload: { artifactDigest: action!.artifactDigest, merkle: action!.importDigest, inputs: typedInputs as never },
-            }));
+            };
+            const matches = (row: NonNullable<typeof previous>) => row.prepared.operation === preparation.operation &&
+              row.prepared.connectionId === preparation.connectionId && row.prepared.connectionRevision === preparation.connectionRevision &&
+              canonicalStringify(row.prepared.payload) === canonicalStringify(preparation.payload);
+            if (previous && !matches(previous)) throw Error("Invocation already bound to another action");
+            // Expired and consumed preparations still replay their original identity.
+            // Concurrent prepares select the journal's winner, never a new expiry.
+            const prepared = previous ?? (yield* consent(approvals.prepare(preparation)).pipe(Effect.catch(error =>
+              consent(approvals.get(approvalId)).pipe(Effect.flatMap(row => row && matches(row) ? Effect.succeed(row) : Effect.fail(error))))));
+            if (!["pending", "approved"].includes(prepared.state)) return {
+              status: ["unknown", "dispatched"].includes(prepared.state) ? "unknown" : prepared.state === "settled" ? (prepared.outcome === "succeeded" ? "completed" : "failed") : "rejected",
+              approvalId: prepared.prepared.id, hash: prepared.prepared.hash, approvalState: prepared.state, effect: "write", browser: false,
+              text: "This is the original consent record, not a new execution. It cannot be reused. Inspect existing receipts before preparing a new owner intent.",
+            };
             return {
               status: "authorization_required",
               approvalId: prepared.prepared.id,
@@ -481,7 +567,6 @@ export function createObservedNetworkTools(binding: ObservedNetworkBinding): Nat
             throw new Error("Approval not found");
           const stored = current.prepared.payload as { artifactDigest?:string;merkle?:string;inputs?: Record<string, HarnessJsonValue> };
           if(stored.artifactDigest!==action!.artifactDigest||stored.merkle!==action!.importDigest||canonicalStringify(stored.inputs??{})!==canonicalStringify(typedInputs)||current.prepared.connectionId!==(grant?.connectionId??"unlock-session")||current.prepared.connectionRevision!==(grant?.revision??"none"))throw Error("Approval does not match this exact action, inputs and current connection");
-          yield* log.append([{ type: "AikoObservedActionStarted", owner: binding.owner, key: identity, artifactDigest: action!.artifactDigest, at: Date.now() }]);
           let writeTrace: readonly HarnessTraceEvent[] = [];
           const settled = yield* consent(approvals.dispatch({
             id: current.prepared.id,
@@ -490,9 +575,23 @@ export function createObservedNetworkTools(binding: ObservedNetworkBinding): Nat
             connectionId: current.prepared.connectionId,
             connectionRevision: current.prepared.connectionRevision,
           }, () => Effect.tryPromise(async () => {
+            dispatchMayHaveStarted = true;
+            const token = crypto.randomUUID();
+            await Effect.runPromise(log.append([{ type: "AikoObservedActionStarted", owner: binding.owner, key: identity, token, approvalId: current.prepared.id, hash: current.prepared.hash, artifactDigest: action!.artifactDigest, at: Date.now() }]));
+            const winner = (await Effect.runPromise(log.read)).find(e => e.type === "AikoObservedActionStarted" && e.owner === binding.owner && e.key === identity);
+            if (winner?.token !== token) return "unknown" as const;
+            context.signal.throwIfAborted();
             const executed = await executeArtifact(action!.artifact, (action!.artifact.actions.find(a => a.id === action!.actionId) ?? action!.artifact.actions[0])!.id, stored.inputs ?? {}, send, context.signal, sessionAdapter);
             writeTrace = executed.result.trace;
-            return executed.result.status === "completed" ? "succeeded" as const : "failed" as const;
+            // The harness converts transport exceptions into failed results. A
+            // dispatched write without a response still has unknown effects.
+            const ambiguous = writeTrace.some(sent => sent.type === "request_sent" &&
+              !["GET", "HEAD", "OPTIONS"].includes(sent.method) &&
+              (executed.result.status !== "completed" ||
+                !writeTrace.some(received => received.type === "response_received" && received.requestIndex === sent.requestIndex)));
+            // An error response (including 5xx) or a later failed DAG step cannot
+            // prove that an earlier write had no effect. Keep that attempt consumed.
+            return ambiguous ? "unknown" as const : executed.result.status === "completed" ? "succeeded" as const : "failed" as const;
           })));
           const writeCounts = recomputeCounts(writeTrace);
           if (writeCounts.sessions || writeCounts.cookieEvents)
@@ -546,8 +645,13 @@ export function createObservedNetworkTools(binding: ObservedNetworkBinding): Nat
             : "Learned DAG did not complete. Do not treat this as a successful action.",
         };
       } catch {
-        return { status: "rejected", reason: "Learned Merkle DAG could not be authorized or executed; passwords were not used and the browser was not started" };
+        return dispatchMayHaveStarted
+          ? { status: "unknown", reason: "Write outcome is uncertain; inspect the app and do not retry automatically" }
+          : { status: "rejected", reason: "Learned Merkle DAG could not be authorized or executed; passwords were not used and the browser was not started" };
       }
-    }).pipe(Effect.catchCause(() => Effect.succeed({ status: "rejected" as const, reason: "Approval flow failed; nothing was dispatched" }))),
+    }).pipe(Effect.catchCause(() => Effect.succeed(dispatchMayHaveStarted
+      ? { status: "unknown" as const, reason: "Write outcome is uncertain; inspect the app and do not retry automatically" }
+      : { status: "rejected" as const, reason: "Approval flow failed before write dispatch" })));
+    }),
   }];
 }

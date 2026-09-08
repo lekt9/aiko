@@ -1,0 +1,53 @@
+/* Shared shell navigation; no private-login or database layout overrides. */
+.approval-navigation {
+  padding: 12px 0;
+  overflow-wrap: anywhere;
+}
+.approval-navigation > details > summary {
+  min-height: 48px;
+  padding: 12px;
+  color: var(--accent);
+  font-weight: 600;
+  border-radius: 12px;
+  background: var(--surface);
+}
+.approval-navigation > p {
+  padding: 4px 12px;
+  font-size: 0.875rem;
+}
+.approval-navigation > details > p {
+  margin-top: 12px;
+}
+.approval-navigation pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 35vh;
+  overflow: auto;
+}
+.approval-navigation .secretary-work-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+}
+.approval-navigation .secretary-work-panel button {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--app-line);
+  border-radius: 12px;
+  background: var(--app-field);
+  color: var(--ink);
+  font: inherit;
+}
+.mini-app-screen > .approval-navigation {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 12px 20px 0;
+}
+.mini-app-back {
+  min-height: 44px;
+  min-width: 44px;
+}
+.secretary-work :where(select, textarea):focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}

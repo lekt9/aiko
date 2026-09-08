@@ -1,0 +1,342 @@
+{
+  "status": "independent-literal-C05-C08-runtime-proof-proposed-not-registered",
+  "fixture": "scripts/fixtures/self-composing-provider-recovery.ts",
+  "commands": {
+    "C05": "TMPDIR=/tmp bun scripts/fixtures/self-composing-provider-recovery.ts <fresh-private-directory>",
+    "C08": "TMPDIR=/tmp bun scripts/fixtures/self-composing-provider-recovery.ts <fresh-private-directory> lifecycle",
+    "C08Boundaries": "TMPDIR=/tmp bun scripts/fixtures/self-composing-provider-recovery.ts <fresh-private-directory> boundaries"
+  },
+  "contracts": {
+    "C05": "c53a6598 satisfied on unchanged rerun; fresh final-branch direct rerun also passed",
+    "boundedC08": "d286f5d7 satisfied",
+    "creationPauseUpgrade": "d4b6345d satisfied on fresh round41 verification"
+  },
+  "C05": {
+    "evidenceDirectory": "/tmp/provider-c05-final-branch",
+    "observed": {
+      "observations": [
+        {
+          "host": "bun",
+          "missing": false,
+          "cutProcessExit": 78,
+          "physicalPolls": 2,
+          "recoveryNoGet": true,
+          "cursorAdvances": 1,
+          "reopenQuiet": true,
+          "unchangedQuiet": true
+        },
+        {
+          "host": "bun",
+          "missing": true,
+          "cutProcessExit": 78,
+          "physicalPolls": 1,
+          "recoveryNoGet": true,
+          "cursorAdvances": 0,
+          "reopenQuiet": true,
+          "unchangedQuiet": false,
+          "missingStatus": "invalid_batch"
+        },
+        {
+          "host": "worker",
+          "missing": false,
+          "cutProcessExit": 78,
+          "physicalPolls": 2,
+          "recoveryNoGet": true,
+          "cursorAdvances": 1,
+          "reopenQuiet": true,
+          "unchangedQuiet": true
+        },
+        {
+          "host": "worker",
+          "missing": true,
+          "cutProcessExit": 78,
+          "physicalPolls": 1,
+          "recoveryNoGet": true,
+          "cursorAdvances": 0,
+          "reopenQuiet": true,
+          "unchangedQuiet": false,
+          "missingStatus": "invalid_batch"
+        }
+      ],
+      "remaining": [
+        "C08 renewal/retirement process cuts not exercised"
+      ],
+      "wholeC08": false
+    }
+  },
+  "C08": {
+    "evidenceDirectory": "/tmp/provider-c08-contract-MQ7gTf",
+    "observed": {
+      "observations": [
+        {
+          "host": "bun",
+          "renewalProcessCut": true,
+          "retirementProcessCut": true,
+          "originalKeyReconciliation": true,
+          "subscriptions": 1,
+          "renewals": 1,
+          "removals": 1,
+          "reopenQuiet": true
+        },
+        {
+          "host": "worker",
+          "renewalProcessCut": true,
+          "retirementProcessCut": true,
+          "originalKeyReconciliation": true,
+          "subscriptions": 1,
+          "renewals": 1,
+          "removals": 1,
+          "reopenQuiet": true
+        }
+      ],
+      "remaining": [
+        "C08 creation/pause/resume/upgrade cuts not exercised"
+      ],
+      "wholeC08": false
+    }
+  },
+  "boundaries": [
+    "Actual production Bun createService and bundled Worker default entry; no application test imports",
+    "Provider HTTP process and SQLite physical counters survive separate host process exits",
+    "C05 exits only after actual committed PollFetched; missing case deletes exact private blob and checks invalid_batch/no cursor/no new GET",
+    "C08 exits after signed provider HTTP mutation response, before sandbox return; original-key signed reconciliation validates actual retained mutation",
+    "No artificial Checked events, source acceptance pins or real provider messages",
+    "No source freeze attested; these are bounded fresh observations"
+  ],
+  "remaining": [
+    "Root/reviewer current-source binding and coordinated registration of S24.C05 and S24.C08",
+    "Remaining S24 children and full parent/goal acceptance are not discharged by this verifier"
+  ],
+  "C08Boundaries": {
+    "evidenceDirectories": [
+      "/tmp/provider-boundaries-early",
+      "/tmp/provider-boundaries-contract-YCTOUI",
+      "/tmp/provider-boundaries-worker-diagnostic"
+    ],
+    "passedBeforeUpgrade": [
+      "Both production hosts: creation HTTP response-loss cut, one physical subscription, unknown receipt, signed original-key reconciliation",
+      "Both production hosts: committed pause/resume receipt process exits and disk recovery without repeated provider mutations",
+      "Current Worker run additionally rejects signed paused ingress with 409 and accepts resumed ingress with 202",
+      "Initial signed early webhook accepted 202 before subscription acknowledgement; native known-handler satisfied and correlated accepted_by_provider output",
+      "Existing renewal/removal assertions unchanged and passed before upgrade"
+    ],
+    "limits": [
+      "Not exhaustive every-instruction lifecycle fault injection",
+      "Version proof covers retained early inputs pinned to their admitted artifact and stale generation denial; not arbitrary backlog migration",
+      "Controlled signed-json-v1 provider only; no real sends or deployment"
+    ],
+    "historicalFailures": [
+      {
+        "host": "bun",
+        "seam": "apps/agent/src/server.ts createService awaits host.recover() before returning fetch handler",
+        "reproduction": "Generation-2 BindingIntent retained process cut; recovery issues subscribe, controlled provider persists mutation then awaits its signed early webhook",
+        "timestamps": {
+          "ingressWaitingForService": 1788855748873,
+          "subscriptionUnknown": 1788855758873,
+          "serviceReady": 1788855759334
+        },
+        "evidence": "/tmp/provider-boundaries-contract-YCTOUI/bun-retained/recover-upgrade-startup.jsonl",
+        "result": "Second physical subscription exists; early input unavailable while constructor waits; subscription unknown. Assertion remains failing."
+      },
+      {
+        "host": "worker",
+        "seam": "Restarted production model dispatch does not reach configured AIKO_MODEL_FETCH; exact runtime cause not repaired or established",
+        "evidence": "/tmp/provider-boundaries-worker-diagnostic/worker-retained/upgrade-not-reached.json",
+        "result": "Upgrade message retained; ModelCalled then TurnFailed Connection error, no generation-2 intent; controlled model counter remains 2 total from setup."
+      }
+    ],
+    "resolution": {
+      "bun": "createService retains one native recovery promise; ingress available during recovery, ordinary admission waits, readiness false until recovered, shutdown awaits recovery",
+      "worker": "Fixture process-local dispatched flag reissued setup after restart. Controlled model now derives continuation and stable call identity from actual wire history. No Worker runtime fix."
+    },
+    "freshEvidenceDirectory": "/tmp/provider-boundaries-contract-g7Iqzy",
+    "freshObserved": {
+      "observations": [
+        {
+          "host": "worker",
+          "creationPauseResumeCuts": true,
+          "earlyIngressUpgradeFence": true,
+          "renewalProcessCut": true,
+          "retirementProcessCut": true,
+          "originalKeyReconciliation": true,
+          "subscriptions": 2,
+          "renewals": 1,
+          "removals": 1,
+          "reopenQuiet": true
+        },
+        {
+          "host": "bun",
+          "creationPauseResumeCuts": true,
+          "earlyIngressUpgradeFence": true,
+          "renewalProcessCut": true,
+          "retirementProcessCut": true,
+          "originalKeyReconciliation": true,
+          "subscriptions": 2,
+          "renewals": 1,
+          "removals": 1,
+          "reopenQuiet": true
+        }
+      ],
+      "remaining": [
+        "Not an exhaustive instruction-point lifecycle proof; no full S24 acceptance"
+      ],
+      "wholeC08": false
+    }
+  },
+  "round41Checks": {
+    "C05": "Four production Bun/Worker retained/missing cases passed /tmp/provider-round41-c05/observed.json",
+    "production": "12 pass, 84 assertions /tmp/provider-round41-production-final.log",
+    "extraEvidence": "Both generation-2 OutputSettled accepted_by_provider; recover-upgrade and stale-upgrade model/job/code counters identical",
+    "bunTypes": "Blocked by entity-memory.test.ts:319 MemoryReceipt overload and SDK missing DatabaseMappingResult export",
+    "workerTypesLog": "/tmp/provider-round41-worker-types-final.log",
+    "workerTypes": "Passed (exit 0), /tmp/provider-round41-worker-types-final.log"
+  },
+  "shutdownRecovery": {
+    "contract": "062d6065 satisfied; final direct rerun strengthens ingress assertion to exact 405",
+    "test": "apps/agent/test/startup-recovery.test.ts",
+    "behavior": "Recovery and native drive finish, then native host closes, then all dependency disposers settle, then databases and lock close even if disposal fails",
+    "evidence": "/tmp/startup-exact-final.log",
+    "providerRegression": "/tmp/provider-shutdown-final/observed.json",
+    "types": "Bun typecheck exit 0 /tmp/startup-types3.log",
+    "limits": "Failed-turn recovery is tested; catastrophic host/storage recovery rejection is not fault-injected. Valid signed early ingress remains covered by independent production-host provider fixture."
+  },
+  "directHostRecovery": {
+    "api": "service.ready: Promise<void> resolves after the single native recovery pass, rejects with its failure. A retained TurnFailed is a recovered outcome, not a recovery infrastructure failure.",
+    "usage": "HTTP hosts attach service.fetch before await service.ready. Trusted direct callers await service.ready before host.drive/read. main.ts attaches ingress, awaits ready, then starts its poller.",
+    "tests": "Both reported background restart cases pass unchanged; background/startup/production suite 47 pass, 401 assertions",
+    "contract": "de3f9f14",
+    "types": "Unrelated secretary-work.test.ts:779 close on never blocks current Bun typecheck",
+    "providerEvidence": "/tmp/provider-ready-barrier/observed.json"
+  },
+  "literalCriterionProposal": {
+    "status": "S24.C05-and-S24.C08-ready-for-coordinated-registration",
+    "contract": "96118475 satisfied",
+    "fixture": "scripts/fixtures/self-composing-provider-recovery.ts",
+    "evidenceDirectory": "/tmp/provider-literal-contract-UdFr3Q",
+    "criteria": {
+      "S24.C05": {
+        "literal": "Poll-only source advances cursor only after batch accepted/rejected custody; crash restores cursor and unchanged poll makes no alert",
+        "assertions": [
+          "Committed PollFetched process exit before admission, real private batch retained",
+          "Accepted private custody and schema_invalid rejection both precede CursorAdvanced",
+          "Disk restart restores cursor with no additional provider GET; missing custody retains invalid_batch with no cursor advance",
+          "Unchanged poll retains same cursor value, no additional input disposition/output/reply"
+        ]
+      },
+      "S24.C08": {
+        "literal": "Restart each creation/renewal/pause/resume/upgrade/retirement handoff; no duplicate fixture subscriptions, old generation fenced, queued decode version pinned, cleanup reconciled",
+        "handoffs": {
+          "creation": "Remote subscribe persisted and early signed input queued; exit before transport acknowledgement; restart unknown then signed reconciliation of original key",
+          "renewal": "Remote renewal response before acknowledgement; restart unknown then original renewal-key reconciliation",
+          "pause": "Committed paused receipt before API acknowledgement; restart rejects signed ingress 409",
+          "resume": "Committed active receipt before API acknowledgement; restart accepts signed ingress 202 without subscribing again",
+          "upgrade": "Generation-2 BindingIntent committed before bridge/subscription; restart reconstructs bridge and subscribes once; old signed generation denied 403",
+          "retirement": "Remote removal response before acknowledgement; restart unknown then original removal-key reconciliation; remote subscription table empty before next generation"
+        },
+        "versionAssertions": [
+          "Pre-cut queued input has no disposition or checked decode",
+          "Post-restart checked decode operation identity includes owner/channel/generation/artifact and observation ID",
+          "Checked harness and contract digests equal retained input pins; accepted input retains same artifact",
+          "Every received generation has a satisfied version-matching decode; generation-2 output accepted_by_provider; subsequent restart repeats no model/job/code/provider operations"
+        ]
+      }
+    },
+    "registrationBoundary": "Both children are proposed only after combined contract succeeds. Reviewer must bind current source and coordinate registration; this proposal edits no shared acceptance inputs.",
+    "remainingParentGaps": "Other S24 children C01-C04, C06-C07 and C09-C26 are not attested by this verifier; parent/full-goal acceptance remains open.",
+    "scope": "Production Bun and Worker native hosts; controlled loopback signed-json-v1 provider and isolated sandbox; no application test imports, fabricated Checked, provider writes outside fixture, or changed assertions/timeouts.",
+    "observed": {
+      "c05": {
+        "observations": [
+          {
+            "host": "bun",
+            "missing": false,
+            "cutProcessExit": 78,
+            "physicalPolls": 2,
+            "recoveryNoGet": true,
+            "cursorAdvances": 1,
+            "reopenQuiet": true,
+            "unchangedQuiet": true
+          },
+          {
+            "host": "bun",
+            "missing": true,
+            "cutProcessExit": 78,
+            "physicalPolls": 1,
+            "recoveryNoGet": true,
+            "cursorAdvances": 0,
+            "reopenQuiet": true,
+            "unchangedQuiet": false,
+            "missingStatus": "invalid_batch"
+          },
+          {
+            "host": "worker",
+            "missing": false,
+            "cutProcessExit": 78,
+            "physicalPolls": 2,
+            "recoveryNoGet": true,
+            "cursorAdvances": 1,
+            "reopenQuiet": true,
+            "unchangedQuiet": true
+          },
+          {
+            "host": "worker",
+            "missing": true,
+            "cutProcessExit": 78,
+            "physicalPolls": 1,
+            "recoveryNoGet": true,
+            "cursorAdvances": 0,
+            "reopenQuiet": true,
+            "unchangedQuiet": false,
+            "missingStatus": "invalid_batch"
+          }
+        ],
+        "remaining": [
+          "C08 renewal/retirement process cuts not exercised"
+        ],
+        "wholeC05": true,
+        "wholeC08": false,
+        "registration": "proposed-runtime-proof-only"
+      },
+      "c08": {
+        "observations": [
+          {
+            "host": "worker",
+            "creationPauseResumeCuts": true,
+            "earlyIngressUpgradeFence": true,
+            "renewalProcessCut": true,
+            "retirementProcessCut": true,
+            "originalKeyReconciliation": true,
+            "subscriptions": 2,
+            "renewals": 1,
+            "removals": 1,
+            "reopenQuiet": true
+          },
+          {
+            "host": "bun",
+            "creationPauseResumeCuts": true,
+            "earlyIngressUpgradeFence": true,
+            "renewalProcessCut": true,
+            "retirementProcessCut": true,
+            "originalKeyReconciliation": true,
+            "subscriptions": 2,
+            "renewals": 1,
+            "removals": 1,
+            "reopenQuiet": true
+          }
+        ],
+        "remaining": [
+          "Coordinated registration pending; other S24 children are outside this proof"
+        ],
+        "wholeC05": false,
+        "wholeC08": true,
+        "registration": "proposed-runtime-proof-only"
+      }
+    },
+    "verifierDigestObserved": "9c0e88535cefdd46c0c0199f6362456caf7893cc9e2b4e841e4b07d733e0aed2",
+    "checks": {
+      "bunTypes": "pass exit 0 /tmp/provider-literal-types.log",
+      "workerTypes": "pass exit 0 /tmp/provider-literal-worker-types.log",
+      "startup": "3 pass 37 assertions /tmp/provider-literal-startup.log"
+    }
+  }
+}

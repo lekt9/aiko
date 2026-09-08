@@ -1,4 +1,5 @@
-import { eventEpochOf } from "tardie/code/execution/turns";
+import { eventEpochOf, turnEpochOf } from "tardie/code/execution/turns";
+import type { Event } from "tardie/core/log/event";
 import { Effect, Layer } from "effect";
 import { Infer, type InferRequest } from "tardie";
 import { Self } from "tardie/core/runtime";
@@ -9,6 +10,15 @@ import type { DatabaseBinding } from "./database-component.ts";
 
 export const RESPONSE_INSTRUCTIONS =
   "Every foreground user request must end with a response tool. Use respond(text) for the final answer; the host routes it to the originating chat, API or console using the existing persona and durable outbox. There is no destination argument. A final send_message, telegram_send, telegram_voice or telegram_screenshot also satisfies this for Telegram. Progress, reactions and connection recommendations are not final answers. After the final response tool, do no more work. Queued means accepted for delivery, not confirmed delivered. Never resend an unknown delivery. Report actual blockers without claiming unfinished work succeeded.";
+
+/** Composition can outlive inference; report its durable intent until the reply exists. */
+export function preparingReplies(log: readonly Event[]): string[] {
+  const messages = new Set(log.filter(e => e.type === "MessageReceived").map(e => String(e.id)));
+  const prepared = new Set(log.filter(e => e.type === "AikoReplyPrepared").map(e => `${e.turn}:${Number(e.epoch ?? 0)}`));
+  return [...new Set(log.filter(e => e.type === "AikoVoiceStarted" && messages.has(String(e.turn)) &&
+    Number(e.epoch ?? 0) === turnEpochOf(log, String(e.turn)) &&
+    !prepared.has(`${e.turn}:${Number(e.epoch ?? 0)}`)).map(e => String(e.turn)))];
+}
 
 /** A durable response intent activates the existing persona/outbox, never a second sender. */
 export function responseTool(

@@ -27,6 +27,8 @@ import { redactor } from "../src/security.ts";
 import type { Observation, RecallResult } from "entity-learn";
 import type { ReadReceipt } from "../src/capabilities.ts";
 
+import { memoryTestAuthority } from "./memory-authority-fixture.ts";
+
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const close of cleanup.splice(0).reverse()) await close();
@@ -34,11 +36,14 @@ afterEach(async () => {
 async function fixture() {
   const stateDir = await mkdtemp("/tmp/aiko-entity-test-");
   cleanup.push(() => rm(stateDir, { recursive: true, force: true }));
+  const authority = memoryTestAuthority(stateDir);
+  cleanup.push(() => authority.close());
   let reads = 0;
   const binding = (owner = "123", thread = "thread-one"): MemoryBinding => ({
     stateDir,
     owner,
     thread,
+    ...authority.binding(owner),
     redact: redactor(["fixture-private-key-123456"]),
     readPage: async () => {
       reads++;
@@ -91,7 +96,7 @@ describe("real entity-learn engine in native Tardie tools", () => {
     const component = tool(bindings);
     expect(
       component.machine.output(component.machine.initial()).view.tools.length,
-    ).toBe(13);
+    ).toBe(14);
     expect(existsSync(join(f.stateDir, "memory"))).toBe(false);
     expect(f.reads).toBe(0);
     const names = bindings.map((t) => t.spec.name);
@@ -290,6 +295,70 @@ describe("real entity-learn engine in native Tardie tools", () => {
     expect((await f.run("memory_remember", note, "write1")).result).toEqual({
       error: { code: "forgotten" },
     });
+  });
+
+  test("native selective erasure uses scan preconditions and replays its receipt without deleting unrelated memory", async () => {
+    const f = await fixture();
+    const source = saved(await f.run("memory_remember", { ...note, payload: "ERASE_NATIVE_PAYLOAD" }, "erase-source"));
+    const dependent = saved(await f.run("memory_remember", { subject: "derived/erase", title: "Derived erasure marker",
+      type: "summary", payload: "ERASE_NATIVE_PAYLOAD", supports: [source.id] }, "erase-dependent"));
+    const kept = saved(await f.run("memory_remember", { ...note, subject: "keep/unrelated", payload: "Keep this" }, "erase-keep"));
+    const linked = saved(await f.run("memory_remember", { subject: "keep/linked", title: "Independent fact with a navigation link",
+      type: "fact", payload: "Independent linked fact", links: [{ subject: source.subject, relation: "see-also" }] }, "erase-linked"));
+    const scan = await f.run("memory_scan", {}, "erase-scan");
+    const request = { subject: source.subject, expected: source.id, expectedScopeVersion: (scan.result as any).sourceVersion };
+    const erased = await f.run("memory_erase", request, "erase-native");
+    expect(erased.outcome).toBe("ok");
+    expect(erased.result).toMatchObject({ erased: true, retired: false, subjects: 2, observations: 2 });
+    expect((erased.result as any).observationIds).toEqual([source.id, dependent.id].sort());
+    const replacement = (erased.result as unknown as { replacements: { previous: string; observation: string }[] }).replacements.find(r => r.previous === linked.id);
+    expect(replacement).toBeDefined();
+    expect(replacement!.observation).not.toBe(linked.id);
+    expect(erased.text).toContain("require separate cleanup");
+    const memory = openMemory(f.binding());
+    try {
+      expect(memory.get(source.id)).toBeNull();
+      expect(memory.get(dependent.id)).toBeNull();
+      expect(memory.get(kept.id)?.state).toBe("current");
+      expect(memory.get(linked.id)).toBeNull();
+      expect(memory.get(replacement!.observation)?.observation.payload).toBe("Independent linked fact");
+      expect(memory.get(replacement!.observation)?.observation.links).toEqual([]);
+      expect(JSON.stringify(memory.exportArchive())).not.toContain("ERASE_NATIVE_PAYLOAD");
+      memory.rebuild();
+      expect(memory.get(source.id)).toBeNull();
+      expect(memory.get(replacement!.observation)?.observation.payload).toBe("Independent linked fact");
+    } finally { memory.close(); }
+    // Reopen through ordinary tools, then replay the original erasure after another write.
+    await f.run("memory_remember", { ...note, subject: "keep/later" }, "erase-later");
+    const replay = await f.run<MemoryReceipt>("memory_erase", request, "erase-native");
+    expect(replay).toEqual(erased);
+    expect((await f.run("memory_erase", { ...request, subject: kept.subject }, "erase-native")).outcome).toBe("error");
+    expect((await f.run("memory_remember", { ...note, payload: "ERASE_NATIVE_PAYLOAD" }, "erase-source")).outcome).toBe("error");
+    expect((await f.run("memory_get", { observation: kept.id }, "erase-kept-read")).result).not.toBeNull();
+    expect(f.reads).toBe(0);
+  });
+
+  test("native erasure rejects changed scope, wrong head, missing version and foreign targets", async () => {
+    const f = await fixture();
+    const source = saved(await f.run("memory_remember", note, "erase-race-source"));
+    const scan = await f.run("memory_scan", {}, "erase-race-scan");
+    const request = { subject: source.subject, expected: source.id, expectedScopeVersion: (scan.result as any).sourceVersion };
+    const kept = saved(await f.run("memory_remember", { ...note, subject: "unrelated/race" }, "erase-race-write"));
+    expect((await f.run("memory_erase", request, "erase-race")).result).toEqual({ error: { code: "scope_conflict" } });
+    const fresh = await f.run("memory_scan", {}, "erase-race-rescan");
+    const next = { ...request, expectedScopeVersion: (fresh.result as any).sourceVersion };
+    expect((await f.run("memory_erase", { ...next, expected: kept.id }, "erase-wrong-head")).result).toEqual({ error: { code: "head_conflict" } });
+    expect((await f.run("memory_erase", { subject: source.subject, expected: source.id }, "erase-no-version")).outcome).toBe("error");
+    expect((await f.run("memory_erase", next, "erase-foreign", f.binding("456"))).outcome).toBe("error");
+    const cancelled = new AbortController(); cancelled.abort();
+    expect((await f.run("memory_erase", next, "erase-cancelled", f.binding(), cancelled.signal)).outcome).toBe("error");
+    const memory = openMemory(f.binding());
+    try {
+      expect(memory.get(source.id)?.state).toBe("current");
+      expect(memory.get(kept.id)?.state).toBe("current");
+      expect(memory.journal.scopeVersion(memory.scope)).toBe(next.expectedScopeVersion);
+    } finally { memory.close(); }
+    expect(memoryTools(f.binding()).find(t => t.spec.name === "memory_erase")!.speculativeRead).toBe(false);
   });
 
   test("recall reports actual byte-limit coverage and never executes a source", async () => {

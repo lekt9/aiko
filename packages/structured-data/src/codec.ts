@@ -1,4 +1,21 @@
-import { DataError, type Column, type Json, type Expression, type Binding } from "./types.js";
+import { DataError, type Column, type Json, type Expression, type Binding, type ViewDefinition } from "./types.js";
+
+/** Presentation fields must come from the authorized query output, including aggregate aliases. */
+export function validateViewPresentation(view: ViewDefinition, columns: readonly Column[]): void {
+  if (!["table", "list", "board", "calendar", "chart"].includes(view.layout)) throw new DataError("invalid", "Unknown view layout");
+  const field = (key: "titleField" | "groupField" | "dateField" | "valueField", types?: readonly string[]) => {
+    const id = view[key];
+    if (id === undefined) return;
+    const column = columns.find(column => column.id === id);
+    if (!column || types && !types.includes(column.type)) throw new DataError("invalid", `View ${key} must name a compatible selected field`);
+  };
+  field("titleField");
+  field("groupField", ["text", "enum", "boolean", "integer", "decimal", "timestamp"]);
+  field("dateField", ["timestamp"]);
+  field("valueField", ["integer", "decimal"]);
+  const required = view.layout === "board" ? "groupField" : view.layout === "calendar" ? "dateField" : view.layout === "chart" ? "valueField" : undefined;
+  if (required && view[required] === undefined) throw new DataError("invalid", `The ${view.layout} view requires ${required}`);
+}
 
 export function canonical(value: unknown, depth = 0): string {
   if (depth > 32) throw new DataError("limit", "JSON depth exceeds 32");
@@ -20,6 +37,33 @@ export function canonical(value: unknown, depth = 0): string {
   throw new DataError("invalid", "Expected finite plain JSON");
 }
 export function clone<T>(value: T): T { return JSON.parse(canonical(value)) as T; }
+/** RFC 6901 selector. Missing paths stay distinct from explicit JSON null. */
+export function selectJsonPointer(body: unknown, pointer: string): Json | undefined {
+  if (typeof pointer !== "string" || pointer.length > 2048 || pointer !== "" && !pointer.startsWith("/") || /~(?![01])/u.test(pointer)) throw new DataError("invalid", "Invalid response selector");
+  let value = body;
+  for (const part of pointer === "" ? [] : pointer.slice(1).split("/").map(part => part.replace(/~1/g, "/").replace(/~0/g, "~"))) {
+    if (value === null || typeof value !== "object" || !Object.hasOwn(value, part) || Array.isArray(value) && !/^(0|[1-9][0-9]*)$/.test(part)) return undefined;
+    value = (value as Record<string, Json>)[part];
+  }
+  return value === undefined ? undefined : clone(value) as Json;
+}
+/** Update an explicitly mapped payload path; arrays require an existing index. */
+export function setJsonPointer(body: Json, pointer: string, value: Json): Json {
+  selectJsonPointer(undefined, pointer);
+  if (pointer === "") return clone(value);
+  const parts = pointer.slice(1).split("/").map(part => part.replace(/~1/g, "/").replace(/~0/g, "~"));
+  if (parts.some(part => ["__proto__", "prototype", "constructor"].includes(part))) throw new DataError("invalid", "Reserved mapping path");
+  const result = clone(body); let current: Json = result;
+  for (let i = 0; i < parts.length; i++) {
+    if (current === null || typeof current !== "object") throw new DataError("invalid", "Mapping path crosses a scalar value");
+    const part = parts[i]!;
+    if (Array.isArray(current) && (!/^(0|[1-9][0-9]*)$/.test(part) || Number(part) >= current.length)) throw new DataError("invalid", "Mapping requires an existing array index");
+    const object = current as Record<string, Json>;
+    if (i === parts.length - 1) object[part] = clone(value);
+    else { if (!Object.hasOwn(object, part)) object[part] = {}; current = object[part]!; }
+  }
+  return result;
+}
 export function identifier(value: unknown, name = "ID"): asserts value is string {
   if (typeof value !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,159}$/.test(value) || ["__proto__", "constructor", "prototype"].includes(value)) throw new DataError("invalid", `Invalid ${name}`);
 }
@@ -125,6 +169,14 @@ export function validateColumns(columns: Column[]): Column[] {
     }
     if (c.binding?.kind === "request" || c.binding?.kind === "entity") {
       if (!["reference-only", "materialized", "snapshot"].includes(c.binding.retention)) throw new DataError("invalid", "Retention policy required");
+    }
+    if (c.binding?.kind === "entity") {
+      const b = c.binding;
+      if (b.subject !== undefined) label(b.subject);
+      if (b.subjectField !== undefined) identifier(b.subjectField);
+      if (b.subject !== undefined && b.subjectField !== undefined) throw new DataError("invalid", "Choose a fixed subject or a subject field");
+      if (b.observationId !== undefined && !/^obs_[a-f0-9]{64}$/.test(b.observationId)) throw new DataError("invalid", "Invalid entity observation reference");
+      selectJsonPointer(undefined, b.path);
     }
   }
   const visiting = new Set<string>(), done = new Set<string>();

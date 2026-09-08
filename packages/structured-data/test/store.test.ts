@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { StructuredStore, decimalMath, type Command, type Column, type Storage, type StoreOptions } from "../src";
+import { StructuredStore, decimalMath, setJsonPointer, type Command, type Column, type Storage, type StoreOptions } from "../src";
 
 const open: Database[] = [], dirs: string[] = [];
 afterEach(() => { for (const db of open.splice(0)) db.close(); for (const path of dirs.splice(0)) rmSync(path, { recursive: true, force: true }); });
@@ -25,6 +25,50 @@ function seed(store: StructuredStore, extra: Column[] = []) {
   ] } }, ctx);
   store.execute("project-rows", { kind: "rows.upsert", tableId: "projects", rows: [{ id: "p1", expectedRevision: 0, values: { name: "Website", company: "acme", cost: "0.10" } }, { id: "p2", expectedRevision: 0, values: { name: "App", company: "acme", cost: "0.20" } }, { id: "p3", expectedRevision: 0, values: { name: "Research", company: null, cost: "9007199254740993" } }] }, ctx);
 }
+
+test("row mutation commits recheck access to every changed field and deleted record", () => {
+  let denied: "" | "field" | "row" = "";
+  const { store } = fixture(":memory:", "owner", { canRead: (table, field, row) => table !== "projects" || !(denied === "field" && field === "cost" || denied === "row" && row === "p1") });
+  seed(store); denied = "field";
+  expect(() => store.execute("hidden-edit", { kind: "rows.upsert", tableId: "projects", rows: [{ id: "p1", expectedRevision: 1, values: { cost: "12" } }] }, ctx)).toThrow("unavailable under current access");
+  expect(() => store.execute("hidden-override", { kind: "rows.upsert", tableId: "projects", rows: [{ id: "p1", expectedRevision: 1, values: {}, overrides: { cost: "12" } }] }, ctx)).toThrow("unavailable under current access");
+  expect(() => store.execute("hidden-delete", { kind: "rows.delete", tableId: "projects", rows: [{ id: "p1", expectedRevision: 1 }] }, ctx)).toThrow("unavailable under current access");
+  denied = "row";
+  expect(() => store.execute("hidden-row", { kind: "rows.upsert", tableId: "projects", rows: [{ id: "p1", expectedRevision: 1, values: { name: "Hidden" } }] }, ctx)).toThrow("unavailable under current access");
+  denied = "";
+  expect(store.row("projects", "p1")?.revision).toBe(1); expect(store.receipt("hidden-edit")).toBeUndefined();
+});
+
+test("saved presentation fields are typed query outputs and artifact layouts stay pinned", () => {
+  const { store } = fixture(); seed(store, [{ id: "due", name: "Due", type: "timestamp" }]);
+  const query = { tableId: "projects", select: ["name", "cost", "due", "tier"] };
+  const layouts = [
+    { layout: "list" as const, titleField: "name" },
+    { layout: "board" as const, titleField: "name", groupField: "tier" },
+    { layout: "calendar" as const, titleField: "name", dateField: "due" },
+    { layout: "chart" as const, titleField: "name", valueField: "cost" },
+  ];
+  for (const presentation of layouts) {
+    const view = { id: presentation.layout, title: presentation.layout, query, ...presentation };
+    store.execute(`save-${view.id}`, { kind: "view.save", view, expectedRevision: 0 }, ctx);
+    store.execute(`artifact-${view.id}`, { kind: "artifact.create", artifactId: view.id, title: view.title, viewId: view.id, viewRevision: 1, dataMode: "live" }, ctx);
+    store.execute(`revise-${view.id}`, { kind: "view.save", view: { ...view, layout: "table" }, expectedRevision: 1 }, ctx);
+    expect(store.artifact(view.id).view).toEqual(view);
+    expect(store.artifact(view.id).result.rows).toHaveLength(3);
+  }
+  let invalidCase = 0;
+  const save = (view: import("../src").ViewDefinition) => store.execute(`invalid-${++invalidCase}`, { kind: "view.save", view, expectedRevision: 0 }, ctx);
+  const view = { id: "bad", title: "Bad", query, layout: "chart" as const };
+  expect(() => save(view)).toThrow("valueField");
+  expect(() => save({ ...view, valueField: "name" })).toThrow("compatible selected field");
+  expect(() => save({ ...view, valueField: "cost", titleField: "company" })).toThrow("selected field");
+  expect(() => save({ ...view, layout: "calendar", dateField: "cost" })).toThrow("compatible selected field");
+  expect(() => save({ ...view, layout: "board", groupField: "company" })).toThrow("compatible selected field");
+  const cursor = store.query({ tableId: "projects", limit: 1 }).nextCursor!;
+  expect(() => save({ ...view, layout: "table", query: { ...query, cursor } })).toThrow("pagination cursor");
+  store.execute("aggregate-chart", { kind: "view.save", expectedRevision: 0, view: { id: "totals", title: "Totals", layout: "chart", titleField: "tier", valueField: "total", query: { tableId: "projects", groupBy: ["tier"], aggregates: [{ as: "total", field: "cost", op: "sum" }] } } }, ctx);
+  expect(store.record("view", "totals")).toBeDefined();
+});
 
 test("stable rows survive reopen and a lost receipt does not repeat the commit", () => {
   const dir = mkdtempSync(join(tmpdir(), "structured-store-")); dirs.push(dir); const path = join(dir, "data.sqlite");
@@ -163,6 +207,29 @@ test("reference-only selected response values are absent from every persisted ta
   expect(store.query({ tableId: "projects" }).rows[0]?.cells.remote?.state).toBe("unavailable");
 });
 
+test("derived source values follow input value versions, freshness and retention", async () => {
+  let now = 1000;
+  const { store } = fixture(":memory:", "owner", { now: () => now });
+  const binding = { kind: "request" as const, sourceId: "source", contractDigest: "contract", inputs: {}, select: { stepId: "read", jsonPointer: "/value" }, refresh: { mode: "on-demand" as const, maxAgeSeconds: 1 }, retention: "materialized" as const };
+  seed(store, [{ id: "input", name: "Input", type: "integer", binding }, { id: "output", name: "Output", type: "integer", binding }]);
+  const cells = (field: string, value: number, generation = "one") => ({ tableId: "projects", tableRevision: 1, rows: [{ rowId: "p1", rowRevision: 1, cells: { [field]: { retention: "materialized" as const, cell: { state: "ready" as const, freshness: "fresh" as const, value, sourceGeneration: generation } } } }] });
+  await store.commitCells("input-1", cells("input", 12), now);
+  const dependencies = store.query({ tableId: "projects", select: ["input"], filter: { field: "$id", op: "eq", value: "p1" } }).dependencies;
+  await store.commitCells("output-1", { ...cells("output", 24), dependencies }, now);
+  const output = () => store.query({ tableId: "projects", select: ["output"], filter: { field: "$id", op: "eq", value: "p1" } }).rows[0]!.cells.output!;
+  now = 1500; await store.commitCells("input-check", cells("input", 12), now);
+  expect(output()).toMatchObject({ state: "ready", value: 24, freshness: "fresh" });
+  now = 2501; expect(output().freshness).toBe("stale");
+  await expect(store.commitCells("expired-input", { ...cells("output", 99), dependencies }, now)).rejects.toThrow("freshness expired");
+  await store.commitCells("input-new-generation", cells("input", 12, "two"), now);
+  expect(store.cell("projects", "p1", "input")?.cell.valueVersion).toBe(2);
+  expect(output().state).toBe("unavailable");
+  await expect(store.commitCells("changed-input", { ...cells("output", 99), dependencies }, now)).rejects.toThrow("Input source value changed");
+  const current = store.query({ tableId: "projects", select: ["input"], filter: { field: "$id", op: "eq", value: "p1" } }).dependencies;
+  await expect(store.commitCells("retention-input", { ...cells("output", 99), dependencies: current.map(d => ({ ...d, retention: "reference-only" as const })) }, now)).rejects.toThrow("retention");
+  expect(store.receipt("retention-input")).toBeUndefined();
+});
+
 test("snapshot reauthorization retains deleted lookup targets and exact source evidence", async () => {
   let allowHistorical = true;
   const { store } = fixture(":memory:", "owner", { canReadDependency: dependency => allowHistorical || !dependency.lineage?.includes("observation:private-v1") });
@@ -223,4 +290,60 @@ test("query byte budgets include UTF-8 values and retained dependency evidence",
   expect(result.reasons).toContain("result_byte_budget");
   expect(result.rows).toHaveLength(0);
   expect(() => store.query({ tableId: "projects", maxBytes: 1024 })).toThrow("byte budget");
+});
+
+test("mapping definition enforces field authority, revision checks and atomic row identity", () => {
+  const { store } = fixture();
+  store.execute("db", { kind: "database.create", database: { id: "work", name: "Work", lifecycle: "internal" } }, ctx);
+  store.execute("table", { kind: "table.define", expectedRevision: 0, table: { id: "people", databaseId: "work", name: "People", mode: "stored", columns: [
+    { id: "name", name: "Name", type: "text" },
+    { id: "role", name: "Role", type: "text", binding: { kind: "entity", path: "/role", retention: "materialized" } },
+    { id: "contradictory", name: "Contradictory", type: "text", authority: "table", binding: { kind: "entity", path: "/conflict", retention: "materialized" } },
+  ] } }, ctx);
+  store.execute("row", { kind: "rows.upsert", tableId: "people", rows: [{ id: "one", expectedRevision: 0, values: { name: "Alice" } }] }, ctx);
+  const define: Extract<Command, { kind: "mapping.define" }> = { kind: "mapping.define", expectedRevision: 0, expectedRowRevision: 1, mapping: { id: "person", tableId: "people", rowId: "one", subject: "people/one", fields: [{ columnId: "name", path: "/name", authority: "table" }, { columnId: "role", path: "/role", authority: "entity" }] } };
+  const initial = store.revision();
+  for (const [index, fields] of ([
+    [{ columnId: "name", path: "/name", authority: "external" }],
+    [{ columnId: "role", path: "/role", authority: "table" }],
+    [{ columnId: "contradictory", path: "/conflict", authority: "entity" }],
+    [{ columnId: "name", path: "/__proto__/value", authority: "table" }],
+    [{ columnId: "name", path: "", authority: "table" }, { columnId: "role", path: "/role", authority: "entity" }],
+  ] as typeof define.mapping.fields[]).entries()) {
+    expect(() => store.execute(`invalid-${index}`, { ...define, mapping: { ...define.mapping, fields } }, ctx)).toThrow();
+  }
+  // The row link is written before the mapping CAS inside one transaction.
+  expect(() => store.execute("stale-map", { ...define, expectedRevision: 1 }, ctx)).toThrow();
+  expect(store.row("people", "one")?.value.entity).toBeUndefined();
+  expect(store.row("people", "one")?.revision).toBe(1);
+  expect(store.revision()).toBe(initial);
+  store.execute("mapping", define, ctx);
+  expect(store.mapping("person").revision).toBe(1);
+  expect(store.row("people", "one")?.value.entity).toEqual({ subject: "people/one", mappingId: "person" });
+  expect(() => store.execute("stale-row", { ...define, expectedRevision: 1 }, ctx)).toThrow("row changed");
+  expect(() => store.execute("retarget", { ...define, expectedRevision: 1, expectedRowRevision: 2, mapping: { ...define.mapping, subject: "people/other" } }, ctx)).toThrow("identity");
+  expect(() => store.execute("unlink", { kind: "row.link_entity", tableId: "people", rowId: "one", expectedRevision: 2, subject: null }, ctx)).toThrow("versioned mapping");
+  store.options.canRead = (_table, column) => column !== "role";
+  expect(() => store.mapping("person")).toThrow("current access");
+});
+
+test("mapped payload writes preserve unrelated fields and reject ambiguous paths", () => {
+  const original = { profile: { name: "Alice", active: true }, tags: [{ label: "old", id: 1 }], "a/b": { "~name": "old" } };
+  expect(setJsonPointer(original, "/profile/name", "Bob")).toEqual({ ...original, profile: { name: "Bob", active: true } });
+  expect(setJsonPointer(original, "/tags/0/label", null)).toEqual({ ...original, tags: [{ label: null, id: 1 }] });
+  expect(setJsonPointer(original, "/a~1b/~0name", "new")).toEqual({ ...original, "a/b": { "~name": "new" } });
+  expect(setJsonPointer({}, "/new/path", 1)).toEqual({ new: { path: 1 } });
+  expect(setJsonPointer(original, "", [1])).toEqual([1]);
+  for (const path of ["/tags/1", "/tags/01", "/tags/-", "/profile/name/child", "/constructor/value", "/invalid~escape"]) expect(() => setJsonPointer(original, path, 1)).toThrow();
+  expect(original.profile.name).toBe("Alice"); expect(original.tags[0]?.label).toBe("old");
+});
+
+test("linking and unlinking identity leaves the value author unchanged", () => {
+  const { store } = fixture(); seed(store);
+  store.execute("author", { kind: "rows.upsert", tableId: "companies", rows: [{ id: "acme", expectedRevision: 1, values: { name: "Acme" } }] }, { ...ctx, producer: "agent:author" });
+  store.execute("link", { kind: "row.link_entity", tableId: "companies", rowId: "acme", expectedRevision: 2, subject: "companies/acme" }, ctx);
+  expect(store.row("companies", "acme")?.producer).toBe("agent:author");
+  store.execute("unlink", { kind: "row.link_entity", tableId: "companies", rowId: "acme", expectedRevision: 3, subject: null }, ctx);
+  expect(store.row("companies", "acme")?.producer).toBe("agent:author");
+  expect(store.row("companies", "acme")?.value.values.name).toBe("Acme");
 });

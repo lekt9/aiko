@@ -2,11 +2,13 @@ import { afterEach, expect, test } from "bun:test";
 import { Effect, Layer } from "effect";
 import { Infer, type InferRequest } from "tardie";
 import { Self } from "tardie/core/runtime";
+import { EventLog, withWatermark } from "tardie/core/log";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { ProjectContext, PROJECT_FILE_MAX_BYTES } from "../src/project-instructions.ts";
+import { ProjectContext, projectContextEventKey, PROJECT_FILE_MAX_BYTES, type ProjectSelection } from "../src/project-instructions.ts";
 import { projectFilesystemSource } from "../src/project-instructions-node.ts";
+import { codeInferenceSourcesOf } from "../src/code-context-custody.ts";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -19,10 +21,12 @@ async function fixture() {
   return { root, put, source, current, options, project: new ProjectContext(options) };
 }
 const request: InferRequest = { identity: { actor: "aiko", instance: "test", thread: "user-ownerA", turn: "turn" }, trajectory: [], system: "HOST AUTHORITY AND TOOL GRANTS", tools: [] };
+const projectEvents: import("tardie/core/event").Event[] = [];
+const emptyLog = withWatermark({ read: Effect.sync(() => projectEvents), append: events => Effect.sync(() => { projectEvents.push(...events); }) });
 const inference = (project: ProjectContext) => {
   const seen: InferRequest[] = [];
   const layer = project.inference(Layer.succeed(Infer, { react: request => Effect.sync(() => { seen.push(request); return { kind: "complete" as const, output: "ok" }; }) }));
-  return { seen, run: (value = request) => Effect.runPromise(Effect.gen(function* () { const service = yield* Infer; return yield* service.react(value, "native-attempt"); }).pipe(Effect.provide(layer))) };
+  return { seen, run: (value = request) => Effect.runPromise(Effect.gen(function* () { const service = yield* Infer; return yield* service.react(value, "native-attempt"); }).pipe(Effect.provide(layer), Effect.provideService(EventLog, emptyLog))) };
 };
 
 test("inference loads root-to-cwd AGENTS and CLAUDE guidance afresh while preserving host precedence", async () => {
@@ -111,7 +115,47 @@ test("context budgets fail before inference and native project tools enforce thr
   expect(await model.run()).toMatchObject({ kind: "fail", failure: { policy: { source: "project_context_unavailable" } } });
   expect(model.seen).toHaveLength(0);
   const tool = f.project.tools()[0]!;
-  const result = await Effect.runPromise(tool.run({}, { callId: "read", turn: "turn", signal: AbortSignal.timeout(5000) }).pipe(Effect.provideService(Self, { actor: "aiko", instance: "test", thread: "user-ownerA" } as any)));
+  const result = await Effect.runPromise(tool.run({}, { callId: "read", turn: "turn", signal: AbortSignal.timeout(5000) }).pipe(Effect.provideService(Self, { actor: "aiko", instance: "test", thread: "user-ownerA" } as any), Effect.provideService(EventLog, emptyLog)));
   expect(result).toMatchObject({ cwd: "src/feature" });
-  await expect(Effect.runPromise(tool.run({}, { callId: "read", signal: AbortSignal.timeout(5000) }).pipe(Effect.provideService(Self, { actor: "aiko", thread: "foreign" } as any)))).rejects.toThrow("scope mismatch");
+  await expect(Effect.runPromise(tool.run({}, { callId: "read", signal: AbortSignal.timeout(5000) }).pipe(Effect.provideService(Self, { actor: "aiko", thread: "foreign" } as any), Effect.provideService(EventLog, emptyLog)))).rejects.toThrow("scope mismatch");
+});
+
+test("custom project source identities invalidate cold custody by default and can opt into stable authorized reuse", async () => {
+  const f = await fixture(); await f.put("AGENTS.md", "PRIVATE CUSTOM GUIDANCE");
+  const first = new ProjectContext(f.options), reopened = new ProjectContext(f.options);
+  expect(first.tools()[0]!.spec).toEqual(first.tools()[0]!.spec);
+  expect(first.tools()[0]!.spec).not.toEqual(reopened.tools()[0]!.spec);
+  let authorized = true;
+  const stableOptions = { ...f.options, sourceRevision: "trusted-repository-binding-v1", authorizeRetained: async () => authorized };
+  const stable = new ProjectContext(stableOptions), again = new ProjectContext(stableOptions);
+  expect(stable.tools()[0]!.spec).toEqual(again.tools()[0]!.spec);
+  const model = inference(stable); expect(await model.run()).toMatchObject({ kind: "complete" });
+  expect(codeInferenceSourcesOf(model.seen[0]!)).toMatchObject([{ tool: "project_context_manifest", arguments: {} }]);
+  expect(JSON.stringify(projectEvents)).not.toContain("PRIVATE CUSTOM GUIDANCE");
+  authorized = false;
+  expect(await stable.tools()[0]!.authorizeRetained!({})).toBe(false);
+  expect(await model.run()).toMatchObject({ kind: "fail", failure: { policy: { source: "project_context_unavailable" } } });
+  expect(model.seen).toHaveLength(1);
+});
+
+test("native project selection keeps local cwd after coding activity and drops revoked repository selections", async () => {
+  const f = await fixture(); await f.put("AGENTS.md", "REMOTE ROOT GUIDANCE"); await f.put("src/AGENTS.md", "REMOTE LOCAL GUIDANCE");
+  const rows: import("tardie/core/event").Event[] = [{ type: "AikoProjectContextSelected", owner: "ownerA", thread: "user-ownerA", callId: "old", selection: { repository: "revoked" } }];
+  const log = withWatermark({ read: Effect.sync(() => rows), append: events => Effect.sync(() => { for (const event of events) if (!rows.some(row => projectContextEventKey(row) === projectContextEventKey(event))) rows.push(event); }) });
+  const selections: ProjectSelection[] = [], seen: InferRequest[] = [];
+  const project = new ProjectContext({ owner: "ownerA", thread: "user-ownerA", redact: text => text, remote: { repositories: ["current"], grantRevision: "fixture-grant",
+    authorizeRetained: selection => selection?.repository === "current",
+    collect: async (selection, identity, signal) => { expect(identity.callId).toBeTruthy(); selections.push(selection); return new ProjectContext({ ...f.options, current: undefined, cwd: selection.cwd ?? "" }).collect(signal); },
+    load: async () => { throw Error("Unused fixture load"); },
+  } });
+  const layer = project.inference(Layer.succeed(Infer, { react: value => Effect.sync(() => { seen.push(value); return { kind: "complete" as const, output: "ok" }; }) }));
+  let serial = 0;
+  const run = () => Effect.runPromise(Effect.gen(function* () { return yield* (yield* Infer).react(request, `native-project-${++serial}`); }).pipe(Effect.provide(layer), Effect.provideService(EventLog, log)));
+  await run(); expect(selections.at(-1)).toEqual({ repository: "current" }); expect(seen[0]!.system).toContain("REMOTE ROOT GUIDANCE");
+  await Effect.runPromise(project.tools()[0]!.run({ repository: "current", workspace: "feature", cwd: "src" }, { callId: "select", turn: "turn", signal: AbortSignal.timeout(5000) }).pipe(
+    Effect.provideService(Self, { actor: "aiko", instance: "test", thread: "user-ownerA" }), Effect.provideService(EventLog, log)));
+  rows.push({ type: "AikoCodingOperation", phase: "settled", status: "completed", action: "edit", owner: "ownerA", thread: "user-ownerA", repository: "current", workspace: "feature" });
+  await run(); expect(selections.at(-1)).toEqual({ repository: "current", workspace: "feature", cwd: "src" }); expect(seen[1]!.system).toContain("REMOTE LOCAL GUIDANCE");
+  expect(codeInferenceSourcesOf(seen[1]!)).toMatchObject([{ tool: "project_context_manifest", arguments: { repository: "current", workspace: "feature", cwd: "src" } }]);
+  expect(JSON.stringify(rows)).not.toContain("REMOTE LOCAL GUIDANCE");
 });

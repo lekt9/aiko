@@ -9,6 +9,7 @@ import type { Event } from "tardie/core/event";
 import { harnessDigest } from "../src/harness-library.ts";
 import { defaultProactivePreferences, proactiveAppendAllowed, proactiveBatchAt, proactiveEligibility, proactiveEventKey,
   proactivePolicy, proactivePreferences, proactiveWaitMethod, validateProactivePreferences, type ProactivePreferences } from "../src/proactive-policy.ts";
+import { contributionStatus, proactiveForegroundBusy, validContribution } from "../src/proactive-policy.ts";
 
 const topic = harnessDigest(["fixture-topic"]), otherTopic = harnessDigest(["other-topic"]);
 const now = Date.parse("2026-09-08T10:00:00Z");
@@ -24,6 +25,59 @@ const dispatch = (id = "decision", at = now, claimId = "attempt-one"): Event[] =
     supports: ["obs_fixture"], topics: [topic], policyRevision: "default", claimId },
   { type: "AikoDeliveryStarted", turn: `proactive:${id}`, epoch: 0, at, proactiveClaimId: claimId },
 ];
+
+const contribution = (id = "proposal", patch: Record<string, unknown> = {}): Event => ({
+  type: "AikoProactiveDecision", owner: "123", id, at: now, supports: ["obs_verified"],
+  contribution: { version: 2, topic, trigger: "verified-result", triggerSupports: ["obs_verified"], createdAt: now, action: "notify", notBefore: now, expiresAt: now + 60_000, ...patch },
+});
+
+test("a retained contribution waits for foreground settlement and wakes from native events after reconstruction", () => {
+  const proposed = contribution();
+  const busy: Event = { type: "MessageReceived", id: "owner-task", epoch: 0, source: "telegram", chat: "123", at: now };
+  const rows = [busy, proposed];
+  expect(proactivePolicy(rows, "123", decision("proposal"), now)).toMatchObject({ status: "defer", reason: "foreground-busy", dueAt: now + 60_000 });
+  const wait = { ...proactiveWaitMethod.event({ invocation: { method: "proactiveWait", id: "busy-wait", epoch: 0 },
+    input: { decisionId: "proposal" }, at: now, deadlineAt: now + 60_000 }), owner: "123", contributionVersion: 2 };
+  const retained = structuredClone([...rows, wait]);
+  expect(proactiveEligibility(retained, "123", "proposal")).toBeUndefined();
+  retained.push({ type: "TurnCompleted", turn: "owner-task", epoch: 0, at: now + 1 });
+  expect(proactiveEligibility(retained, "123", "proposal")).toBeDefined();
+  expect(proactivePolicy(retained, "123", decision("proposal"), now + 1).status).toBe("allow");
+  expect(proactivePolicy(rows, "123", decision("proposal"), now + 60_000).reason).toBe("contribution-expired");
+  expect(proactivePolicy([busy], "123", decision("legacy"), now).status).toBe("allow");
+});
+
+test("foreground epochs, owners and pending siblings cannot release one another", () => {
+  const rows: Event[] = [
+    { type: "MessageReceived", id: "task", epoch: 0 }, { type: "TurnCompleted", turn: "task", epoch: 0 },
+    { type: "TurnResumed", turn: "task", epoch: 1 }, { type: "TurnCompleted", turn: "task", epoch: 0 },
+    { type: "TurnCompleted", turn: "task", epoch: 1, owner: "456" },
+  ];
+  expect(proactiveForegroundBusy(rows, "123")).toBe(true);
+  expect(proactiveForegroundBusy([...rows, { type: "TurnCancelled", turn: "task", epoch: 1 }], "123")).toBe(false);
+});
+
+test("new evidence supersedes unsent contributions without extending the old expiry or crossing owners", () => {
+  const old = contribution("old");
+  expect(contributionStatus([old, { ...contribution("foreign"), owner: "456" }], "123", "old", now)).toBe("current");
+  const next = contribution("revised", { trigger: "corrected-result" });
+  expect(contributionStatus([old, next], "123", "old", now)).toBe("contribution-superseded");
+  expect(contributionStatus([old, next], "123", "revised", now)).toBe("current");
+  expect(validContribution({ ...(old.contribution as object), expiresAt: now + 86_400_001 }, now)).toBe(false);
+  expect(validContribution({ ...(old.contribution as object), notBefore: now + 60_000 }, now)).toBe(false);
+  expect(proactivePolicy([contribution("later", { notBefore: now + 1000 })], "123", decision("later"), now)).toMatchObject({ status: "defer", dueAt: now + 1000 });
+});
+
+test("pending reservoir overflow is deterministic and dismissal takes precedence over timing", () => {
+  const rows = Array.from({ length: 17 }, (_, i) => contribution(`item-${i}`, { topic: harnessDigest(["topic", i]) }));
+  expect(contributionStatus(rows, "123", "item-15", now)).toBe("current");
+  expect(contributionStatus(rows, "123", "item-16", now)).toBe("contribution-capacity");
+  const accepted = { type: "AikoProactiveAccepted", owner: "123", id: "item-0", at: now };
+  expect(contributionStatus([...rows.slice(0, 16), accepted, rows[16]!], "123", "item-16", now)).toBe("contribution-capacity");
+  const delivered = { type: "AikoDeliverySettled", turn: "proactive:item-0", at: now, result: { status: "delivered" } };
+  expect(contributionStatus([...rows.slice(0, 16), accepted, delivered, rows[16]!], "123", "item-16", now)).toBe("current");
+  expect(proactivePolicy([preferences({ dismissedTopics: [topic] }), contribution()], "123", decision("proposal"), now).reason).toBe("topic-dismissed");
+});
 
 test("preferences reject invalid bounds, zones and ambiguous full-day quiet intervals", () => {
   for (const patch of [{ dailyLimit: -1 }, { dailyLimit: 201 }, { batchWindowMs: 3_600_001 }, { dismissedTopics: [topic, topic] },

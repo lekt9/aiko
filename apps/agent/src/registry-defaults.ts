@@ -1,3 +1,5 @@
+import { observedNetworkHarnessBinding, type ObservedNetworkHarnessOptions } from "./harness-observed-network.ts";
+import { browserWatchHarnessDefinitions } from "./browser-watches.ts";
 import { channelLogSourceHarnessDefinitions } from "./channel-log-source.ts";
 import { createProviderAdapterHost } from "./provider-adapter.ts";
 import { createRegistryOptimization, registryOptimizationPolicy, type RegistryOptimizationOptions } from "./registry-optimization.ts";
@@ -47,8 +49,12 @@ export const DEFAULT_REGISTRY_ORIGINS = Object.freeze([
 export const defaultReceivingAuthority = (owner: string) =>
   `registry-internal:${owner}`;
 export interface DefaultRegistryOptions {
+  /** Explicit current session/read grants and independently trusted contracts. Off when absent. */
+  observedReads?: ObservedNetworkHarnessOptions & { definitions: readonly import("./harness-builtins.ts").BuiltinHarnessDefinition[] };
   optimization?: Pick<RegistryOptimizationOptions, "instance" | "routing" | "readThread" | "currentOwner">;
   logSources?: import("./channel-log-source.ts").ChannelLogSourcePolicy;
+  /** Register fixed watch mappers only for an explicitly configured host bridge. */
+  browserWatches?: boolean;
   providerAdapters?: import("./provider-adapter.ts").ProviderAdapterPolicies;
   management?: () => import("./registry-management.ts").RegistryManagementPolicy | undefined;
   owner: string;
@@ -64,7 +70,7 @@ export interface DefaultRegistryOptions {
   disabledReason?: string;
 }
 /** Pure assembly: no KV writes, log appends, sandbox allocation or provider calls.
- * Defaults expose no session credentials and cannot execute network candidates. */
+ * Defaults expose no session credentials. Network reads require the explicit observedReads binding. */
 export function defaultRegistryBinding(
   options: DefaultRegistryOptions,
 ): RegistryHostBinding {
@@ -82,7 +88,7 @@ export function defaultRegistryBinding(
       unavailableReason:
         options.disabledReason ?? "default_registry_grant_unavailable",
     };
-  const definitions = [...builtinHarnessDefinitions(), ...(options.logSources ? channelLogSourceHarnessDefinitions() : []),...(options.providerAdapters?.(owner).map(p=>p.definition)??[]),...(options.management?.()?.parents.map(p=>p.definition)??[])],
+  const definitions = [...builtinHarnessDefinitions(), ...(options.observedReads?.definitions ?? []), ...(options.logSources || options.browserWatches ? channelLogSourceHarnessDefinitions() : []), ...(options.browserWatches ? browserWatchHarnessDefinitions() : []),...(options.providerAdapters?.(owner).map(p=>p.definition)??[]),...(options.management?.()?.parents.map(p=>p.definition)??[])],
     verifiers = new Map(
       definitions.map((d) => [d.verifier.digest, d.verifier]),
     );
@@ -131,13 +137,14 @@ export function defaultRegistryBinding(
     current: (signal: AbortSignal) => current(signal),
   };
   const execution = createHarnessSandboxBinding(sandboxOptions);
-  const library: HarnessLibraryBinding = {
+  let library: HarnessLibraryBinding = {
     owner,
     thread,
     blobs: harnessBlobStore(options.kv),
     verifiers,
     guard: options.guard,
     context: execution.context,
+    reconcile: execution.reconcile,
     authorize: async (artifact, contract, context, input, signal) => {
       if (artifact.runtime !== "javascript" || contract.effect !== "read")
         throw Error("Default registry permits pure JavaScript only");
@@ -149,7 +156,7 @@ export function defaultRegistryBinding(
     authorizeEvaluation: async (artifact, contract, context, fixture, signal) => {
       signal.throwIfAborted();
       policy();
-      const trusted = [...builtinHarnessDefinitions(), ...(options.logSources ? channelLogSourceHarnessDefinitions() : [])].find(
+      const trusted = [...builtinHarnessDefinitions(), ...(options.logSources || options.browserWatches ? channelLogSourceHarnessDefinitions() : []), ...(options.browserWatches ? browserWatchHarnessDefinitions() : [])].find(
         d => harnessDigest(d.contract) === harnessDigest(contract),
       ) ?? options.providerAdapters?.(owner).find(p => p.active && p.expiresAt > Date.now() && harnessDigest(p.definition.contract) === harnessDigest(contract))?.definition ?? options.management?.()?.parents.find(p => harnessDigest(p.definition.artifact) === harnessDigest(artifact) &&
         harnessDigest(p.definition.contract) === harnessDigest(contract))?.definition;
@@ -167,6 +174,7 @@ export function defaultRegistryBinding(
       return execution.execute(job, signal);
     },
   };
+  if (options.observedReads) library = observedNetworkHarnessBinding(library, options.observedReads);
   const bootstrap: Component<undefined, Self | EventLog> = component({
     name: "aiko.registry-defaults",
     initial: () => [] as Event[],
@@ -247,7 +255,7 @@ export function defaultRegistryBinding(
           : /^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository);
       },
     },
-    logSources: options.logSources ? { grants: () => options.logSources!(owner).filter(grant => grant.owner === owner && grant.receivingAuthority === defaultReceivingAuthority(owner) && grant.active && grant.expiresAt > Date.now() && Number.isInteger(grant.maxBindings) && grant.maxBindings > 0 && grant.maxBindings <= 32), current: () => { try { policy(); return true; } catch { return false; } } } : undefined,
+    logSources: options.logSources || options.browserWatches ? { grants: () => (options.logSources?.(owner) ?? []).filter(grant => grant.owner === owner && grant.receivingAuthority === defaultReceivingAuthority(owner) && grant.active && grant.expiresAt > Date.now() && Number.isInteger(grant.maxBindings) && grant.maxBindings > 0 && grant.maxBindings <= 32), current: () => { try { policy(); return true; } catch { return false; } } } : undefined,
     providerAdapters: options.providerAdapters && options.read && options.append ? createProviderAdapterHost({owner,library,
       journal:{read:options.read,append:options.append},kv:options.kv,transport,policies:options.providerAdapters,
       currentOwner:()=>{try{policy();return true;}catch{return false;}}}) : undefined,

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, spyOn } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { loadConfig } from "../src/config.ts";
 import { join } from "node:path";
@@ -236,6 +236,35 @@ async function nativeAnswerHost(
 }
 
 describe("native production browser answers", () => {
+  test("idle retirement retains watched or uncertain sessions and closes after confirmed lease release", async () => {
+    const idle: (() => void)[] = [];
+    const original = globalThis.setTimeout;
+    const timer = spyOn(globalThis, "setTimeout").mockImplementation(((callback: (...args: any[]) => void, ms?: number, ...args: any[]) => {
+      const handle = original(callback, ms, ...args);
+      if (ms === 240000) idle.push(() => {clearTimeout(handle);callback(...args);});
+      return handle;
+    }) as typeof setTimeout);
+    let lease: "active" | "unknown" | "released" = "active", checked = 0, closed = 0;
+    try {
+      const app = await nativeAnswerHost(mockModel(req => !returns(req).length
+        ? {kind:"call",callId:"watch-page",name:"agent_browser_navigate",arguments:{url:"https://example.com/requests"}}
+        : {kind:"complete",output:"Opened requests."}), async () => ({
+          execute:async()=>({}), close:async()=>{closed++;},
+          hasActiveWatchLease:async()=>{checked++;if(lease==="unknown")throw Error("private transport unavailable");return lease==="active";},
+        }));
+      await app.send("idle-watch", "Open requests");
+      expect(idle.length).toBe(1);
+      idle.shift()!();await waitFor(async()=>checked===1 && idle.length===1);
+      expect(closed).toBe(0);
+      lease="unknown";idle.shift()!();await waitFor(async()=>checked===2 && idle.length===1);
+      expect(closed).toBe(0);
+      lease="released";idle.shift()!();await waitFor(async()=>closed===1);
+      expect(checked).toBe(3);
+      expect(idle.length).toBe(0);
+      await app.browser.close();expect(closed).toBe(1);
+    } finally {timer.mockRestore();}
+  });
+
   test("request-memory arguments return to model context without entering durable history", async () => {
     const query="transient pointer query 74589";
     let restored=false;
@@ -1174,7 +1203,8 @@ describe("Aiko native browser integration", () => {
       },
     });
     const available = browser.tools("123", "user-123");
-    expect(available).toHaveLength(31);
+    expect(available).toHaveLength(29); // 27 page tools + two request-memory tools.
+    expect(available.some(tool => tool.spec.name.startsWith("agent_browser_tab_"))).toBe(false);
     expect(available.map((tool) => tool.spec.name)).toEqual(expect.arrayContaining([
       "request_memory_search", "request_memory_hydrate",
     ]));

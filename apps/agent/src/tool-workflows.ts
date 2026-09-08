@@ -17,11 +17,27 @@ export type WorkflowStepStatus = "succeeded" | "failed" | "unknown" | "authoriza
 export interface WorkflowReceipt {
   version: 1; owner: string; workflowId: string; digest: string; runId: string;
   status: "running" | "succeeded" | "failed" | "unknown";
-  calls: number; steps: { id: string; status: WorkflowStepStatus }[];
+  calls: number; steps: { id: string; status: WorkflowStepStatus; toolDigest?: string }[];
+  reason?: "procedure-evidence-unavailable" | "procedure-dependencies-changed";
+}
+export interface WorkflowApplicability {
+  version: 1;
+  /** Successful execution is a saved example, not independent outcome verification. */
+  basis: "observed-success";
+  steps: { id: string; toolDigest: string }[];
 }
 export interface WorkflowRecord {
   owner: string; definition: WorkflowDefinition; digest: string; reusable: boolean;
   provenance?: { runId: string };
+  applicability?: WorkflowApplicability;
+}
+export function workflowApplicability(record: WorkflowRecord): WorkflowApplicability | undefined {
+  const pinned = record.applicability;
+  if (pinned?.version !== 1 || pinned.basis !== "observed-success" || !Array.isArray(pinned.steps) ||
+    pinned.steps.length !== record.definition.steps.length || pinned.steps.some(s => !s || typeof s.id !== "string" || typeof s.toolDigest !== "string" || !/^[a-f0-9]{64}$/.test(s.toolDigest)) ||
+    new Set(pinned.steps.map(s => s.id)).size !== record.definition.steps.length ||
+    !record.definition.steps.every(s => pinned.steps.some(p => p.id === s.id))) return;
+  return pinned;
 }
 /** Code artifacts share the owner workflow store; source is immutable at a given id. */
 export interface CodeWorkflowRecord {
@@ -67,6 +83,8 @@ export interface RegisteredWorkflowTool {
 export interface WorkflowDispatcher {
   resolve(context: { owner: string; toolId: string; signal: AbortSignal }): Promise<RegisteredWorkflowTool | undefined>;
 }
+export const workflowToolDigest = (tool: Pick<RegisteredWorkflowTool, "owner" | "id" | "effect" | "inputSchema">) =>
+  sha256(canonicalStringify({ owner: tool.owner, id: tool.id, effect: tool.effect, inputSchema: tool.inputSchema }));
 export interface ToolWorkflowsOptions {
   owner: string; store: WorkflowStore; dispatcher: WorkflowDispatcher;
   /** Private, memory-only sink. Never journal the argument or derived response values. */
@@ -187,7 +205,10 @@ export class ToolWorkflows {
     const record = await this.describe(workflowId);
     const receipt = await this.options.store.getRun(this.options.owner, runId);
     if (!record || !receipt || receipt.owner !== record.owner || receipt.runId !== runId || receipt.workflowId !== workflowId || receipt.digest !== record.digest || receipt.status !== "succeeded" || receipt.calls !== record.definition.steps.length || receipt.steps.length !== record.definition.steps.length || !record.definition.steps.every(s => receipt.steps.some(r => r.id === s.id && r.status === "succeeded"))) throw new Error("Successful owned workflow evidence required");
-    const reusable = { ...record, reusable: true, provenance: { runId } };
+    if (receipt.steps.some(s => !s.toolDigest || !/^[a-f0-9]{64}$/.test(s.toolDigest))) throw new Error("Pinned tool evidence required; run a new workflow definition before saving it");
+    if (record.reusable) return record;
+    const reusable: WorkflowRecord = { ...record, reusable: true, provenance: { runId },
+      applicability: { version: 1, basis: "observed-success", steps: receipt.steps.map(s => ({ id: s.id, toolDigest: s.toolDigest! })) } };
     await this.options.store.putDefinition(record.owner, structuredClone(reusable));
     return reusable;
   }
@@ -225,6 +246,19 @@ export class ToolWorkflows {
     const outputs = new Map<string, WorkflowJson>(), done = new Set<string>();
     let outputBytes = 0;
     const set = (id: string, status: WorkflowStepStatus) => { receipt.steps.find(s => s.id === id)!.status = status; };
+    const pinned = workflowApplicability(record);
+    const resolve = async (step: WorkflowDefinition["steps"][number]) => {
+      try {
+        const tool = await bounded(() => dispatcher.resolve({ owner, toolId: step.toolId, signal }), signal);
+        if (!tool || tool.owner !== owner || tool.id !== step.toolId || !["read", "write"].includes(tool.effect) || !object(tool.inputSchema) || typeof tool.validate !== "function" || typeof tool.authorize !== "function" || typeof tool.execute !== "function") throw new Error("Registered owned tool unavailable");
+        const toolDigest = workflowToolDigest(tool);
+        if (record.reusable && pinned?.steps.find(s => s.id === step.id)?.toolDigest !== toolDigest) throw new Error("Saved procedure prerequisites changed");
+        return tool;
+      } catch (error) {
+        if (record.reusable) receipt.reason = "procedure-dependencies-changed";
+        throw error;
+      }
+    };
     const execute = async (step: WorkflowDefinition["steps"][number], tool: RegisteredWorkflowTool) => {
       let dispatched = false;
       try {
@@ -248,6 +282,12 @@ export class ToolWorkflows {
         if (await bounded(() => tool.authorize(call()), signal) !== true) { set(step.id, "authorization_required"); return; }
         signal.throwIfAborted();
         if (receipt.calls >= callBudget) throw new Error("Workflow call budget reached");
+        const toolDigest = workflowToolDigest(tool);
+        if (record.reusable && pinned?.steps.find(s => s.id === step.id)?.toolDigest !== toolDigest) {
+          receipt.reason = "procedure-dependencies-changed";
+          throw new Error("Saved procedure prerequisites changed");
+        }
+        receipt.steps.find(s => s.id === step.id)!.toolDigest = toolDigest;
         receipt.calls++; dispatched = true;
         const result = await bounded(() => tool.execute(call()), signal);
         if (!result || !["succeeded", "failed", "unknown", "authorization_required"].includes(result.status)) throw new Error("Ambiguous tool result");
@@ -263,14 +303,22 @@ export class ToolWorkflows {
       } catch { set(step.id, dispatched ? "unknown" : "failed"); }
     };
     try {
+      // Check the entire saved procedure before its first effect, including
+      // downstream tools. Resolve again at each step to detect later changes.
+      if (record.reusable) {
+        if (!pinned) {
+          receipt.reason = "procedure-evidence-unavailable";
+          throw new Error("Saved procedure needs current tool evidence");
+        }
+        for (const step of definition.steps) await resolve(step);
+      }
       while (done.size < definition.steps.length) {
         signal.throwIfAborted();
         if (receipt.calls >= callBudget) break;
         const ready = definition.steps.filter(s => !done.has(s.id) && s.dependsOn.every(d => done.has(d)));
         const batch: { step: WorkflowDefinition["steps"][number]; tool: RegisteredWorkflowTool }[] = [];
         for (const step of ready) {
-          const tool = await bounded(() => dispatcher.resolve({ owner, toolId: step.toolId, signal }), signal);
-          if (!tool || tool.owner !== owner || tool.id !== step.toolId || !["read", "write"].includes(tool.effect) || !object(tool.inputSchema) || typeof tool.validate !== "function" || typeof tool.authorize !== "function" || typeof tool.execute !== "function") throw new Error("Registered owned tool unavailable");
+          const tool = await resolve(step);
           if (tool.effect === "write" && batch.length) break;
           batch.push({ step, tool });
           if (tool.effect === "write" || batch.length >= Math.min(concurrency, callBudget - receipt.calls)) break;

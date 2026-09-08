@@ -1,4 +1,4 @@
-import type { BrowserDriverFactory } from "./browser-driver.ts";
+import type { BrowserDriver, BrowserDriverFactory } from "./browser-driver.ts";
 import type { ConnectorVaultConfig } from "./connector-vault.ts";
 import type { ConnectorEngine } from "./connectors.ts";
 import { createBrowserUnlockAuth } from "./browser-unlock-auth.ts";
@@ -37,7 +37,6 @@ export function withUnlockBrowser(
       install: (material, signal) => driver.installSession!(material, signal),
       clear: (scope, signal) => driver.clearSession!(scope, signal),
     });
-    let currentUrl: string | undefined;
     const before = async (url: string | undefined, signal?: AbortSignal) => {
       if (!url) return;
       const result = await broker.beforeNavigate({ ...context, url }, signal);
@@ -46,8 +45,26 @@ export function withUnlockBrowser(
           "Unlock session requires renewal or connection recovery",
         );
     };
+    let latestCapture: ((signal?: AbortSignal) => Promise<Uint8Array>) | undefined;
+    const wrapPage = (driver: BrowserDriver, account = false): BrowserDriver => {
+    let currentUrl: string | undefined;
+    const capture = driver.screenshot ? async (signal?: AbortSignal) => {
+      if (!currentUrl) throw new Error("Navigate before private session capture");
+      await before(currentUrl, signal);
+      return driver.screenshot!(signal);
+    } : undefined;
     return {
       ...driver,
+      ...(driver.forTab ? {forTab: async (key: string) => wrapPage(await driver.forTab!(key))} : {}),
+      ...(driver.executeScoped ? {executeScoped: async (action: import("@unbrowse/browser-harness/client").AgentBrowserAgentAction, policy: import("./browser-driver.ts").BrowserControlPolicy, signal?:AbortSignal) => {
+        const url=action.action==="navigate"?action.url:currentUrl;
+        if(!url||new URL(url).origin!==policy.origin||!policy.origins.includes(policy.origin))throw Error("Scoped private browser origin unavailable");
+        await before(url,signal);
+        const result=await driver.executeScoped!(action,policy,signal);
+        if(action.action==="navigate")currentUrl=action.url;
+        latestCapture = account ? undefined : capture;
+        return result;
+      }} : {}),
       ...(driver.authorizeInspection ? {authorizeInspection: async (policy: import("./browser-driver.ts").BrowserInspectionPolicy, signal?: AbortSignal) => {
         if (!currentUrl || new URL(currentUrl).origin !== policy.origin) return false;
         try {
@@ -70,6 +87,7 @@ export function withUnlockBrowser(
         await before(url, signal);
         const result = await driver.execute(action, signal);
         if (action.action === "navigate") currentUrl = action.url;
+        latestCapture = account ? undefined : capture;
         return result;
       },
       ...(driver.requestRehydrate
@@ -86,16 +104,8 @@ export function withUnlockBrowser(
             },
           }
         : {}),
-      ...(driver.screenshot
-        ? {
-            screenshot: async (signal?: AbortSignal) => {
-              if (!currentUrl)
-                throw new Error("Navigate before private session capture");
-              await before(currentUrl, signal);
-              return driver.screenshot!(signal);
-            },
-          }
-        : {}),
+      ...(capture ? {screenshot: (signal?: AbortSignal) =>
+        account && latestCapture ? latestCapture(signal) : capture(signal)} : {}),
       ...(driver.requestTransport
         ? {
             requestTransport: {
@@ -107,12 +117,15 @@ export function withUnlockBrowser(
           }
         : {}),
       close: async () => {
+        if (account || latestCapture === capture) latestCapture = undefined;
         try {
-          await broker.release();
+          if (account) await broker.release();
         } finally {
           await driver.close();
         }
       },
     };
+    };
+    return wrapPage(driver, true);
   };
 }

@@ -1,4 +1,5 @@
-import { verifySandboxReceipt, type SandboxJob, type SandboxJobReceipt, type SandboxDigest } from "./sandbox-job.ts";
+import { sandboxCanonical, sandboxDigest, verifySandboxReceipt, type SandboxJob, type SandboxJobReceipt, type SandboxDigest } from "./sandbox-job.ts";
+import type { SandboxDispatchChallenge, SandboxDispatchDecision, SandboxDispatchReply } from "./sandbox-dispatch.ts";
 import {
   createHash,
   generateKeyPairSync,
@@ -16,7 +17,9 @@ import { EventLog } from "tardie/core/log";
 import type { NativeTool } from "tardie/component/tool";
 import { boundedText, type HttpFetch } from "./security.ts";
 import { openMemory, memoryCallKey, type MemoryBinding } from "./memory.ts";
-import type { BrowserDriverFactory } from "./browser-driver.ts";
+import type { BrowserDriver, BrowserDriverFactory } from "./browser-driver.ts";
+import type { BrowserWatchLease, BrowserWatchRunnerStatus } from "./browser-watch-runner.ts";
+import { harnessDigest } from "./harness-library.ts";
 import type { HarnessTransport } from "@unbrowse/browser-harness/harness-runtime";
 import type { TelegramMediaProcessor } from "./telegram-media.ts";
 
@@ -79,6 +82,23 @@ export interface SandboxRecord {
   lastActive?: number;
   stoppedAt?: number;
 }
+type WatchIdleLease = { owner: string; producer: string; generation: number; expiresAt: number; lifecycleRevision?: number; leaseRevision?:number };
+type WatchConfigurationReceipt = WatchIdleLease & {declaredExpiresAt:number;leaseDigest:string;sourceDigest:string};
+const WATCH_IDLE_KEY = "codegraff:browser-watch-leases";
+// Configuration receipts survive idle release/expiry; they carry no producer key.
+const WATCH_CONFIG_KEY = "codegraff:browser-watch-configurations";
+const WATCH_MAX_LEASE_MS = 86_400_000;
+const WATCH_MAINTENANCE_KEY = "codegraff:browser-watch-maintenance";
+const WATCH_REFRESH_MS = 600_000;
+export type BrowserWatchMaintenance = {
+  owner: string;
+  state: "watching" | "needs-attention" | "paused";
+  reason: "ready" | "scheduled" | "expired" | "paused" | "browser-restarted" | "watch-unavailable";
+  nextAt?: number;
+  lastAttemptAt?: number;
+  lastConfirmedAt?: number;
+};
+
 export type BrowserSetupProgress = { stage: string; message: string; at: number };
 const idOf = (id: unknown): string => {
   if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,120}$/.test(id))
@@ -114,9 +134,19 @@ export class CodegraffSandbox {
   private waking?: Promise<string>;
   private stopping?: Promise<boolean>;
   private activeOperations = 0;
+  private browserDispatchTail: Promise<unknown> = Promise.resolve();
+  private dispatchBrowser<T>(run: () => Promise<T>): Promise<T> {
+    const work = this.browserDispatchTail.then(run);
+    this.browserDispatchTail = work.catch(() => {});
+    return work;
+  }
+  private watchChanges = 0;
+  private watchTail: Promise<unknown> = Promise.resolve();
+  private watchMaintaining?: Promise<BrowserWatchMaintenance>;
   get busy() {
     return (
       this.activeOperations > 0 ||
+      this.watchChanges > 0 ||
       this.maintaining ||
       this.waking !== undefined ||
       this.stopping !== undefined
@@ -433,7 +463,7 @@ export class CodegraffSandbox {
   async stop() {
     if (this.maintaining) return false;
     if (this.stopping) return this.stopping;
-    if (this.activeOperations || this.waking) return false;
+    if (this.activeOperations || this.waking || this.watchChanges) return false;
     this.stopping = this.stopNow().finally(() => {
       this.stopping = undefined;
     });
@@ -443,16 +473,21 @@ export class CodegraffSandbox {
     const record = await this.record();
     if (!record?.id || record.phase !== "available") return true;
     const id = idOf(record.id);
+    if (await this.hasActiveWatchLease()) return false;
+    if (this.activeOperations || this.waking || this.watchChanges) return false;
     const current = await this.options.gateway.request(`/v1/sandboxes/${id}`);
     if (
       !/stop|archive/.test(
         String(current.state ?? current.status).toLowerCase(),
       )
     ) {
+      // A watch configure can arrive while the provider state request is pending.
+      if (this.activeOperations || this.waking || this.watchChanges || await this.hasActiveWatchLease()) return false;
       await this.exec(
         id,
         `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js close`,
       );
+      if (this.activeOperations || this.waking || this.watchChanges) return false;
       await this.options.gateway.request(`/v1/sandboxes/${id}/stop`, {});
     }
     await this.options.store.put("codegraff:sandbox", {
@@ -881,6 +916,8 @@ export class CodegraffSandbox {
     request: Record<string, unknown>,
     callSignal?: AbortSignal,
     maintenance = false,
+    cancellationEvents?: (event: object) => Promise<void>,
+    residentOnly = false,
   ) {
     if (this.maintaining && !maintenance) throw new Error("Sandbox maintenance in progress");
     const operationSignal = callSignal;
@@ -891,7 +928,7 @@ export class CodegraffSandbox {
       const health = runnerReply(
         await this.exec(
           id,
-          `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js health`,
+          `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js ${residentOnly ? "peek-health" : "health"}`,
           operationSignal,
         ),
       );
@@ -921,6 +958,10 @@ export class CodegraffSandbox {
         key,
       );
       stage = "result";
+      if (request.operation === "execute-scoped" && result.error === "element_not_found")
+        throw new AgentBrowserClientError("element_not_found", "The browser element was not found; refresh the snapshot before another read");
+      if (request.operation === "execute-scoped" && ["private_sign_in_pending", "private_sign_in_cleanup_failed"].includes(result.error))
+        throw Object.assign(new Error("Scoped browser operation blocked"),{code:result.error});
       if (result.error || result.output === undefined)
         throw new Error("Transient browser replay unavailable");
       return result.output;
@@ -928,14 +969,339 @@ export class CodegraffSandbox {
       console.warn("private_browser_transport_failed", stage);
       throw error;
     } finally {
-      if (operationSignal?.aborted)
-        await this.exec(
-          id,
-          `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js cancel ${operation}`,
-          AbortSignal.timeout(5000),
-        ).catch(() => undefined);
-      this.activeOperations--;
+      try {
+        if (operationSignal?.aborted && cancellationEvents) {
+          const cleanupSignal = AbortSignal.timeout(35_000);
+          const cancelled = runnerReply(await this.exec(id, `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js cancel ${operation}`, cleanupSignal));
+          if (cancelled.settled !== true) throw Error("sandbox_browser_cancellation_unconfirmed");
+          await this.flushBrowserEvents(id, cancelled, cancellationEvents, cleanupSignal);
+        } else if (operationSignal?.aborted) await this.exec(
+            id,
+            `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js cancel ${operation}`,
+            AbortSignal.timeout(5000),
+          ).catch(() => undefined);
+      } finally { this.activeOperations--; }
     }
+  }
+  /** These are bounded idle fences, never admission grants or producer secrets. */
+  private async retainedWatchLeases(): Promise<WatchIdleLease[]> {
+    const leases = await this.options.store.get<WatchIdleLease[]>(WATCH_IDLE_KEY) ?? [];
+    if (!Array.isArray(leases) || leases.length > 128 || leases.some(lease =>
+      lease.owner !== this.options.owner || typeof lease.producer !== "string" ||
+      !Number.isSafeInteger(lease.generation) || !Number.isSafeInteger(lease.expiresAt) ||
+      !Number.isSafeInteger(lease.lifecycleRevision ?? 0) || (lease.lifecycleRevision ?? 0) < 0 ||
+      !Number.isSafeInteger(lease.leaseRevision ?? 0) || (lease.leaseRevision ?? 0) < 0))
+      throw Error("Browser watch lease store invalid");
+    return leases;
+  }
+  private async watchLeases(): Promise<WatchIdleLease[]> {
+    return (await this.retainedWatchLeases()).filter(lease => lease.expiresAt > Date.now() && lease.expiresAt <= Date.now() + WATCH_MAX_LEASE_MS);
+  }
+  private watchStatusValue(raw: unknown): BrowserWatchRunnerStatus {
+    const value = raw as BrowserWatchRunnerStatus;
+    if (!value || typeof value.producer !== "string" || !/^[A-Za-z0-9_.:-]{1,160}$/.test(value.producer) ||
+      !Number.isSafeInteger(value.generation) || value.generation < 1 ||
+      !Number.isSafeInteger(value.expiresAt) || !["watching", "catching-up", "needs-attention", "paused"].includes(value.state) ||
+      typeof value.reason !== "string" || !/^[a-z0-9_:\-]{0,128}$/.test(value.reason))
+      throw Error("Browser watch status invalid");
+    if (value.lifecycleRevision !== undefined && (!Number.isSafeInteger(value.lifecycleRevision) || value.lifecycleRevision < 0) ||
+      value.pausedThrough !== undefined && (!Number.isSafeInteger(value.pausedThrough) || value.pausedThrough < 0 || value.state !== "paused" || value.lifecycleRevision === undefined))
+      throw Error("Browser watch lifecycle status invalid");
+    const gap=value.coverageGap;
+    const lapse=value.coverageLapse;
+    if(value.leaseRevision!==undefined&&(!Number.isSafeInteger(value.leaseRevision)||value.leaseRevision<0)||
+      value.observationFloor!==undefined&&(!Number.isSafeInteger(value.observationFloor)||value.observationFloor<0)||
+      lapse!==undefined&&(!lapse||!Number.isSafeInteger(lapse.from)||lapse.from<1||!Number.isSafeInteger(lapse.to)||lapse.to<lapse.from||
+        !Number.isSafeInteger(lapse.leaseRevision)||lapse.leaseRevision<1||lapse.leaseRevision>(value.leaseRevision??0)||value.observationFloor!==lapse.to))
+      throw Error("Browser watch renewal status invalid");
+    if(gap!==undefined && (!gap || typeof gap!=="object" || Array.isArray(gap) || gap.generation!==value.generation || !Number.isSafeInteger(gap.missed) || gap.missed<1 ||
+      !Number.isSafeInteger(gap.acknowledged) || gap.acknowledged<0 || gap.acknowledged>gap.missed ||
+      typeof gap.countUncertain!=="boolean" || !Number.isSafeInteger(gap.firstAt) || gap.firstAt<0 ||
+      !Number.isSafeInteger(gap.lastAt) || gap.lastAt<gap.firstAt ||
+      !["observation-backlog","observation-unavailable"].includes(gap.reason))) throw Error("Browser watch coverage gap invalid");
+    if(value.excludedBefore!==undefined&&(!Number.isSafeInteger(value.excludedBefore)||value.excludedBefore<0))
+      throw Error("Browser watch privacy cut invalid");
+    // Return only bounded structural metadata from the encrypted reply.
+    return { producer: value.producer, generation: value.generation, state: value.state, reason: value.reason, expiresAt: value.expiresAt,
+      ...(value.lifecycleRevision === undefined ? {} : {lifecycleRevision:value.lifecycleRevision}),
+      ...(value.leaseRevision===undefined?{}:{leaseRevision:value.leaseRevision}),
+      ...(value.observationFloor===undefined?{}:{observationFloor:value.observationFloor}),
+      ...(lapse?{coverageLapse:{from:lapse.from,to:lapse.to,leaseRevision:lapse.leaseRevision}}:{}),
+      ...(value.pausedThrough === undefined ? {} : {pausedThrough:value.pausedThrough}),
+      ...(Number.isSafeInteger(value.lastEventAt) ? {lastEventAt:value.lastEventAt} : {}),
+      ...(Number.isSafeInteger(value.lastDeliveredAt) ? {lastDeliveredAt:value.lastDeliveredAt} : {}),
+      ...(Number.isSafeInteger(value.acknowledged) ? {acknowledged:value.acknowledged} : {}),
+      ...(value.excludedBefore===undefined?{}:{excludedBefore:value.excludedBefore}),
+      ...(gap?{coverageGap:{generation:gap.generation,missed:gap.missed,countUncertain:gap.countUncertain,acknowledged:gap.acknowledged,
+        firstAt:gap.firstAt,lastAt:gap.lastAt,reason:gap.reason}}:{}) };
+  }
+  private matchesWatchIncarnation(status:BrowserWatchRunnerStatus, lease:WatchIdleLease):boolean {
+    return status.producer === lease.producer && status.generation === lease.generation &&
+      (status.lifecycleRevision ?? 0) === (lease.lifecycleRevision ?? 0) && (status.leaseRevision??0)===(lease.leaseRevision??0);
+  }
+  private confirmsWatchPause(status:BrowserWatchRunnerStatus, lease:WatchIdleLease):boolean {
+    return this.matchesWatchIncarnation(status,lease) && status.lifecycleRevision !== undefined &&
+      status.state === "paused" && status.pausedThrough !== undefined;
+  }
+  private async readWatchStatuses(id: string, signal?: AbortSignal, residentOnly = false): Promise<BrowserWatchRunnerStatus[]> {
+    const result = await this.invokePrivate(id, {operation:"watch-status"}, signal, false, undefined, residentOnly);
+    if (!Array.isArray(result) || result.length > 128) throw Error("Browser watch status invalid");
+    const statuses = result.map(item => this.watchStatusValue(item));
+    if (new Set(statuses.map(item => item.producer)).size !== statuses.length) throw Error("Browser watch status invalid");
+    return statuses;
+  }
+  /** A transient VM failure preserves the last authorized deadline, never extends it. */
+  async hasActiveWatchLease(): Promise<boolean> {
+    const leases = await this.watchLeases();
+    if (!leases.length) return false;
+    const record = await this.record();
+    if (!record?.id || record.phase !== "available") return true;
+    try {
+      const statuses = await this.watchStatus(AbortSignal.timeout(10_000));
+      // A missing watch can be an unacknowledged configure still in flight. Only
+      // an explicit pause/current generation revocation proves it safe to stop.
+      return leases.some(lease => {
+        const status = statuses.find(item => this.matchesWatchIncarnation(item,lease));
+        return lease.expiresAt > Date.now() && (!status || !this.confirmsWatchPause(status,lease));
+      });
+    } catch { return leases.some(lease => lease.expiresAt > Date.now()); }
+  }
+  private async serializeWatch<T>(operation: () => Promise<T>, signal?:AbortSignal):Promise<T> {
+    this.watchChanges++;
+    const previous = this.watchTail;
+    let release!:()=>void;
+    this.watchTail = new Promise<void>(resolve => { release = resolve; });
+    try {
+      await previous;
+      if (this.stopping) await this.stopping;
+      signal?.throwIfAborted();
+      return await operation();
+    } finally { this.watchChanges--; release(); }
+  }
+  private async watchMaintenanceRecord():Promise<BrowserWatchMaintenance|undefined> {
+    const record = await this.options.store.get<BrowserWatchMaintenance>(WATCH_MAINTENANCE_KEY);
+    if (record && (record.owner !== this.options.owner || record.nextAt !== undefined && !Number.isSafeInteger(record.nextAt)))
+      throw Error("Browser watch maintenance store invalid");
+    return record;
+  }
+  /** Called by the host's durable deadline projection; no resident timer is required. */
+  async watchMaintenanceDeadline():Promise<number|undefined> {
+    const leases = await this.retainedWatchLeases();
+    if (!leases.length) return undefined;
+    const record = await this.watchMaintenanceRecord();
+    // Missing pre-upgrade metadata is immediately due, rather than silently
+    // assuming a provider activity refresh survived the host restart.
+    return Math.min(record?.nextAt ?? Date.now(), ...leases.map(lease => lease.expiresAt));
+  }
+  /** Codegraff documents that exec refreshes external activity, while a background
+   * process does not: https://codegraff.com/docs/sandboxes
+   * Keep the provider's 30-minute auto-stop enabled as the failure fallback. */
+  maintainWatchLease(signal?:AbortSignal):Promise<BrowserWatchMaintenance> {
+    if (this.watchMaintaining) return this.watchMaintaining;
+    this.watchMaintaining = this.serializeWatch<BrowserWatchMaintenance>(async () => {
+      const now = Date.now(), previous = await this.watchMaintenanceRecord();
+      const retained = await this.retainedWatchLeases(), leases = await this.watchLeases();
+      const save = async (result:BrowserWatchMaintenance) => {
+        await this.options.store.put(WATCH_MAINTENANCE_KEY,result);
+        return result;
+      };
+      if (!leases.length) {
+        await this.options.store.put(WATCH_IDLE_KEY,[]);
+        return save({owner:this.options.owner,state:"paused",reason:retained.length?"expired":"paused",
+          ...(previous?.lastConfirmedAt === undefined?{}:{lastConfirmedAt:previous.lastConfirmedAt})});
+      }
+      const expiresAt = Math.min(...leases.map(lease=>lease.expiresAt));
+      const due = Math.min(previous?.nextAt ?? now, expiresAt);
+      if (due > now) return previous ?? {owner:this.options.owner,state:"needs-attention",reason:"scheduled",nextAt:due};
+      // Persist retry timing before external activity, so an interrupted host
+      // cannot spin or claim a successful provider refresh after reconstruction.
+      const pending:BrowserWatchMaintenance = {owner:this.options.owner,state:"needs-attention",reason:"watch-unavailable",
+        nextAt:Math.min(now+60_000,expiresAt),lastAttemptAt:now,
+        ...(previous?.lastConfirmedAt === undefined?{}:{lastConfirmedAt:previous.lastConfirmedAt})};
+      await save(pending);
+      const deadline = AbortSignal.timeout(Math.max(1,Math.min(90_000,expiresAt-Date.now())));
+      const bounded = signal?AbortSignal.any([signal,deadline]):deadline;
+      try {
+        const record = await this.record();
+        if (!record?.id || record.phase !== "available") return pending;
+        const state = await this.options.gateway.request(`/v1/sandboxes/${idOf(record.id)}`,undefined,bounded);
+        const running = /^(started|running)$/.test(String(state.state??state.status).toLowerCase());
+        const id = running ? idOf(record.id) : await this.ensure(bounded);
+        bounded.throwIfAborted();
+        const statuses = await this.readWatchStatuses(id,bounded);
+        const remaining = leases.filter(lease=>{
+          const status=statuses.find(item=>this.matchesWatchIncarnation(item,lease));
+          return lease.expiresAt>Date.now() && (!status || !this.confirmsWatchPause(status,lease));
+        });
+        await this.options.store.put(WATCH_IDLE_KEY,remaining);
+        if (!remaining.length) return save({...pending,state:"paused",reason:"paused",nextAt:undefined});
+        const ready = remaining.every(lease=>statuses.some(status=>this.matchesWatchIncarnation(status,lease)&&
+          (status.state==="watching"||status.state==="catching-up")&&status.expiresAt>Date.now()));
+        return save({...pending,state:ready&&running?"watching":"needs-attention",reason:!running?"browser-restarted":ready?"ready":"watch-unavailable",
+          nextAt:Math.min(Date.now()+(ready?WATCH_REFRESH_MS:60_000),...remaining.map(lease=>lease.expiresAt)),
+          ...(ready?{lastConfirmedAt:Date.now()}:{} )});
+      } catch { return pending; }
+    },signal).finally(()=>{this.watchMaintaining=undefined;});
+    return this.watchMaintaining;
+  }
+  /** Retirement may pause a resident producer, but must never wake a stopped
+   * browser and restore capture merely to revoke its lease. */
+  revokeWatchLeases(signal?:AbortSignal):Promise<BrowserWatchMaintenance> {
+    return this.serializeWatch(async () => {
+      let remaining = await this.watchLeases();
+      const now = Date.now();
+      const save = async ():Promise<BrowserWatchMaintenance> => {
+        remaining=remaining.filter(lease=>lease.expiresAt>Date.now());
+        await this.options.store.put(WATCH_IDLE_KEY,remaining);
+        const result:BrowserWatchMaintenance={owner:this.options.owner,state:remaining.length?"needs-attention":"paused",
+          reason:remaining.length?"watch-unavailable":"paused",lastAttemptAt:now,
+          ...(remaining.length?{nextAt:Math.min(Date.now()+120_000,...remaining.map(lease=>lease.expiresAt))}:{})};
+        await this.options.store.put(WATCH_MAINTENANCE_KEY,result);
+        return result;
+      };
+      if (!remaining.length) return save();
+      const record = await this.record();
+      if (!record?.id || record.phase!=="available") return save();
+      const timeout=AbortSignal.timeout(Math.max(1,Math.min(30_000,...remaining.map(lease=>lease.expiresAt-Date.now()))));
+      const bounded=signal?AbortSignal.any([signal,timeout]):timeout;
+      try {
+        const id=idOf(record.id);
+        const state=await this.options.gateway.request(`/v1/sandboxes/${id}`,undefined,bounded);
+        if (!/^(started|running)$/.test(String(state.state??state.status).toLowerCase())) return save();
+        for (const lease of [...remaining]) {
+          bounded.throwIfAborted();
+          const status=this.watchStatusValue(await this.invokePrivate(id,{operation:"watch-pause",producer:lease.producer,lifecycleRevision:lease.lifecycleRevision??0},bounded,false,undefined,true));
+          if (!this.confirmsWatchPause(status,lease)) break;
+          remaining=remaining.filter(item=>item.producer!==lease.producer);
+          // A later provider failure cannot erase confirmed earlier pauses.
+          await this.options.store.put(WATCH_IDLE_KEY,remaining);
+        }
+      } catch { /* Preserve uncertain pauses for a bounded cleanup retry. */ }
+      return save();
+    },signal);
+  }
+  async watchContext(signal?:AbortSignal):Promise<{owner:string;profile:string}> {
+    const id = await this.ensure(signal);
+    const context = await this.invokePrivate(id,{operation:"watch-context"},signal);
+    if (context?.owner !== this.options.owner || typeof context.profile !== "string" || !/^[A-Za-z0-9_.:-]{1,160}$/.test(context.profile))
+      throw Error("Browser watch context invalid");
+    return {owner:context.owner,profile:context.profile};
+  }
+  async watchConfigure(input:BrowserWatchLease,signal?:AbortSignal):Promise<BrowserWatchRunnerStatus> {
+    const lease = structuredClone(input), grant = lease?.grant;
+    const lifecycleRevision = lease?.lifecycleRevision ?? 0;
+    if (!lease || !Number.isSafeInteger(lifecycleRevision) || lifecycleRevision < 0 ||
+      lease.resumeFrom !== undefined && (!Number.isSafeInteger(lease.resumeFrom?.lifecycleRevision) || lease.resumeFrom.lifecycleRevision < 0 ||
+        lease.resumeFrom.lifecycleRevision >= lifecycleRevision || !Number.isSafeInteger(lease.resumeFrom.pausedThrough) || lease.resumeFrom.pausedThrough < 0))
+      throw Error("Browser watch lifecycle invalid");
+    lease.lifecycleRevision = lifecycleRevision;
+    const leaseRevision=lease.leaseRevision??0;
+    if(!Number.isSafeInteger(leaseRevision)||leaseRevision<0||lease.renewalFrom!==undefined&&(
+      !Number.isSafeInteger(lease.renewalFrom.leaseRevision)||lease.renewalFrom.leaseRevision<0||
+      !Number.isSafeInteger(lease.renewalFrom.expiresAt)||lease.renewalFrom.expiresAt<1))throw Error("Browser watch renewal invalid");
+    lease.leaseRevision=leaseRevision;
+    if (!grant || grant.owner !== this.options.owner || !grant.active || !/^[A-Za-z0-9_.:-]{1,160}$/.test(grant.producer) ||
+      !Number.isSafeInteger(grant.generation) || grant.generation < 1 || !Number.isSafeInteger(grant.expiresAt) ||
+      grant.expiresAt <= Date.now() || grant.expiresAt > Date.now() + WATCH_MAX_LEASE_MS)
+      throw Error("Browser watch lease invalid");
+    return this.serializeWatch(async () => {
+      const leases = await this.retainedWatchLeases();
+      const receipts=await this.options.store.get<WatchConfigurationReceipt[]>(WATCH_CONFIG_KEY)??[];
+      if(!Array.isArray(receipts)||receipts.length>128||receipts.some(r=>!r||r.owner!==this.options.owner||typeof r.producer!=="string"||
+        !Number.isSafeInteger(r.leaseRevision??0)||(r.leaseRevision??0)<0||!Number.isSafeInteger(r.lifecycleRevision??0)||(r.lifecycleRevision??0)<0||
+        !Number.isSafeInteger(r.generation)||r.generation<1||!Number.isSafeInteger(r.declaredExpiresAt)||r.declaredExpiresAt<1||
+        !/^sha256:[a-f0-9]{64}$/.test(r.leaseDigest)||!/^sha256:[a-f0-9]{64}$/.test(r.sourceDigest)))throw Error("Browser watch configuration store invalid");
+      const saved=receipts.find(item=>item.producer===grant.producer);
+      const prior = saved??leases.find(item => item.producer === grant.producer);
+      const normalized=structuredClone(lease);delete normalized.lifecycleRevision;delete normalized.resumeFrom;
+      const leaseDigest=harnessDigest(normalized);
+      const source=structuredClone(normalized);source.grant.expiresAt=0;source.grant.active=true;delete source.leaseRevision;delete source.renewalFrom;
+      const sourceDigest=harnessDigest(source);
+      if (prior && prior.generation > grant.generation) throw Error("Browser watch generation stale");
+      if (prior && prior.generation !== grant.generation) throw Error("Browser watch source immutable; use a new producer");
+      if (prior && prior.generation === grant.generation && (prior.lifecycleRevision ?? 0) > lifecycleRevision)
+        throw Error("Browser watch lifecycle stale");
+      const previousRevision=prior?.leaseRevision??0,previousExpiry=saved?.declaredExpiresAt??prior?.expiresAt;
+      if(prior){
+        if(leaseRevision<previousRevision||leaseRevision>previousRevision+1)throw Error("Browser watch lease stale");
+        if(saved&&saved.sourceDigest!==sourceDigest)throw Error("Browser watch source immutable; use a new producer");
+        if(leaseRevision===previousRevision){
+          if(grant.expiresAt!==previousExpiry||saved&&saved.leaseDigest!==leaseDigest)throw Error("Browser watch lease conflict");
+        }else if(lease.renewalFrom?.leaseRevision!==previousRevision||lease.renewalFrom.expiresAt!==previousExpiry||grant.expiresAt<previousExpiry!||lifecycleRevision!==(prior.lifecycleRevision??0))
+          throw Error("Browser watch renewal unconfirmed");
+      }else if(leaseRevision!==0||lease.renewalFrom)throw Error("Browser watch renewal predecessor unavailable");
+      if(!saved&&receipts.length>=128)throw Error("Browser watch configuration limit");
+      if (!prior && leases.length >= 128) throw Error("Browser watch lease limit");
+      const id = await this.ensure(signal);
+      signal?.throwIfAborted();
+      await this.options.store.put(WATCH_CONFIG_KEY,[...receipts.filter(item=>item.producer!==grant.producer),
+        {owner:grant.owner,producer:grant.producer,generation:grant.generation,lifecycleRevision,leaseRevision,expiresAt:grant.expiresAt,
+          declaredExpiresAt:grant.expiresAt,leaseDigest,sourceDigest} satisfies WatchConfigurationReceipt]);
+      // Write ahead of the encrypted dispatch: a lost reply cannot make an active
+      // producer invisible to a reconstructed host's idle shutdown.
+      await this.options.store.put(WATCH_IDLE_KEY,[...leases.filter(item => item.producer !== grant.producer),
+        {owner:grant.owner,producer:grant.producer,generation:grant.generation,lifecycleRevision,leaseRevision,expiresAt:Math.max(grant.expiresAt,prior?.expiresAt??0)}]);
+      const maintenance = await this.watchMaintenanceRecord();
+      await this.options.store.put(WATCH_MAINTENANCE_KEY,{owner:this.options.owner,state:"needs-attention",reason:"scheduled",
+        nextAt:Math.min(maintenance?.nextAt??Infinity,Date.now()+WATCH_REFRESH_MS,grant.expiresAt),
+        ...(maintenance?.lastConfirmedAt === undefined?{}:{lastConfirmedAt:maintenance.lastConfirmedAt})} satisfies BrowserWatchMaintenance);
+      const status = this.watchStatusValue(await this.invokePrivate(id,{operation:"watch-configure",lease},signal));
+      if (status.producer !== grant.producer || status.generation !== grant.generation || status.expiresAt !== grant.expiresAt ||
+        (status.leaseRevision??0)!==leaseRevision||(leaseRevision>0&&status.leaseRevision===undefined)||
+        (status.lifecycleRevision ?? 0) !== lifecycleRevision || (lease.resumeFrom !== undefined && status.lifecycleRevision === undefined))
+        throw Error("Browser watch configure unconfirmed");
+      return status;
+    },signal);
+  }
+  async watchPause(producer:string,signal?:AbortSignal,lifecycleRevision=0):Promise<BrowserWatchRunnerStatus> {
+    if (!/^[A-Za-z0-9_.:-]{1,160}$/.test(producer)) throw Error("Browser watch producer invalid");
+    if (!Number.isSafeInteger(lifecycleRevision) || lifecycleRevision < 0) throw Error("Browser watch lifecycle invalid");
+    return this.serializeWatch(async () => {
+      const leases = await this.retainedWatchLeases(), prior = leases.find(item => item.producer === producer);
+      if (prior && (prior.lifecycleRevision ?? 0) !== lifecycleRevision) throw Error("Browser watch lifecycle stale");
+      const deadline=AbortSignal.timeout(10_000),bounded=signal?AbortSignal.any([signal,deadline]):deadline;
+      const id = await this.residentWatchVm(bounded);
+      const status = this.watchStatusValue(await this.invokePrivate(id,{operation:"watch-pause",producer,lifecycleRevision},bounded,false,undefined,true));
+      if (status.producer !== producer || status.state !== "paused" || status.lifecycleRevision !== lifecycleRevision || status.pausedThrough === undefined ||
+        prior && (status.generation !== prior.generation || (status.leaseRevision??0)!==(prior.leaseRevision??0)))
+        throw Error("Browser watch pause unconfirmed");
+      await this.options.store.put(WATCH_IDLE_KEY,leases.filter(item => item.producer !== producer));
+      return status;
+    },signal);
+  }
+  /** Passive inspection and release never allocate or resume a VM, nor start a
+   * missing private runner. A stopped VM alone is not durable pause evidence. */
+  private async residentWatchVm(signal?:AbortSignal):Promise<string> {
+    const record=await this.record();
+    if(!record?.id||record.phase!=="available")throw Error("Browser watch runner unavailable");
+    const id=idOf(record.id),current=await this.options.gateway.request(`/v1/sandboxes/${id}`,undefined,signal);
+    if(!/^(started|running)$/.test(String(current.state??current.status).toLowerCase()))throw Error("Browser watch runner unavailable");
+    return id;
+  }
+  /** Acknowledge an observed loss summary without restarting capture, replaying
+   * events, resetting counters, or extending the producer lease. */
+  async watchAcknowledgeGap(producer:string,generation:number,missed:number,signal?:AbortSignal):Promise<BrowserWatchRunnerStatus> {
+    if(!/^[A-Za-z0-9_.:-]{1,160}$/.test(producer)||!Number.isSafeInteger(generation)||generation<1||
+      !Number.isSafeInteger(missed)||missed<1)throw Error("Browser watch gap acknowledgement invalid");
+    return this.serializeWatch(async()=>{
+      const prior=(await this.retainedWatchLeases()).find(lease=>lease.producer===producer);
+      if(prior&&prior.generation!==generation)throw Error("Browser watch generation stale");
+      const record=await this.record();
+      if(!record?.id||record.phase!=="available")throw Error("Browser watch runner unavailable");
+      const deadline=AbortSignal.timeout(10_000),bounded=signal?AbortSignal.any([signal,deadline]):deadline;
+      const id=idOf(record.id),current=await this.options.gateway.request(`/v1/sandboxes/${id}`,undefined,bounded);
+      if(!/^(started|running)$/.test(String(current.state??current.status).toLowerCase()))throw Error("Browser watch runner unavailable");
+      const status=this.watchStatusValue(await this.invokePrivate(id,{operation:"watch-acknowledge-gap",producer,generation,missed},bounded,false,undefined,true));
+      if(status.producer!==producer||status.generation!==generation||!status.coverageGap||
+        status.coverageGap.acknowledged!==missed||status.coverageGap.missed<missed)
+        throw Error("Browser watch gap acknowledgement unconfirmed");
+      return status;
+    },signal);
+  }
+  async watchStatus(signal?:AbortSignal):Promise<BrowserWatchRunnerStatus[]> {
+    const deadline=AbortSignal.timeout(10_000),bounded=signal?AbortSignal.any([signal,deadline]):deadline;
+    const id = await this.residentWatchVm(bounded);
+    return this.readWatchStatuses(id,bounded,true);
   }
   /** Readiness metadata; does not launch a browser process. */
   async harnessEnvironment(signal?: AbortSignal): Promise<SandboxDigest> {
@@ -949,6 +1315,79 @@ export class CodegraffSandbox {
     const id = await this.ensure(signal);
     const receipt = await this.invokePrivate(id, {operation:"harness-job",input}, signal);
     return verifySandboxReceipt(input,receipt);
+  }
+  async harnessReceipt(input: SandboxJob, signal?: AbortSignal): Promise<SandboxJobReceipt> {
+    if (input.owner !== this.options.owner) throw Error("Sandbox receipt owner mismatch");
+    const id = await this.ensure(signal);
+    return verifySandboxReceipt(input, await this.invokePrivate(id, {operation:"harness-receipt",input}, signal));
+  }
+  /** Each decision releases one exact private HTTP request. An uncertain
+   * continuation is never retried here; callers must read the retained receipt. */
+  async harnessGuardedJob(input: SandboxJob, authorize: (challenge: SandboxDispatchChallenge) => boolean | Promise<boolean>, signal?: AbortSignal): Promise<SandboxJobReceipt> {
+    signal?.throwIfAborted();
+    if (input.owner !== this.options.owner || input.dispatch?.protocol !== "host-request/v1" || input.artifact.kind !== "network" ||
+      !Number.isSafeInteger(input.budget.wallMs) || input.budget.wallMs < 1 || input.budget.wallMs > 30_000 ||
+      !Number.isSafeInteger(input.budget.requests) || input.budget.requests < 1 || input.budget.requests > 96)
+      throw Error("Sandbox guarded job invalid");
+    const encoded = sandboxCanonical(input);
+    if (new TextEncoder().encode(encoded).length > 1024 * 1024) throw Error("Sandbox guarded job too large");
+    const job = JSON.parse(encoded) as SandboxJob, jobDigest = await sandboxDigest(job);
+    const artifact = job.artifact;
+    const action = artifact.kind === "network" ? artifact.graph.actions.find(action => action.id === artifact.actionId) : undefined;
+    if (!action) throw Error("Sandbox guarded action unavailable");
+    this.activeOperations++;
+    try {
+      const id = await this.ensure(signal);
+      const deadline = AbortSignal.timeout(job.budget.wallMs), bounded = signal ? AbortSignal.any([signal, deadline]) : deadline;
+      const nonces = new Set<string>();
+      let expiresAt: number | undefined;
+      let reply: SandboxDispatchReply = await this.invokePrivate(id, {operation:"guarded-start",input:job}, bounded);
+      for (let step = 0; ; step++) {
+        bounded.throwIfAborted();
+        if (reply?.status === "receipt") return verifySandboxReceipt(job, reply.receipt);
+        if (step >= job.budget.requests || !reply || reply.status !== "awaiting-dispatch" || reply.protocol !== "host-request/v1" ||
+          reply.owner !== job.owner || reply.operationId !== job.operationId || reply.jobDigest !== jobDigest ||
+          typeof reply.nonce !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(reply.nonce) || nonces.has(reply.nonce) ||
+          !Number.isSafeInteger(reply.expiresAt) || reply.expiresAt <= Date.now() || reply.expiresAt > Date.now() + job.budget.wallMs ||
+          (expiresAt !== undefined && reply.expiresAt !== expiresAt) || !action.steps.map(value => value.id).includes(reply.stepId) ||
+          !Number.isSafeInteger(reply.attempt) || reply.attempt < 1 || reply.attempt > job.budget.requests)
+          throw Error("Sandbox dispatch challenge mismatch");
+        const challenge = structuredClone(reply), prepared = challenge.prepared;
+        if (!prepared || typeof prepared !== "object" || Array.isArray(prepared) || Object.keys(prepared).some(key => !["url","method","address","headers","body"].includes(key)) ||
+          typeof prepared.url !== "string" || prepared.url.length > 8192 || typeof prepared.method !== "string" ||
+          typeof prepared.address !== "string" || prepared.address.length > 128 || !prepared.address ||
+          !prepared.headers || typeof prepared.headers !== "object" || Array.isArray(prepared.headers) ||
+          Object.keys(prepared.headers).length > 128 || Object.entries(prepared.headers).some(([key,value]) => key.length > 256 || typeof value !== "string" || value.length > 16384) ||
+          (prepared.body !== undefined && (typeof prepared.body !== "string" || prepared.body.length > 1024 * 1024)) ||
+          await sandboxDigest(prepared) !== challenge.requestDigest)
+          throw Error("Sandbox dispatch request mismatch");
+        const url = new URL(prepared.url);
+        if (!["https:","http:"].includes(url.protocol) || url.username || url.password || url.hash ||
+          !job.authority.origins.includes(url.origin) || !job.authority.methods.includes(prepared.method))
+          throw Error("Sandbox dispatch authority mismatch");
+        expiresAt = challenge.expiresAt; nonces.add(challenge.nonce);
+        // A host callback can await native persistence. Bound it by the same
+        // fixed job signal, and keep its mutable copy separate from the permit.
+        let onAbort: (() => void) | undefined;
+        let allow: boolean;
+        try {
+          bounded.throwIfAborted();
+          allow = await Promise.race([Promise.resolve().then(() => {
+            bounded.throwIfAborted();
+            if (Date.now() >= challenge.expiresAt) throw Error("Sandbox dispatch challenge expired");
+            return authorize(structuredClone(challenge));
+          }), new Promise<never>((_,reject) => {
+            onAbort = () => reject(bounded.reason); bounded.addEventListener("abort", onAbort, {once:true});
+          })]);
+        } finally { if (onAbort) bounded.removeEventListener("abort", onAbort); }
+        bounded.throwIfAborted();
+        if (typeof allow !== "boolean" || Date.now() >= challenge.expiresAt) throw Error("Sandbox dispatch decision invalid or expired");
+        const decision: SandboxDispatchDecision = {owner:job.owner,operationId:job.operationId,jobDigest,
+          requestDigest:challenge.requestDigest,nonce:challenge.nonce,allow};
+        reply = await this.invokePrivate(id, {operation:"guarded-continue",input:decision}, bounded);
+        if (!allow && reply?.status !== "receipt") throw Error("Sandbox dispatch continued after denial");
+      }
+    } finally { this.activeOperations--; }
   }
   async codeSegment(
     input: import("./code-sandbox-protocol.ts").CodeSegment,
@@ -1018,18 +1457,33 @@ export class CodegraffSandbox {
       if (owner && owner !== this.options.owner)
         throw new Error("Browser request-memory owner mismatch");
       const id = await this.ensure(signal);
+      const makeDriver = (tab?: string): BrowserDriver => {
       const invoke = (
         request: Record<string, unknown>,
         callSignal?: AbortSignal,
-      ) => this.invokePrivate(id, request, callSignal ?? signal);
-      const readAndFlush = async (request: Record<string, unknown>, callSignal?: AbortSignal) => {
-        try { return await invoke(request, callSignal); }
+      ) => this.invokePrivate(id, {...request, ...(tab ? {tab} : {})}, callSignal);
+      const readAndFlush = (request: Record<string, unknown>, callSignal?: AbortSignal) => this.dispatchBrowser(async () => {
+        callSignal?.throwIfAborted();
+        try { return await this.invokePrivate(id,{...request,...(tab?{tab}:{})},callSignal,false,request.operation==="execute-scoped"?emit:undefined); }
         finally {
-          const batch = runnerReply(await this.exec(id, `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js drain`, callSignal ?? signal));
-          await this.flushBrowserEvents(id, batch, emit, callSignal ?? signal);
+          if(!(request.operation==="execute-scoped"&&callSignal?.aborted)) {
+            const batch = runnerReply(await this.exec(id, `cd ${RUNNER_ROOT} && /home/daytona/.bun/bin/bun runner.js drain`, callSignal));
+            await this.flushBrowserEvents(id, batch, emit, callSignal);
+          }
         }
-      };
+      });
       return {
+        ...(!tab ? {forTab: async (key: string) => {
+          if (!/^[A-Za-z0-9_-]{1,128}$/.test(key)) throw Error("Invalid task tab key");
+          return makeDriver(key);
+        }} : {}),
+        watchContext: () => this.watchContext(),
+        watchConfigure: (lease, signal) => this.watchConfigure(lease,signal),
+        watchPause: (producer, signal, lifecycleRevision) => this.watchPause(producer,signal,lifecycleRevision),
+        watchStatus: () => this.watchStatus(),
+        watchAcknowledgeGap: (producer,generation,missed,signal) => this.watchAcknowledgeGap(producer,generation,missed,signal),
+        hasActiveWatchLease: () => this.hasActiveWatchLease(),
+        executeScoped: (action, policy, signal) => readAndFlush({operation:"execute-scoped",action,policy},signal),
         authorizeInspection: (policy, signal) => invoke({operation:"authorize-inspection",policy},signal),
         inspectCurrentPage: (policy, signal) => readAndFlush({operation:"inspect-current-page",policy},signal),
         readConnectionPage: (url, linkOffset = 0, signal) => readAndFlush({operation:"connection-page",url,linkOffset},signal),
@@ -1065,9 +1519,11 @@ export class CodegraffSandbox {
         requestRehydrate: (pointerId, inputs = {}, signal) =>
           readAndFlush({ operation: "hydrate", pointerId, inputs }, signal),
         close: async () => {
-          await this.stop();
+          if (tab) await readAndFlush({operation:"tab-close"});
+          else await this.stop();
         },
-        execute: async (action, signal) => {
+        execute: (action, signal) => this.dispatchBrowser(async () => {
+          signal?.throwIfAborted();
           if (this.maintaining) throw new Error("Sandbox maintenance in progress");
           this.activeOperations++;
           const operation = crypto.randomUUID();
@@ -1076,7 +1532,7 @@ export class CodegraffSandbox {
             await this.upload(
               id,
               path,
-              JSON.stringify({ id: operation, action }),
+              JSON.stringify({ id: operation, action, ...(tab ? {tab} : {}) }),
               signal,
             );
             const raw = await this.exec(
@@ -1125,8 +1581,10 @@ export class CodegraffSandbox {
               this.activeOperations--;
             }
           }
-        },
+        }),
       };
+      };
+      return makeDriver();
     };
   }
 }

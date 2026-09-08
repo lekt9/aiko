@@ -293,7 +293,7 @@ export function channelAppendAllowed(
         if (
           !p ||
           p.id !== e.id ||
-          !["poll", "renew"].includes(p.action) ||
+          !["poll", "renew", "retry-send"].includes(p.action) ||
           !Number.isSafeInteger(p.maxRuns) ||
           p.maxRuns < 1 ||
           p.maxRuns > 16 ||
@@ -312,12 +312,14 @@ export function channelAppendAllowed(
             (r) =>
               r.type === "AikoChannelControlPlan" &&
               (r.plan as any)?.action === p.action &&
+              (p.action !== "retry-send" || (r.plan as any)?.partition === p.partition) &&
+              (p.action === "retry-send" ||
               !local.some(
                 (s) => s.type === "AikoChannelControlStopped" && s.id === r.id,
               ) &&
               local.filter(
                 (t) => t.type === "AikoChannelControlTick" && t.plan === r.id,
-              ).length < Number((r.plan as any).maxRuns),
+              ).length < Number((r.plan as any).maxRuns)),
           )
         )
           return false;

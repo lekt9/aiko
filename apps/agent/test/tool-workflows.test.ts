@@ -28,6 +28,55 @@ const result = (step: string, ...path: string[]) => ({kind:"result" as const,ste
 const step = (id: string, toolId = "echo"): WorkflowDefinition["steps"][number] => ({id,toolId,dependsOn:[] as string[],arguments:{value:literal(id)}});
 const definition = (steps: WorkflowDefinition["steps"] = [step("first")]): WorkflowDefinition => ({version:1,id:"workflow",parameters:[],steps});
 const sleep = (ms: number) => new Promise(resolve=>setTimeout(resolve,ms));
+
+for (const change of ["schema", "effect", "missing", "legacy"] as const) test(`saved procedure rejects ${change} before any step and preserves historical success`, async () => {
+  const h = harness();
+  h.register("later", "read", async call => ({ status: "succeeded", output: call.input.value }));
+  const def = definition([step("first"), { ...step("last", "later"), dependsOn: ["first"] }]);
+  await h.engine.define(def);
+  await h.engine.run({ workflowId: def.id, runId: "original", input: {} });
+  const saved = await h.engine.crystallize({ workflowId: def.id, runId: "original" });
+  expect(saved.applicability?.basis).toBe("observed-success");
+  const oldReceipt = await h.engine.receipt("original");
+  if (change === "schema") h.registry.get("later")!.inputSchema = { type: "object", properties: { different: {} } };
+  if (change === "effect") h.registry.get("later")!.effect = "write";
+  if (change === "missing") h.registry.delete("later");
+  if (change === "legacy") {
+    const legacy = structuredClone(saved); delete legacy.applicability;
+    await h.store.putDefinition("alice", legacy);
+  }
+  h.calls.length = 0;
+  const restarted = new ToolWorkflows({ owner: "alice", store: h.store, dispatcher: { resolve: async ({ toolId }) => h.registry.get(toolId) } });
+  const result = await restarted.run({ workflowId: def.id, runId: "changed", input: {} });
+  expect(result.status).toBe("failed");
+  expect(result.calls).toBe(0); expect(h.calls).toHaveLength(0);
+  expect(await restarted.receipt("original")).toEqual(oldReceipt);
+  expect(await restarted.run({ workflowId: def.id, runId: "changed", input: {} })).toEqual(result);
+});
+
+test("saved procedures reuse fresh parameters and stop downstream schema drift during a run", async () => {
+  const h = harness();
+  let drift = false;
+  h.register("source", "read", async call => {
+    if (drift) h.registry.get("echo")!.inputSchema = { type: "object", properties: { changed: {} } };
+    return { status: "succeeded", output: call.input.value };
+  });
+  const def: WorkflowDefinition = { ...definition([
+    { ...step("source", "source"), arguments: { value: { kind: "input", name: "value" } } },
+    { ...step("echo"), dependsOn: ["source"], arguments: { value: result("source") } },
+  ]), parameters: ["value"] };
+  await h.engine.define(def);
+  await h.engine.run({ workflowId: def.id, runId: "seed", input: { value: "first" } });
+  await h.engine.crystallize({ workflowId: def.id, runId: "seed" });
+  const fresh = await h.engine.run({ workflowId: def.id, runId: "fresh", input: { value: "new-input" } });
+  expect(fresh.status).toBe("succeeded");
+  expect(h.calls.at(-1)?.input).toEqual({ value: "new-input" });
+  drift = true; h.calls.length = 0;
+  const changed = await h.engine.run({ workflowId: def.id, runId: "mid-run", input: { value: "third" } });
+  expect(changed.status).toBe("failed");
+  expect(changed.reason).toBe("procedure-dependencies-changed");
+  expect(h.calls.map(c => c.tool)).toEqual(["source"]);
+});
 function harness(extra: Partial<ToolWorkflowsOptions> = {}) {
   const store = new Store(), registry = new Map<string,RegisteredWorkflowTool>();
   const calls: {tool:string;owner:string;input:Record<string,WorkflowJson>}[] = [];

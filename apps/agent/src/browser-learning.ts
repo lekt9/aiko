@@ -18,12 +18,13 @@ import {
   browserRequestEvidenceIdOf,
 } from "@unbrowse/browser-harness/trace";
 import { canonicalStringify, sha256 } from "@unbrowse/browser-harness/har";
-import { buildSiteHarnessDraftFromValidatedCapture } from "@unbrowse/browser-harness/harness-builder";
+import { buildObservedReadHarnessDraft, buildSiteHarnessDraftFromValidatedCapture } from "@unbrowse/browser-harness/harness-builder";
 import { artifactDigestOf } from "./capability-builder-network.ts";
 import { validateNoSecrets } from "entity-learn/cloudflare";
 import { responseSemanticsByRequest, type ResponseSemanticEvidence } from "@unbrowse/browser-harness/response-semantics";
 import type { BrowserNetworkToolPrepared } from "@unbrowse/browser-harness/trace";
-import type { NetworkEntry } from "@unbrowse/browser-harness/network-listener";
+import type { NetworkEntry, NetworkExchangeSource } from "@unbrowse/browser-harness/network-listener";
+import { actionEndpointTarget, readEndpointTarget, endpointDescriptionEventOf } from "./observed-endpoint.ts";
 
 export interface BrowserLearningPending {
   type: "AikoBrowserLearningPending";
@@ -60,6 +61,8 @@ export class BrowserLearning {
   constructor(
     private options: {
       threadId: string;
+      /** Require a proven page root for graphs; account-wide observations remain bodyless. */
+      pageScoped?: boolean;
       nextSequence(): number;
       browserSession?(origin: string): ImplicitBrowserSessionAdapter | undefined;
       emit(event: Event): Promise<void>;
@@ -67,19 +70,34 @@ export class BrowserLearning {
       onPrepared?(event: BrowserNetworkToolPrepared, responses: Record<string, unknown>, semantics: ReadonlyMap<string, ResponseSemanticEvidence>): Promise<void>;
     },
   ) {}
-  /** Bound tracker traffic per navigation without disabling learning on later routes. */
-  private captureLimit = 120;
-  private capped = false;
-  private capturedIndexes = new Set<number>();
+  /** Each page has its own bounded navigation allowance. Background traffic in
+   * one task must not erase or spend another task's observation allowance. */
+  private captures = new Map<string | undefined, { count: number; indexes: Set<number> }>();
+  private sourceIndexOffset = 0;
+  private nextSourceIndex = 0;
 
-  beginNavigation() {
-    this.captureLimit = this.networkSequence + 120;
-    this.capped = false;
-    this.capturedIndexes.clear();
+  /** A replacement listener restarts its local indexes, never durable identities
+   * or a former page's eligibility. Call only after the old listener settles. */
+  beginObservation() {
+    this.sourceIndexOffset = this.nextSourceIndex;
+    this.captures.clear();
   }
 
-  async observe(entry: NetworkEntry, index: number, complete: boolean) {
-    if (this.capped) return;
+  beginNavigation(pageTargetId?: string) {
+    this.captures.delete(this.options.pageScoped ? pageTargetId : undefined);
+  }
+
+  async observe(entry: NetworkEntry, index: number, complete: boolean, source?: NetworkExchangeSource) {
+    index += this.sourceIndexOffset;
+    this.nextSourceIndex = Math.max(this.nextSourceIndex, index + 1);
+    const key = this.options.pageScoped ? source?.pageTargetId : undefined;
+    let capture = this.captures.get(key);
+    if (!capture) {
+      if (this.captures.size >= 65) throw Error("Browser learning page capacity exceeded");
+      capture = { count: 0, indexes: new Set() };
+      this.captures.set(key, capture);
+    }
+    if (capture.count >= 120) return;
     const single = prepareTrustedNetworkEntries([entry]);
     const trace = {
       ...single.trace,
@@ -104,13 +122,11 @@ export class BrowserLearning {
       const identity = `${fact.type}:${fact.requestId}`,
         content = canonicalStringify(candidate.fact);
       if (this.observed.get(identity) === content) continue;
-      if (this.networkSequence >= this.captureLimit) {
-        this.capped = true;
-        return;
-      }
+      if (capture.count >= 120) return;
       await this.options.emit(candidate);
       this.facts.push(candidate);
-      this.capturedIndexes.add(index);
+      capture.indexes.add(index);
+      capture.count++;
       this.networkSequence++;
       this.observed.set(identity, content);
     }
@@ -120,10 +136,14 @@ export class BrowserLearning {
     entries: readonly NetworkEntry[],
     windows: readonly AgentBrowserCallWindow[],
     targetOrigin: string,
+    scope?: { pageTargetId: string; callIds: ReadonlySet<string> },
   ) {
+    const indexes = this.options.pageScoped
+      ? (scope ? this.captures.get(scope.pageTargetId)?.indexes : undefined)
+      : this.captures.get(undefined)?.indexes;
     const completed = entries.flatMap((entry, index) =>
-      entry._observationComplete === true && this.capturedIndexes.has(index)
-        ? [{ entry, sourceId: `req-${String(index + 1).padStart(4, "0")}` }]
+      entry._observationComplete === true && indexes?.has(index + this.sourceIndexOffset)
+        ? [{ entry, sourceId: `req-${String(index + this.sourceIndexOffset + 1).padStart(4, "0")}` }]
         : [],
     );
     if (!completed.length) return { prepared: 0, pending: entries.length };
@@ -170,7 +190,7 @@ export class BrowserLearning {
       prepared.trace.entries,
       windows,
       targetOrigin,
-    );
+    ).filter(association => !this.options.pageScoped || scope?.callIds.has(association.callId));
     for (const association of associations) {
       const evidenceId = browserRequestEvidenceIdOf({
         captureId,
@@ -244,6 +264,7 @@ export class BrowserLearning {
       await this.options.emit({ ...fields, id });
       this.pending.add(id);
     }
+    const semantics = responseSemanticsByRequest(prepared.trace, new Set(prepared.trace.entries.map(e => e.id)));
     let count = 0;
     for (const tool of compiled.prepared) {
       if (this.prepared.has(tool.digest)) continue;
@@ -254,6 +275,8 @@ export class BrowserLearning {
         tool,
       });
       await this.options.emit(event);
+      const target = readEndpointTarget(event), response = semantics.get(target.requestId);
+      if (response) await this.options.emit(endpointDescriptionEventOf(target, response));
       if (this.options.onPrepared) {
         const responses: Record<string, unknown> = {};
         for (const evidence of tool.definition.evidence) {
@@ -266,6 +289,7 @@ export class BrowserLearning {
       this.prepared.add(tool.digest);
       count++;
     }
+    let actionCandidate: (Event & Parameters<typeof actionEndpointTarget>[0]) | undefined;
     try {
       const draft = buildSiteHarnessDraftFromValidatedCapture(validated.capture);
       const blocked = draft.unresolved.filter(item => item.code !== "session_adapter_required");
@@ -274,9 +298,7 @@ export class BrowserLearning {
         const digest = artifactDigestOf(draft.artifact);
         const write = draft.artifact.actions.some(action => action.steps.some(step => !["GET", "HEAD"].includes(step.method)));
         const sessionRequired = draft.unresolved.some(item => item.code === "session_adapter_required");
-        if ((write || sessionRequired) && !this.prepared.has(digest)) {
-          this.prepared.add(digest);
-          await this.options.emit({
+        if ((write || sessionRequired) && !this.prepared.has(digest)) actionCandidate = {
             type: "AikoObservedActionPrepared",
             threadId: this.options.threadId,
             captureId,
@@ -286,10 +308,37 @@ export class BrowserLearning {
             effect: write ? "write" : "read",
             sessionRequired,
             artifact: draft.artifact,
-          });
-        }
+          };
       }
     } catch { /* No mutating candidate, or the draft still needs a non-session adapter. */ }
+    // A failed durable write must remain visible and eligible for preparation
+    // again. Compiling an action never dispatches that external action.
+    if (actionCandidate) {
+      await this.options.emit(actionCandidate);
+      const target = actionEndpointTarget(actionCandidate), response = semantics.get(target.requestId);
+      if (response) await this.options.emit(endpointDescriptionEventOf(target, response));
+      this.prepared.add(actionCandidate.artifactDigest);
+    }
+    // Session-bound JSON reads are explicit captured interfaces, not mutating
+    // action inference. Their credentials remain in the existing host adapter.
+    for (const exchange of validated.capture.exchanges) {
+      if (!["GET", "HEAD"].includes(exchange.request.method) || !exchange.response.mimeType.includes("json")) continue;
+      let candidate: (Event & Parameters<typeof actionEndpointTarget>[0]) | undefined;
+      try {
+        const draft = buildObservedReadHarnessDraft(validated.capture, { requestId: exchange.requestId, interfaceId: `read-${sha256(exchange.requestId).slice(0, 32)}` });
+        if (!draft.unresolved.some(issue => issue.code === "session_adapter_required") || draft.unresolved.some(issue => issue.code !== "session_adapter_required")) continue;
+        validateNoSecrets(draft.artifact);
+        const digest = artifactDigestOf(draft.artifact);
+        if (this.prepared.has(digest)) continue;
+        candidate = { type: "AikoObservedActionPrepared", threadId: this.options.threadId, captureId, importDigest: plan.importDigest,
+          actionId: draft.artifact.actions[0]!.id, artifactDigest: digest, effect: "read", sessionRequired: true, artifact: draft.artifact };
+      } catch { continue; }
+      // Mark prepared only after the durable append succeeds, as for writes above.
+      await this.options.emit(candidate);
+      const target = actionEndpointTarget(candidate), response = semantics.get(target.requestId);
+      if (response) await this.options.emit(endpointDescriptionEventOf(target, response));
+      this.prepared.add(candidate.artifactDigest);
+    }
     return {
       prepared: count,
       pending: entries.length - completed.length,

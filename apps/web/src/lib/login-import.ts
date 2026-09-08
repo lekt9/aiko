@@ -4,8 +4,9 @@
  * usernames are ever sent. Aiko never stores the exported passwords. */
 import { suggestCsvMapping, type CsvTable } from "./csv-import";
 import { websiteDomain, type ConnectorConnection } from "./connectors";
+import { LOGIN_IMPORT_MAX_ROWS, loginImportCapacityError } from "@unlock/protocol";
 
-export const MAX_STAGED_IMPORT_ROWS = 500;
+export const MAX_STAGED_IMPORT_ROWS = LOGIN_IMPORT_MAX_ROWS;
 
 export type ImportRow = { name?: string; website: string; username?: string };
 export type LoginImportPreview = {
@@ -91,15 +92,14 @@ export function previewConnectorCsv(
       message: "Ready to import",
     });
   }
-  if (
-    previews.filter((p) => p.status === "ready").length > MAX_STAGED_IMPORT_ROWS
-  )
+  const capacityError = loginImportCapacityError(rowsFromPreviews(previews));
+  if (capacityError)
     return previews.map((p) =>
       p.status === "ready"
         ? {
             ...p,
             status: "invalid" as const,
-            message: `Import at most ${MAX_STAGED_IMPORT_ROWS} logins at a time.`,
+            message: capacityError,
           }
         : p,
     );

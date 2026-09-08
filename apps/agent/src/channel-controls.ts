@@ -6,7 +6,7 @@ import {
 } from "./channel-bindings.ts";
 export interface ChannelControlPlan {
   id: string;
-  action: "poll" | "renew";
+  action: "poll" | "renew" | "retry-send";
   partition: string;
   maxRuns: number;
   intervalMs: number;
@@ -24,6 +24,14 @@ export const controlOperationId = (plan: Event, ordinal: number) =>
     plan.id,
     ordinal,
   ]);
+const requestType = (action: ChannelControlPlan["action"]) => action === "poll" ? "AikoChannelPollRequested" : action === "renew" ? "AikoChannelRenewRequested" : "AikoChannelOutputPrepared";
+const settledType = (action: ChannelControlPlan["action"]) => action === "poll" ? "AikoChannelPollSettled" : action === "renew" ? "AikoChannelRenewSettled" : "AikoChannelOutputSettled";
+/** Retry attempts have separate native keys and one original external delivery ID. */
+export function channelSendRetryPlan(events: readonly Event[], b: {owner:string;id:string;generation:number}, outputId: string) {
+  return events.find(e => channelEventKey(e) && e.owner === b.owner && e.channel === b.id && e.generation === b.generation &&
+    e.type === "AikoChannelControlPlan" && (e.plan as ChannelControlPlan)?.action === "retry-send" &&
+    Array.from({length:Number((e.plan as ChannelControlPlan).maxRuns)},(_,i)=>controlOperationId(e,i)).includes(outputId));
+}
 /** Pure projection only. A due date is not permission and never executes an effect. */
 export function channelControlState(events: readonly Event[], owner: string) {
   const rows = events.filter((e) => e.owner === owner && channelEventKey(e));
@@ -55,24 +63,24 @@ export function channelControlState(events: readonly Event[], owner: string) {
       else if (b.status !== "active") reason = "paused";
       else {
         due = p.firstAt;
-        for (; ordinal < p.maxRuns; ordinal++) {
+        if (p.action === "retry-send") {
+          const original = local.find(e => e.type === "AikoChannelOutputSettled" && e.id === p.partition);
+          if (!original) reason = "source_unsettled";
+          else if ((original.result as {status?:string})?.status !== "failed") reason = "source_not_failed";
+          else due = Math.max(due,Number(original.at)+Math.max(p.intervalMs,p.backoffMs));
+        }
+        for (; !reason && ordinal < p.maxRuns; ordinal++) {
           const id = controlOperationId(plan, ordinal);
           const request = local.find(
             (e) =>
               e.id === id &&
-              e.type ===
-                (p.action === "poll"
-                  ? "AikoChannelPollRequested"
-                  : "AikoChannelRenewRequested"),
+              e.type === requestType(p.action),
           );
           if (!request) break;
           const settled = local.find(
             (e) =>
               e.id === id &&
-              e.type ===
-                (p.action === "poll"
-                  ? "AikoChannelPollSettled"
-                  : "AikoChannelRenewSettled"),
+              e.type === settledType(p.action),
           );
           if (!settled) {
             reason = "pending";
@@ -81,9 +89,10 @@ export function channelControlState(events: readonly Event[], owner: string) {
           }
           if (
             (p.action === "renew" && settled.status !== "ready") ||
-            (p.action === "poll" && settled.status !== "accepted")
+            (p.action === "poll" && settled.status !== "accepted") ||
+            (p.action === "retry-send" && (settled.result as {status?:string})?.status !== "failed")
           ) {
-            reason = String(settled.status ?? "unavailable");
+            reason = String(p.action === "retry-send" ? (settled.result as {status?:string})?.status ?? "unavailable" : settled.status ?? "unavailable");
             due = undefined;
             break;
           }
@@ -123,10 +132,7 @@ export function channelControlState(events: readonly Event[], owner: string) {
         local.some(
           (e) =>
             e.id === id &&
-            e.type ===
-              (p.action === "poll"
-                ? "AikoChannelPollRequested"
-                : "AikoChannelRenewRequested"),
+            e.type === requestType(p.action),
         ),
       ).length;
       return { plan, p, b, ordinal, used, reason, due };

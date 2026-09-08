@@ -17,15 +17,16 @@
     "aiko:build": "pnpm --filter @unlock/agent build",
     "aiko:backup": "bun apps/agent/src/backup.ts",
     "test:aiko": "pnpm --filter @unlock/agent test",
-    "test:browser-client": "pnpm --filter @unbrowse/browser-harness test:client",
+    "test:browser-client": "bun run --cwd ../unbrowse-playground/runtime test:client",
     "aiko:browser:init": "bun scripts/init-aiko-browser.ts",
     "server:dev": "pnpm --filter @unlock/server dev",
     "server:start": "pnpm --filter @unlock/server start",
     "server:init": "node scripts/init-backend.mjs",
     "server:rewrap": "pnpm --filter @unlock/server exec node dist/ops.js rewrap",
     "agent": "node packages/sdk/dist/cli.js",
-    "test:e2e": "node scripts/browser-qa.mjs --aiko",
-    "test:e2e:aiko": "node scripts/browser-qa.mjs --aiko",
+    "test:e2e": "node scripts/aiko-ui-qa.mjs",
+    "test:e2e:aiko": "node scripts/aiko-ui-qa.mjs",
+    "test:e2e:gateway": "node scripts/browser-qa.mjs --aiko",
     "test:e2e:legacy": "node scripts/browser-qa.mjs",
     "test:csv": "node scripts/browser-qa.mjs --csv",
     "test:http": "node scripts/http-smoke.mjs",
@@ -54,7 +55,7 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "@unbrowse/browser-harness": "workspace:*",
+    "@unbrowse/browser-harness": "link:../unbrowse-playground/runtime",
     "drizzle-orm": "^0.45.2",
     "postgres": "^3.4.9"
   }

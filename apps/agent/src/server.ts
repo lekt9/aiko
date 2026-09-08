@@ -1,8 +1,12 @@
+import { browserWatchApi } from "./browser-watch-api.ts";
+import { harnessLibraryApi, harnessLibraryReadRequest } from "./harness-library-api.ts";
+import { browserEventKey, browserEventAppendAllowed, browserEventIngress, type BrowserProducerPolicy } from "./browser-events.ts";
+import { browserWatchEventKey, browserWatchAppendAllowed } from "./browser-watches.ts";
 import { createSecretaryWorkBinding, secretaryWorkApi, secretaryWorkView } from "./secretary-work.ts";
 import { workAppendAllowed, workEventKey } from "./commitments.ts";
 import { codingWorkspaceTools, codingWorkspaceInference, codingWorkspaceEventKey } from "./coding-workspace.ts";
 import { CodegraffCodingWorkspace } from "./coding-workspace-host.ts";
-import { ProjectContext, type ProjectContextOptions } from "./project-instructions.ts";
+import { ProjectContext, projectContextEventKey, type ProjectContextOptions } from "./project-instructions.ts";
 import { GeneralMcp, type McpBinding } from "./general-mcp.ts";
 import { configuredMcpBinding } from "./general-mcp-config.ts";
 import { createDatabaseBinding } from "./database-host.ts";
@@ -20,7 +24,8 @@ import { registryManagementContinuations, type RegistryManagementPolicy } from "
 import { mediaHostEventKey,mediaIngressApi,telegramMediaAdmission } from "./media-host.ts";
 import { mediaProcessingEventKey,mediaProcessingAppendAllowed } from "./media-processing.ts";
 import { codeResultCustody } from "./code-result-custody.ts";
-import { harnessBlobStore } from "./harness-library.ts";
+import { HarnessLibrary, harnessBlobStore } from "./harness-library.ts";
+import { memoryObservationDependency } from "./retained-result-dependencies.ts";
 import {CodegraffComputeHarness,ProvisionedComputeHarness,trustedCodegraffMediaRecipe,configuredJavascriptEnvironment,dispatchHarnessSandbox,type ComputeHarnessHostConfig} from "./compute-harness.ts";
 import {readFileSync} from "node:fs";
 import {Codegraff,CodegraffSandbox} from "./codegraff.ts";
@@ -35,8 +40,9 @@ import {harnessLibraryEventKey,harnessLibraryAppendAllowed} from "./harness-libr
 import {sourceAwareHarnessBinding} from "./harness-sources.ts";
 import { codeWorkerThread, createCodeChildActor, workerGrantOf, workerCancellations, workerEventKey, workerInference, type WorkerBinding, type WorkerPolicy } from "./code-agents.ts";
 import { memoryTools } from "./memory.ts";
+import { databaseEntities } from "./database-entities.ts";
 import { publicWebTool } from "./public-web.ts";
-import { createObservedNetworkTools, resolveObservedRead } from "./observed-network.ts";
+import { createObservedNetworkTools, resolveObservedRead, listObservedReads } from "./observed-network.ts";
 import { SandboxCompute, sandboxComputeTools } from "./sandbox-compute.ts";
 import {CodeHarness} from "./code-harness.ts";
 import {Layer} from "effect";
@@ -44,7 +50,7 @@ import {loginObservationEvent,type NativeLoginObservation} from "./native-login-
 import {connectorLoginEventKey} from "./connector-login.ts";
 import {hostedLoginOperation,guardLoginOperationInput,loginOperationApi} from "./login-operation-host.ts";
 import {loginOperationEventKey} from "./login-operation.ts";
-import { createHostedChannels, channelApi, type ChannelAdapterBindings, type HostedChannels } from "./channel-host.ts";
+import { createHostedChannels, channelApi, browserWatchActorAdmissionRequired, browserWatchDispatchAdmissionRequired, type ChannelAdapterBindings, type HostedChannels, type BrowserWatchHostPolicy } from "./channel-host.ts";
 import { channelEventKey } from "./channel-bindings.ts";
 import { agentKeys } from "tardie/log/events";
 import {
@@ -55,6 +61,7 @@ import {
   methodIngressKeyOf,
 } from "tardie/core/method";
 import { turnEpochOf, turnTerminalOf } from "tardie/code/execution/turns";
+import { preparingReplies } from "./channel-response.ts";
 import { validateActor } from "tardie/core/actor";
 import { withRequiredResponse } from "./channel-response.ts";
 import {
@@ -87,6 +94,7 @@ import {
 import { sqliteWorkflowKV } from "./workflow-store.ts";
 import { withUnlockBrowser } from "./browser-unlock-factory.ts";
 import { connectorApi } from "./connector-api.ts";
+import { createNativeLoginRenderer } from "./native-login-render.ts";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { browserTraceKeys } from "@unbrowse/browser-harness/trace";
@@ -167,10 +175,10 @@ import {
   type HttpFetch,
 } from "./security.ts";
 import { RELEASE_GATES } from "./capabilities.ts";
-import type { AikoConfig } from "./config.ts";
+import { contributionModeFor, type AikoConfig } from "./config.ts";
 import { CONSOLE_HTML } from "./console.ts";
 import { withSpokenHistory } from "./inference.ts";
-import { BrowserController } from "./browser.ts";
+import { BrowserController, WORKER_BROWSER_OPERATIONS } from "./browser.ts";
 import {
   browserDriverFactory,
   type BrowserDriverFactory,
@@ -191,6 +199,8 @@ export async function createService(
     registrySandbox?:(owner:string,kv:import("./workflow-host.ts").WorkflowKV)=>RegistrySandboxTransport|undefined;
     providerAdapters?: ProviderAdapterPolicies;
     logSources?: ChannelLogSourcePolicy;
+    browserProducers?: BrowserProducerPolicy;
+    browserWatches?: BrowserWatchHostPolicy;
     channelIngress?: ProviderIngressLookup;
     channelBridge?: ProviderBridgeFactory;
     channels?: (owner: string) => ChannelAdapterBindings | undefined;
@@ -217,6 +227,8 @@ export async function createService(
     webRead?: (url: string, signal: AbortSignal) => Promise<PublicPage>;
   } = {},
 ) {
+  if (config.browserWatchDeployment && Object.keys(config.browserWatchDeployment.owners).length)
+    throw Error("AIKO_BROWSER_WATCH_CONFIG requires the hosted Worker private browser; local sign-in does not share the registry sandbox");
   const redact = redactor([
     config.modelKey ?? "",
     config.memoryEmbedding?.apiKey ?? "",
@@ -278,6 +290,8 @@ export async function createService(
             event("AikoHooksActivated", { id: "background-v1" }),
           );
           await host.commitRoot(host.self(`user-${owner}`), e.type==="AikoPrivateLoginObserved" ? loginObservationEvent(owner,e as unknown as NativeLoginObservation) : e);
+          if(e.type==="AikoConnectionChanged"&&e.owner===owner&&e.provider==="browser"&&e.status==="disconnected")
+            await channelsFor(owner)?.watches?.disconnect(e.connectionId);
           wake(owner);
         },
         readOwnedLogs: async (boundOwner) =>
@@ -306,12 +320,13 @@ export async function createService(
       const kv = sqliteWorkflowKV(workflowDb ??= new Database(privateDatabaseFile(join(config.stateDir, "workflows.sqlite"))));
       try {
         const binding = createDatabaseBinding({ owner, thread: `user-${owner}`, storage, kv,
+          entities: databaseEntities({ owner, stateDir: accountDirectory(config.stateDir, owner) }),
           readEvents: () => host.read(`user-${owner}`),
+          sourceCatalog: () => listObservedReads({ owner, thread: `user-${owner}`, redact, readEvents: () => host.read(`user-${owner}`) }),
           sources: async (sourceId, digest, signal) => {
             if (sourceId !== digest) throw Error("Registered source digest required");
             const source = await resolveObservedRead({ owner, thread: `user-${owner}`, redact, readEvents: () => host.read(`user-${owner}`), checkArcade: async domain => (await connectorsFor(owner).search(domain)).fallbackAllowed, session: (origin, signal) => ensureUnlockSession({ owner, origin, config: config.connectorVault, search: domain => connectorsFor(owner).search(domain), signal, renew: false }) }, digest, signal);
-            return { ...source, execute: (inputs, consume, signal, budget) => source.execute(inputs,
-              (step, body) => consume(step, body === undefined ? undefined : JSON.parse(JSON.stringify(body))), signal, budget) };
+            return source;
           },
           authorize: async kind => validOwner(owner) && (kind === "read" || config.databaseWriteOwners === undefined || config.databaseWriteOwners.includes(owner)),
         });
@@ -356,6 +371,7 @@ export async function createService(
     redact,
     readOwnedEvents: () => host.read(`user-${owner}`),
     listWorkflows: () => workflowsFor(owner).engine.list(),
+    harnessLibrary: () => { const registry = registryFor(owner); return registry?.sources?.library ?? registry?.library; },
     vaultDomains: async () =>
       Object.keys(config.connectorVault?.accounts[owner]?.connections ?? {}),
   });
@@ -490,6 +506,7 @@ export async function createService(
           management: () => overrides.registryManagement?.(owner),
           providerAdapters: overrides.providerAdapters,
           logSources: overrides.logSources,
+          browserWatches: !!overrides.browserWatches,
           disabledReason: config.codeMode !== true ? "code_mode_disabled" : undefined,
           missingReason: config.mode === "live" && !config.modelKey ? "sandbox_secret_not_configured" : "sandbox_transport_not_configured",
           policy: () => ({
@@ -515,7 +532,16 @@ export async function createService(
   };
   const mcpClients=new Map<string,GeneralMcp|undefined>();
   const projectContexts=new Map<string,ProjectContext|undefined>();
-  const projectFor=(owner:string,thread:string)=>{if(!projectContexts.has(thread)){const options=overrides.projectContext?.(owner,thread);if(options&&(options.owner!==owner||options.thread!==thread))throw Error("Foreign project context binding");projectContexts.set(thread,options?new ProjectContext(options):undefined);}return projectContexts.get(thread);};
+  const projectFor=(owner:string,thread:string)=>{
+    const coding=overrides.projectContext?undefined:config.codeMode?codingFor(owner):undefined;
+    const cached=projectContexts.get(thread);
+    if(!projectContexts.has(thread)||!overrides.projectContext&&cached?.options.remote?.grantRevision!==coding?.grantRevision){
+      const options=overrides.projectContext?overrides.projectContext(owner,thread):coding?.projectContext(thread,redact,()=>projectCodingFor(owner,thread));
+      if(options&&(options.owner!==owner||options.thread!==thread))throw Error("Foreign project context binding");
+      projectContexts.set(thread,options?new ProjectContext(options):undefined);
+    }
+    return projectContexts.get(thread);
+  };
   const mcpFor=(owner:string,thread:string)=>{if(!mcpClients.has(thread)){const binding=overrides.mcp?overrides.mcp(owner,thread):configuredMcpBinding({owner,thread,servers:()=>config.mcpServers??{},env:config.mcpSecrets??{},redact,current:()=>validOwner(owner)&&config.codeMode===true&&bindingOf(thread)?.owner===owner});if(binding&&(binding.owner!==owner||binding.thread!==thread))throw Error("Foreign MCP binding");mcpClients.set(thread,binding?new GeneralMcp(binding):undefined);}return mcpClients.get(thread);};
   const compactionFor=(owner:string)=>({
     compactionBlobs:(registryFor(owner)?.sources?.library??registryFor(owner)?.library)?.blobs??harnessBlobStore(sqliteWorkflowKV(workflowDb??=new Database(privateDatabaseFile(join(config.stateDir,"workflows.sqlite"))))),
@@ -525,6 +551,16 @@ export async function createService(
     },
   });
   const workerRoutingFor=(owner:string)=>config.mode==="live"?createModelRouting({owner,...compactionFor(owner),config:config.modelRouting??parseModelRouting({},{model:config.model,maxOutputTokens:1024}),env:{CODEGRAFF_API_KEY:config.modelKey,CEREBRAS_API_KEY:config.cerebrasKey,AIKO_ALLOW_PAID_INFERENCE:"true",AIKO_MODEL_EFFORTS:config.modelEfforts,AIKO_MODEL_CAPABILITIES:config.modelCapabilities},budget:modelBudget,fetch:overrides.modelFetch}):undefined;
+  const loginRenderers = new Map<string, ReturnType<typeof createNativeLoginRenderer>>();
+  const loginRendererFor = (owner: string) => {
+    let renderer = loginRenderers.get(owner);
+    if (!renderer) {
+      renderer = createNativeLoginRenderer({ owner, instance: config.instanceId ?? config.mode,
+        layer: () => overrides.model ?? workerRoutingFor(owner)?.layer("conversation") });
+      loginRenderers.set(owner, renderer);
+    }
+    return renderer;
+  };
   const workerContextFor=(owner:string)=>(model:import("tardie/inference/reference").ModelRef|undefined)=>{
     return workerRoutingFor(owner)?.contextForHistory(model).contextWindowTokens??config.modelRouting?.contextWindowTokens??32768;
   };
@@ -536,11 +572,19 @@ export async function createService(
     }return compute;
   };
   const codingHosts=new Map<string,CodegraffCodingWorkspace>();
+  const codingConfigurations=new Map<string,string>();
   const codingFor=(owner:string)=>{const repositories=config.codingRepositories?.[owner],compute=computeFor(owner);if(!repositories?.length||!compute)return undefined;
-    let coding=codingHosts.get(owner);if(!coding){coding=new CodegraffCodingWorkspace(compute,{repositories:[...repositories],runnerBundle:readFileSync(new URL("../assets/coding-runner.txt",import.meta.url),"utf8"),bunVersion:"1.4.0"});codingHosts.set(owner,coding);}return coding;};
+    const revision=harnessDigest(repositories);
+    let coding=codingHosts.get(owner);if(!coding||codingConfigurations.get(owner)!==revision){coding=new CodegraffCodingWorkspace(compute,{repositories:[...repositories],runnerBundle:readFileSync(new URL("../assets/coding-runner.txt",import.meta.url),"utf8"),bunVersion:"1.4.0"});codingHosts.set(owner,coding);codingConfigurations.set(owner,revision);}return coding;};
+  const projectCodingFor=async(owner:string,thread:string)=>{
+    const bound=bindingOf(thread),registry=registryFor(owner);
+    if(!validOwner(owner)||!config.codeMode||bound?.owner!==owner||!["foreground","child"].includes(bound.role)||registry?.availability?.()||registry?.unavailableReason)return undefined;
+    if(bound.role==="child"&&!workerGrantOf(workerBindingFor(owner,thread),await host.read(`user-${owner}`),await host.read(thread)))return undefined;
+    return codingFor(owner);
+  };
   const codingInferenceFor=<R>(owner:string,thread:string,base:Layer.Layer<Infer,never,R>)=>codingFor(owner)||overrides.workerTools?.(owner,thread).some(tool=>tool.spec.name.startsWith("coding_"))?codingWorkspaceInference(base,owner,thread,codingFor(owner)?.grantRevision):base;
   const workerBindingFor=(owner:string,thread:string):WorkerBinding=>({owner,thread,readParent:()=>host.read(`user-${owner}`),readChild:()=>host.read(thread),mcpCurrent:()=>mcpFor(owner,thread)?.binding.servers()??[],active:()=>validOwner(owner)&&config.codeMode===true&&bindingOf(thread)?.owner===owner&&!registryFor(owner)?.availability?.()&&!registryFor(owner)?.unavailableReason,modelLayer:(model,effort)=>{const routing=workerRoutingFor(owner);if(!routing)throw Error("Worker model routing unavailable");return routing.layerFor(model,effort);}});
-  const workerPolicyFor=(owner:string):WorkerPolicy=>({scopes:["research","browser",...(computeFor(owner)||overrides.workerTools?.(owner,`user-${owner}`).some(t=>t.spec.name.startsWith("sandbox_"))?["compute" as const]:[]),...(codingFor(owner)||overrides.workerTools?.(owner,`user-${owner}`).some(t=>t.spec.name.startsWith("coding_"))?["coding" as const]:[])],models:()=>workerRoutingFor(owner)?.models()??[],mcp:()=>mcpFor(owner,`user-${owner}`)?.binding.servers()??[],active:()=>validOwner(owner)&&config.codeMode===true,readChild:thread=>bindingOf(thread)?.owner===owner?host.read(thread):Promise.reject(Error("Foreign worker"))});
+  const workerPolicyFor=(owner:string):WorkerPolicy=>({scopes:["research","browser",...(computeFor(owner)||overrides.workerTools?.(owner,`user-${owner}`).some(t=>t.spec.name.startsWith("sandbox_"))?["compute" as const]:[]),...(codingFor(owner)||overrides.workerTools?.(owner,`user-${owner}`).some(t=>t.spec.name.startsWith("coding_"))?["coding" as const]:[])],browserOperations:browser?WORKER_BROWSER_OPERATIONS:[],models:()=>workerRoutingFor(owner)?.models()??[],mcp:()=>mcpFor(owner,`user-${owner}`)?.binding.servers()??[],active:()=>validOwner(owner)&&config.codeMode===true,readChild:thread=>bindingOf(thread)?.owner===owner?host.read(thread):Promise.reject(Error("Foreign worker"))});
   const codeHarnesses=new Map<string,CodeHarness>();
   const harnessFor=(owner:string,thread=`user-${owner}`)=>{
     const transport=registryFor(owner)?.codeTransport;
@@ -559,7 +603,7 @@ export async function createService(
       if(adapters || library?.verifiers.size&&registry?.authorizeReceiving){
         const journal={read:()=>host.read(`user-${owner}`),append:async(events:import("tardie/core/event").Event[])=>{await host.seed(`user-${owner}`,events);}};
         const wiring=library?.verifiers.size&&registry?.authorizeReceiving?{blobs:library.blobs,...channelHarnessHandlers(registry.sources?sourceAwareHarnessBinding(library,journal):library,journal,registry.authorizeReceiving,{accepts:(...a)=>registry.continuations?.accepts(...a)??Promise.resolve(false),execute:(...a)=>registry.continuations!.execute(...a),reconcile:(...a)=>registry.continuations!.reconcile(...a)})}:undefined;
-        channels=createHostedChannels(owner,()=>host,adapters,{requireThinkFeel,wiring,logSources:registry?.logSources,bridge:adapters&&wiring?(overrides.channelBridge?.(owner)??registry?.providerAdapters?.bridge):undefined});channelHosts.set(owner,channels);
+        channels=createHostedChannels(owner,()=>({...host,appendControl:(t:string,events:readonly import("tardie/core/event").Event[])=>host.seed(t,events)}),adapters,{requireThinkFeel,wiring,logSources:registry?.logSources,browserWatches:overrides.browserWatches?context=>{const watch=overrides.browserWatches!(context);return {...watch,current:()=>validOwner(owner)&&watch.current()};}:undefined,browserProducers:overrides.browserProducers?{grant:producer=>overrides.browserProducers!(owner).find(g=>g.owner===owner&&g.producer===producer),current:()=>validOwner(owner)}:undefined,bridge:adapters&&wiring?(overrides.channelBridge?.(owner)??registry?.providerAdapters?.bridge):undefined});channelHosts.set(owner,channels);
         if(wiring&&library&&registry?.management&&registry.codeTransport&&registry.defaultAuthorityRef)registry.continuations=registryManagementContinuations({binding:registry.sources?sourceAwareHarnessBinding(library,journal):library,journal,transport:registry.codeTransport,wiring:()=>channels!.wiring!,current:registry.management,receiving:registry.authorizeReceiving!,authorityRef:registry.defaultAuthorityRef});
       }
     }
@@ -572,11 +616,12 @@ export async function createService(
     actorName: "aiko",
     actorInstance: config.instanceId ?? config.mode,
     workspaceSql: false,
-    canAppend: (_thread,events,read)=>workAppendAllowed(_thread,events,read)&&proactiveAppendAllowed(events,read,_thread)&&harnessLibraryAppendAllowed(events,read)&&mediaProcessingAppendAllowed(events,read)&&channelWiringAppendAllowed(events,read)&&channelLogSourceAppendAllowed(events,read),
+    canAppend: (_thread,events,read)=>(channelHosts.get(bindingOf(_thread)?.owner??"")?.dispatchAdmissionAllowed(events,read)??!browserWatchDispatchAdmissionRequired(events))&&workAppendAllowed(_thread,events,read)&&proactiveAppendAllowed(events,read,_thread)&&harnessLibraryAppendAllowed(events,read)&&mediaProcessingAppendAllowed(events,read)&&channelWiringAppendAllowed(events,read)&&channelLogSourceAppendAllowed(events,read)&&browserEventAppendAllowed(events,read)&&browserWatchAppendAllowed(events,read),
     keyOf: (e) =>
       databaseEventKey(e) ??
       workerEventKey(e) ??
       codingWorkspaceEventKey(e) ??
+      projectContextEventKey(e) ??
       harnessExperimentTrialEventKey(e) ??
       agentKeys.keyOf(e) ??
       cancellationKeys.keyOf(e) ??
@@ -596,7 +641,7 @@ export async function createService(
       automationEventKey(e) ??
       channelEventKey(e) ??
       channelWiringEventKey(e) ??
-      channelBridgeEventKey(e) ?? channelLogSourceEventKey(e) ??
+      channelBridgeEventKey(e) ?? channelLogSourceEventKey(e) ?? browserEventKey(e) ?? browserWatchEventKey(e) ??
       hostedChannelDeadlineKey(e) ??
       mediaHostEventKey(e) ?? mediaProcessingEventKey(e) ??
       harnessLibraryEventKey(e) ??
@@ -650,6 +695,12 @@ export async function createService(
           stateDir: accountDirectory(config.stateDir, owner),
           owner,
           thread,
+          eraseCopies: async (observations: readonly string[], operationId: string) => {
+            const registry = registryFor(owner), library = registry?.sources?.library ?? registry?.library;
+            const blobs = library?.blobs ?? harnessBlobStore(sqliteWorkflowKV(workflowDb ??= new Database(privateDatabaseFile(join(config.stateDir, "workflows.sqlite")))));
+            if (!blobs.eraseDependencies) throw Error("Private memory copy cleanup unavailable");
+            return blobs.eraseDependencies(owner, observations.map(memoryObservationDependency), operationId);
+          },
           // Foreground explicit tools only: followers/reflections never trigger bulk cloud embedding.
           ...(role === "foreground" ? { embedding: embeddingFor(owner) } : {}),
           redact,
@@ -679,6 +730,10 @@ export async function createService(
                   const grant=workerGrantOf(workerBindingFor(owner,thread),await host.read(`user-${owner}`),await host.read(thread));
                   return grant&&(grant.scope==="research"||grant.scope==="browser")?{scope:grant.scope,origins:grant.origins}:undefined;
                 }})??[]),
+                ...(browser?.workerControlTools(owner,thread,{parentThread:`user-${owner}`,current:async()=>{
+                  const grant=workerGrantOf(workerBindingFor(owner,thread),await host.read(`user-${owner}`),await host.read(thread));
+                  return grant?.scope==="browser"?{scope:"browser" as const,origins:grant.origins,browserOperations:grant.browserOperations,actions:grant.actions}:undefined;
+                },journal:{read:()=>host.read(`user-${owner}`),append:rows=>host.seed(`user-${owner}`,rows)}})??[]),
                 ...createObservedNetworkTools({owner,thread,redact,readEvents:()=>host.read(`user-${owner}`),approvalJournal:{thread:`user-${owner}`,read:()=>host.read(`user-${owner}`),append:rows=>host.seed(`user-${owner}`,rows)},checkArcade:async domain=>(await connectorsFor(owner).search(domain)).fallbackAllowed,session:(origin,signal)=>ensureUnlockSession({owner,origin,config:config.connectorVault,search:domain=>connectorsFor(owner).search(domain),signal,renew:true})}),
                 ...(computeFor(owner)?sandboxComputeTools(computeFor(owner)!,memory):[]),
                 ...(codingFor(owner)?codingWorkspaceTools(codingFor(owner)!.binding(thread,redact)):[]),
@@ -716,7 +771,7 @@ export async function createService(
                       !!registryFor(owner)?.logSources,
                     )
                   : role === "reflection"
-                    ? createReflectionActor(memory)
+                    ? createReflectionActor(memory, { contributions: contributionModeFor(config, owner) !== "disabled" })
                     : createAikoActor({
                         secretaryWork: createSecretaryWorkBinding(host, memory, config.botToken ? secretaryTelegram(config.botToken, overrides.telegramFetch) : undefined),
                         databases: databasesFor(owner),
@@ -749,6 +804,8 @@ export async function createService(
                         send: telegram?.send,
                         memory,
                         background: true,
+                        contributionMode: contributionModeFor(config, owner),
+                        cognitiveRecovery: config.cognitiveRecoveryOwners?.includes(owner) ?? false,
                         workflow: workflowsFor(owner).component(),
                         toolRouter: {
                           owner,
@@ -879,7 +936,8 @@ export async function createService(
       if(address.role==="child"){
         const harness=harnessFor(address.owner,thread)!;
         const worker=workerInference(model,workerBindingFor(address.owner,thread));
-        return Layer.merge(harness.inference(codingInferenceFor(address.owner,thread,projectFor(address.owner,thread)?.inference(worker)??worker)),harness.sandboxLayer());
+        const base=harness.inference(codingInferenceFor(address.owner,thread,worker));
+        return Layer.merge(projectFor(address.owner,thread)?.inference(base)??base,harness.sandboxLayer());
       }
       if (address.role === "secretary") return withSecretaryHistory(model);
       if (address.role !== "foreground") return model;
@@ -889,13 +947,14 @@ export async function createService(
         ),
         redact,
       ));
-      const base=codingInferenceFor(address.owner,thread,projectFor(address.owner,thread)?.inference(ordinaryBase)??ordinaryBase);
+      const base=codingInferenceFor(address.owner,thread,ordinaryBase);
       const harness=harnessFor(address.owner);
-      if(!harness)return base;
+      if(!harness)return projectFor(address.owner,thread)?.inference(base)??base;
       const wiring=channelsFor(address.owner)?.wiring;
       const ordinary=wiring?wiring.sandboxLayer(harness.sandboxLayer()):harness.sandboxLayer();
       const sandbox=registryFor(address.owner)?.continuations?.sandboxLayer(ordinary)??ordinary;
-      return Layer.merge(harness.inference(base),sandbox);
+      const prepared=harness.inference(base);
+      return Layer.merge(projectFor(address.owner,thread)?.inference(prepared)??prepared,sandbox);
     },
   }).catch((error) => {
     closeDatabases();
@@ -924,9 +983,11 @@ export async function createService(
     // A private submission may have committed while its host acknowledgement was lost.
     for (const thread of await host.threads()) {
       const account=threadBinding(thread);
-      if(account?.role==="foreground")await connectorsFor(account.owner).flushEvents();
+      if(account?.role==="foreground"){
+        await connectorsFor(account.owner).flushEvents();
+        await channelsFor(account.owner)?.refresh();
+      }
     }
-    await host.recover();
   } catch (error) {
     await host.close();
     closeDatabases();
@@ -936,6 +997,17 @@ export async function createService(
     lock.close();
     throw error;
   }
+  // Recovery can subscribe to a provider that immediately calls our ingress.
+  // Expose that handler before awaiting native execution; retain one recovery
+  // promise for admission, readiness and shutdown (no additional scheduler).
+  let recoveryComplete = false;
+  let recoveryFailed = false;
+  const ready = Promise.resolve().then(() => host.recover()).then(
+    () => { recoveryComplete = true; },
+    error => { recoveryFailed = true; failures++; throw error; },
+  );
+  // Internal HTTP/cleanup paths report failure without an unhandled rejection.
+  const recovery = ready.catch(() => undefined);
   const json = (data: unknown, status = 200) =>
     Response.json(data, {
       status,
@@ -1173,7 +1245,7 @@ export async function createService(
         | { running?: boolean; lastPollAt?: number; consecutiveErrors?: number }
         | undefined;
       const ready =
-        !failures &&
+        recoveryComplete && !failures &&
         (config.telegramMode !== "polling" ||
           (gateway?.running &&
             Date.now() - (gateway.lastPollAt ?? 0) < 90000 &&
@@ -1214,10 +1286,12 @@ export async function createService(
       return json({ token: createMiniAppSession(owner, config.botToken!) });
     }
     if(url.pathname.startsWith("/v1/channel-ingress/"))return createChannelPublicIngress({lookup:overrides.channelIngress??(async(route,token)=>{const owner=providerAdapterRouteOwner(route);return owner&&validOwner(owner)?registryFor(owner)?.providerAdapters?.lookup(route,token):undefined;}),hosted:async owner=>validOwner(owner)?channelsFor(owner):undefined,wake})(request);
+    const browserRoute=/^\/v1\/browser-events\/([A-Za-z0-9_-]{1,128})$/.exec(url.pathname);
+    if(browserRoute){const account=browserRoute[1]!;if(!validOwner(account)||url.search)return json({error:"browser_source_unavailable"},404);return browserEventIngress(request,channelsFor(account)?.browserAdmission,()=>wake(account));}
     const principal = authenticate(request);
     if (!principal) return json({ error: "unauthorized" }, 401);
     const { owner, scopes } = principal;
-    if (!scopes.includes(request.method === "GET" || /^\/(?:api|v1)\/databases\/query$/.test(url.pathname) ? "read" : "write"))
+    if (!scopes.includes(harnessLibraryReadRequest(request) || /^\/(?:api|v1)\/databases\/(?:query|field)$/.test(url.pathname) ? "read" : "write"))
       return json({ error: "forbidden" }, 403);
     if (/^\/(?:api|v1)\/databases(?:\/|$)/.test(url.pathname)) return databaseApi(request, databasesFor(owner), {
       read: () => host.read(`user-${owner}`), commit: event => host.commitRoot(host.self(`user-${owner}`), event),
@@ -1237,10 +1311,28 @@ export async function createService(
       wake: () => host.wake(`user-${owner}`),
     });
     if(["/api/harness/readiness","/v1/harness/readiness"].includes(url.pathname)&&request.method==="GET")return json(registryReadiness(registryFor(owner),!!harnessFor(owner)));
+    if (/^\/(?:api|v1)\/harness\/library(?:\/|$)/.test(url.pathname)) {
+      const registry = registryFor(owner), binding = registry?.sources?.library ?? registry?.library;
+      const journal = { read: () => host.read(`user-${owner}`), append: async (events: import("tardie/core/event").Event[]) => { await host.seed(`user-${owner}`, events); } };
+      const library = binding && !registry?.availability?.() && !registry?.unavailableReason
+        ? new HarnessLibrary(registry?.sources ? sourceAwareHarnessBinding(binding, journal) : binding, journal) : undefined;
+      return harnessLibraryApi(request, owner, library, principal, {
+        current: () => { const current = authenticate(request); return validOwner(owner) && current?.owner === owner &&
+          current.scopes.includes(harnessLibraryReadRequest(request) ? "read" : "write") &&
+          (!library || config.codeMode === true && !registry?.availability?.() && !registry?.unavailableReason); },
+        wake: () => wake(owner),
+      });
+    }
     if (/^\/(?:api|v1)\/login-operations(?:\/|$)/.test(url.pathname))
       return serialize(()=>loginOperationApi(request,owner,host,connectorsFor(owner),principal,()=>wake(owner)));
+    if (/^\/(?:api|v1)\/channels\/browser-watches(?:\/|$)/.test(url.pathname))
+      return browserWatchApi(request, owner, channelsFor(owner)?.watches, principal, () => wake(owner));
     if (/^\/(?:api|v1)\/channels(?:\/|$)/.test(url.pathname))
       return channelApi(request, owner, channelsFor(owner), principal, () => wake(owner), () => host.read(`user-${owner}`));
+    if (/^\/(?:api|v1)\/promises(?:\/|$)/.test(url.pathname))
+      return principal.operator
+        ? json({ error: "forbidden" }, 403)
+        : json({ error: "promises_unavailable", message: "Scheduled tasks are not enabled on this local host. No task or decision was accepted." }, 503);
     if (["/api/secretary/work", "/v1/secretary/work"].includes(url.pathname))
       return serialize(() => secretaryWorkApi(request, createSecretaryWorkBinding(host, {
         owner, thread: "user-" + owner, stateDir: accountDirectory(config.stateDir, owner), redact,
@@ -1249,7 +1341,7 @@ export async function createService(
     if (/^\/(?:api|v1)\/secretary(?:\/|$)/.test(url.pathname))
       return serialize(() => secretaryApi(request, owner, host, redact));
     if (/^\/(?:api|v1)\/connectors(?:\/|$)/.test(url.pathname))
-      return connectorApi(request, connectorsFor(owner), routeFor(owner));
+      return connectorApi(request, connectorsFor(owner), routeFor(owner), loginRendererFor(owner));
     if (url.pathname.startsWith("/api/control/"))
       return controlApi({
         host,
@@ -1503,6 +1595,7 @@ export async function createService(
           )
           .slice(-50)
           .map((e) => ({ turn: e.turn, result: e.result })),
+        preparing: preparingReplies(log),
         pending: log
           .filter(
             (e) =>
@@ -1589,37 +1682,54 @@ export async function createService(
     return json({ error: "not_found" }, 404);
   };
   return {
+    /** Await before direct host drive/read. Attach HTTP ingress first; rejects if native recovery fails. */
+    ready,
     host,
     prepareTelegram,
     acceptTelegram: async (request: Request) => {
+      await recovery;
+      if (recoveryFailed) throw new Error("Native recovery failed");
       const inbound = await prepareTelegram(request);
       return inbound ? acceptInbound(inbound) : ("ignored" as const);
     },
-    fetch: (request: Request) =>
-      handle(request).catch(() => {
+    fetch: async (request: Request) => {
+      const path = new URL(request.url).pathname;
+      if (!path.startsWith("/v1/channel-ingress/") && path !== "/health" && path !== "/ready")
+        await recovery;
+      if (recoveryFailed) return json({ error: "recovery_failed" }, 503);
+      return handle(request).catch(() => {
         failures++;
         return json({ error: "internal_error" }, 500);
-      }),
+      });
+    },
     close: async () => {
       if (closing) return;
       closing = true;
       telegramShutdown.abort();
       try {
-        await Promise.all(
-          [...telegramLifecycles.values()].map((lifecycle) =>
-            lifecycle.close(),
-          ),
-        );
-        await Promise.all([...mcpClients.values()].map(client=>client?.close()));
-        await browser?.close();
+        // Native recovery and its remaining work may still use these bindings.
+        await recovery;
         await host.drive();
       } finally {
-        await host.close();
-        closeDatabases();
-        workflowDb?.close();
-        embeddingBudget?.close();
-        modelBudget?.close();
-        lock.close();
+        try {
+          await host.close();
+        } finally {
+          try {
+            const disposed = await Promise.allSettled([
+              ...[...telegramLifecycles.values()].map(lifecycle => lifecycle.close()),
+              ...[...mcpClients.values()].map(client => client?.close()),
+              browser?.close(),
+            ]);
+            const errors = disposed.filter(result => result.status === "rejected");
+            if (errors.length) throw new AggregateError(errors.map(result => result.reason), "Aiko dependency cleanup failed");
+          } finally {
+            closeDatabases();
+            workflowDb?.close();
+            embeddingBudget?.close();
+            modelBudget?.close();
+            lock.close();
+          }
+        }
       }
     },
   };

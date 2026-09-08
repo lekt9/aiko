@@ -93,27 +93,38 @@ export function SecretaryWorkPanel({ request }: { request: Request }) {
   const pendingCapture = useRef<
     { signature: string; command: object } | undefined
   >(undefined);
+  const draftRevision = useRef(0);
+  const readRevision = useRef(0);
   const controller = useRef<AbortController | null>(null);
+  const requestRef = useRef(request);
+  requestRef.current = request;
+  const performing = useRef(false);
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   useEffect(() => {
     const abort = new AbortController();
     controller.current = abort;
-    void request<View>("/secretary/work", undefined, abort.signal)
-      .then(setView)
+    const revision = ++readRevision.current;
+    void requestRef.current<View>("/secretary/work", undefined, abort.signal)
+      .then(next => { if (!abort.signal.aborted && revision === readRevision.current) setView(next); })
       .catch((e) => {
-        if (!abort.signal.aborted) setError(e.message);
+        if (!abort.signal.aborted && revision === readRevision.current) setError(e.message);
       });
     return () => abort.abort();
-  }, [request]);
+    // Account changes remount SecretaryPanel. Routine parent renders must not
+    // cancel this account's in-flight work or discard its drafts.
+  }, []);
   async function perform(body?: object) {
-    if (busy) return false;
+    if (performing.current || controller.current?.signal.aborted) return false;
+    performing.current = true;
     setBusy(true);
     setError("");
     setNotice("");
     const signal = controller.current?.signal;
+    // A late initial read must not overwrite a refresh or a saved change.
+    const revision = ++readRevision.current;
     try {
       if (body) {
-        const result = await request<{ message?: string }>(
+        const result = await requestRef.current<{ message?: string }>(
           "/secretary/work",
           body,
           signal,
@@ -121,14 +132,15 @@ export function SecretaryWorkPanel({ request }: { request: Request }) {
         if (!signal?.aborted)
           setNotice(result.message ?? "Your change is saved.");
       }
-      const next = await request<View>("/secretary/work", undefined, signal);
-      if (signal?.aborted) return false;
+      const next = await requestRef.current<View>("/secretary/work", undefined, signal);
+      if (signal?.aborted || revision !== readRevision.current) return false;
       setView(next);
       return true;
     } catch (e) {
       if (!signal?.aborted) setError((e as Error).message);
       return false;
     } finally {
+      performing.current = false;
       if (!signal?.aborted) setBusy(false);
     }
   }
@@ -187,11 +199,16 @@ export function SecretaryWorkPanel({ request }: { request: Request }) {
           operationId: crypto.randomUUID(),
         },
       };
+    const revision = draftRevision.current;
     if (await perform(pendingCapture.current!.command)) {
       pendingCapture.current = undefined;
-      setAdding(false);
-      setOutcome("");
-      setLane(mode === "agenda" ? "needs_you" : "in_motion");
+      if (revision === draftRevision.current) {
+        setAdding(false);
+        setOutcome("");
+        setLane(mode === "agenda" ? "needs_you" : "in_motion");
+      } else {
+        setNotice("Your submitted work is saved. Your newer draft is still here.");
+      }
     }
   }
   return (
@@ -232,7 +249,7 @@ export function SecretaryWorkPanel({ request }: { request: Request }) {
       {notice && <p role="status">{notice}</p>}
       {!view && !error && <p role="status">Loading your work…</p>}
       {adding && (
-        <form className="work-form" onSubmit={capture}>
+        <form className="work-form" onSubmit={capture} onChange={() => { draftRevision.current++; }}>
           <label>
             What should Aiko track?
             <select value={mode} onChange={(e) => setMode(e.target.value)}>
@@ -452,11 +469,15 @@ export function SecretaryWorkPanel({ request }: { request: Request }) {
                       </button>
                     </div>
                   )}
-                  {w.nextReviewAt && w.status !== "completed" && (
-                    <p className="aiko-fineprint">
-                      Next review: {localTime(w.nextReviewAt, w.timeZone)}
-                    </p>
-                  )}
+                  {w.nextReviewAt &&
+                    !["completed", "cancelled"].includes(w.status) && (
+                      <p className="aiko-fineprint">
+                        {w.control === "paused" || w.handling === "owner"
+                          ? "Saved review time (automatic checking is off): "
+                          : "Next review: "}
+                        {localTime(w.nextReviewAt, w.timeZone)}
+                      </p>
+                    )}
                   {w.decision?.status === "pending" && (
                     <div className="work-decision">
                       <strong>

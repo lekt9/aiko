@@ -125,10 +125,12 @@ export interface MemoryEvent {
   key: string;
   requestDigest: string;
   recordedAt: number;
-  operation: "remember" | "refresh" | "source" | "forget" | "failure";
+  operation: "remember" | "refresh" | "source" | "forget" | "failure" | "erase" | "erased" | "erase-subject";
   observations: Observation[];
   source?: Source;
   subject?: string;
+  erasedObservations?: number;
+  erasure?: { rows: { seq: number; digest: string; replacement: string; previousReplacement?: string }[]; subjects?: string[]; observationIds?: string[]; replacements?: { previous: string; observation: string }[] };
 }
 export interface StoredEvent { seq: number; previous: string; digest: string; event: MemoryEvent }
 export class MemoryError extends Error {

@@ -40,6 +40,8 @@ import {
   workView,
   workNoticeCurrent,
   workExternalEventAllowed,
+  executionId,
+  planDigest,
 } from "../src/commitments.ts";
 import type { SecretaryWorkBinding } from "../src/secretary-policy.ts";
 
@@ -623,6 +625,20 @@ test("missing agenda creates a timely decision, whose expiry leaves the obligati
   ).toBe(true);
 });
 
+test("review decisions cannot restart correspondence through the approval API", async () => {
+  const f = fixture(); await f.command(f.input()); await f.approve(); await f.step();
+  f.advance(2 * hour); await f.step();
+  expect(f.current().decision?.kind).toBe("review");
+  await expect(f.approve()).rejects.toThrow("does not authorize another message");
+  expect(f.sends).toHaveLength(1);
+  await f.change("takeover");
+  const result = await f.change("review", { nextReviewAt: f.binding.now!() + hour });
+  expect(result.message).toContain("hand it back");
+  f.advance(hour); await f.step();
+  expect(f.sends).toHaveLength(1);
+  expect(f.current().handling).toBe("owner");
+});
+
 for (const backend of ["bun", "cloudflare"] as const)
   test(
     backend +
@@ -741,9 +757,11 @@ for (const backend of ["bun", "cloudflare"] as const)
         "agenda",
       )!;
       expect(w.status).toBe("waiting");
-      // A failed source read stops this version, rather than spinning on an overdue alarm.
+      // Source recovery is bounded and alarm-driven, including across reconstruction.
       const readSecretary = binding.readSecretary;
+      let sourceReads = 0;
       binding.readSecretary = async () => {
+        sourceReads++;
         throw Error("Source unavailable");
       };
       await host!.seed("user-123", [
@@ -772,6 +790,37 @@ for (const backend of ["bun", "cloudflare"] as const)
         workView(failed, owner, f.binding.now!()).commitments[0].recoveryIssue,
       ).toContain("could not check");
       expect(f.sends).toHaveLength(2);
+      const recoveryAt = workView(failed, owner, f.binding.now!()).commitments[0].recoveryAt!;
+      expect(recoveryAt).toBe(f.binding.now!() + 30_000);
+      const recoveryWait = failed.findLast(e => e.type === "AikoWorkDeadline" && e.recoveryVersion === 1)!;
+      expect(recoveryWait).toBeDefined();
+      const probe = actor({ name: "aiko", methods: { workWait: workWaitMethod }, components: [handles(workWaitMethod, secretaryCoordination(binding))] });
+      expect(probe.methods.workWait.state(failed, (recoveryWait.call as any).invocation)?.status).toBe("pending");
+      await host.close(); (db as Database | undefined)?.close(); db = undefined; await open();
+      await host.wake("user-123");
+      expect(sourceReads).toBe(1);
+      binding.readSecretary = readSecretary;
+      f.advance(30_000);
+      await host.seed("user-123", [{ type: "AlarmFired", scheduledFor: recoveryAt, at: f.binding.now!() }]);
+      await host.wake("user-123");
+      expect(workView(await host.read("user-123"), owner, f.binding.now!()).commitments[0].recoveryIssue).toBeUndefined();
+      expect(f.sends).toHaveLength(2);
+
+      // A permanent outage stops after two additional reads; unrelated wakeups
+      // cannot replenish the budget. The existing owner retry remains available.
+      binding.readSecretary = async () => { sourceReads++; throw Error("Source unavailable"); };
+      await host.seed("user-123", [{ type: "AikoWorkContactObserved", owner, id: "permanent", at: f.binding.now!() }]);
+      await host.wake("user-123");
+      for (const delay of [30_000, 60_000, 30_000]) {
+        f.advance(delay);
+        await host.seed("user-123", [{ type: "AlarmFired", scheduledFor: f.binding.now!(), at: f.binding.now!() }]);
+        await host.wake("user-123");
+      }
+      expect(sourceReads).toBe(4);
+      const exhausted = workView(await host.read("user-123"), owner, f.binding.now!()).commitments[0];
+      expect(exhausted.recoveryAt).toBeUndefined();
+      expect(exhausted.recoveryIssue).toContain("Review its evidence");
+      expect(exhausted.lane).toBe("needs_you");
       binding.readSecretary = readSecretary;
       await applyWorkCommand(
         binding,
@@ -793,10 +842,17 @@ for (const backend of ["bun", "cloudflare"] as const)
       expect(recovered.recoveryIssue).toBeUndefined();
       expect(recovered.nextReviewAt).toBe(w.plan!.escalateAt);
       expect(f.sends).toHaveLength(2);
+      f.message(20, "1. Budget\n2. Hiring\n3. Roadmap");
+      await host.seed("user-123", [{ type: "AikoWorkContactObserved", owner, id: "checked-result", at: f.binding.now!() }]);
+      await host.wake("user-123");
+      const completed = workState(await host.read("user-123"), owner).commitments.get("agenda")!;
+      expect(completed.status).toBe("completed");
+      expect(completed.successCondition).toBe(w.successCondition);
+      expect(completed.evidenceRefs).toHaveLength(1);
     },
   );
 
-test("owner decision reaches the existing proactive outbox, obeys preferences and becomes stale after an edit", async () => {
+async function workOutboxFixture() {
   const dir = await mkdtemp("/tmp/aiko-work-outbox-"),
     f = fixture();
   let host!: BunHost;
@@ -819,7 +875,7 @@ test("owner decision reaches the existing proactive outbox, obeys preferences an
     owner,
     (input) =>
       Effect.succeed({
-        text: input.kind === "task" ? input.receipt : "Reply",
+        text: input.kind === "task" ? input.receipt : input.kind === "answer" ? input.text : "Reply",
         source: "template" as const,
       }),
     async (_, text) => {
@@ -832,12 +888,12 @@ test("owner decision reaches the existing proactive outbox, obeys preferences an
     name: "aiko",
     methods: { workWait: workWaitMethod, proactiveWait: proactiveWaitMethod },
     components: [
-      handles(workWaitMethod, secretaryCoordination(binding)),
+      handles(workWaitMethod, secretaryCoordination(binding, true)),
       handles(proactiveWaitMethod, foregroundHooks(memory)),
       outbox,
     ],
   });
-  host = await createBunHost({
+  const open = () => createBunHost({
     database: join(dir, "native.sqlite"),
     actorName: "aiko",
     actorInstance: "work-outbox",
@@ -851,6 +907,7 @@ test("owner decision reaches the existing proactive outbox, obeys preferences an
       workAppendAllowed(thread, rows, read) &&
       proactiveAppendAllowed(rows, read, thread),
   });
+  host = await open();
   cleanups.push(async () => {
     await host.close();
     await rm(dir, { recursive: true, force: true });
@@ -863,6 +920,61 @@ test("owner decision reaches the existing proactive outbox, obeys preferences an
     controlLane: true,
     at: Date.now(),
   });
+  return { f, binding, sent, get host() { return host; },
+    restart: async () => { await host.close(); host = await open(); await host.recover(); },
+  };
+}
+
+for (const boundary of ["late-alarm", "paused", "cancelled", "unknown-send"] as const)
+test(`source recovery preserves ${boundary} across a native restart`, async () => {
+  const h = await workOutboxFixture(), { f, binding } = h;
+  await applyWorkCommand(binding, f.input(), { trusted: true, ref: "owner:fixture" });
+  let work = workState(await binding.read(), owner).commitments.get("agenda")!;
+  await applyWorkCommand(binding, { action: "decide", operationId: "grant", id: work.id,
+    expectedVersion: work.version, decisionId: work.decision!.id, planDigest: work.decision!.planDigest,
+    choice: "approve" }, { trusted: true, ref: "owner:fixture" });
+  const source = binding.readSecretary;
+  let reads = 0;
+  binding.readSecretary = async () => { reads++; throw Error("private failure detail"); };
+  await h.host.wake("user-123");
+  expect(reads).toBe(1); expect(f.sends).toHaveLength(0);
+  work = workState(await binding.read(), owner).commitments.get("agenda")!;
+  if (boundary === "paused" || boundary === "cancelled") {
+    await applyWorkCommand(binding, { action: "change", operationId: "stop", id: work.id,
+      expectedVersion: work.version, change: boundary === "paused" ? "pause" : "cancel" }, { trusted: true, ref: "owner:fixture" });
+  }
+  if (boundary === "unknown-send") {
+    // A durable action claim from before an interrupted acknowledgement must
+    // remain authoritative even when a later source read can recover.
+    const id = executionId(work, "request");
+    await binding.append([{ type: "AikoWorkDispatch", owner, id, workVersion: work.version,
+      receipt: { id, owner, workId: work.id, planDigest: planDigest(work), token: "lost-ack",
+        action: "request", status: "started", at: f.binding.now!() }, at: f.binding.now!() }]);
+  }
+  binding.readSecretary = async () => { reads++; return source(); };
+  await h.restart();
+  const beforeAlarm = reads;
+  f.advance(boundary === "late-alarm" ? 120_000 : 30_000);
+  await h.host.seed("user-123", [{ type: "AlarmFired", scheduledFor: f.binding.now!(), at: f.binding.now!() }]);
+  await h.host.wake("user-123");
+  const events = await binding.read(), current = workState(events, owner).commitments.get(work.id)!;
+  expect(f.sends).toHaveLength(0);
+  expect(current.status).not.toBe("completed");
+  expect(current.successCondition).toBe(work.successCondition);
+  expect(JSON.stringify(events)).not.toContain("private failure detail");
+  if (boundary === "late-alarm") {
+    expect(reads).toBe(beforeAlarm);
+    expect(workView(events, owner).commitments[0].recoveryAt).toBeUndefined();
+  }
+  if (boundary === "unknown-send") {
+    expect([...workState(events, owner).receipts.values()][0].status).toBe("unknown");
+    expect(current.decision?.kind).toBe("review");
+  }
+  await h.restart(); expect(f.sends).toHaveLength(0);
+});
+
+test("owner decision reaches the existing proactive outbox, obeys preferences and becomes stale after an edit", async () => {
+  const { f, binding, sent, host } = await workOutboxFixture();
   await applyWorkCommand(binding, f.input(), {
     trusted: true,
     ref: "owner:fixture",
@@ -921,4 +1033,81 @@ test("owner decision reaches the existing proactive outbox, obeys preferences an
       (e) => e.type === "AikoProactiveSuppressed",
     ),
   ).toBe(true);
+});
+
+for (const correction of ["none", "revise", "cancel", "prerequisite-reopened"] as const) test(`checked prerequisite readiness follows through after restart (${correction})`, async () => {
+  const f = await workOutboxFixture(), source = { trusted: true, ref: "owner:fixture" };
+  const command = (body: object) => applyWorkCommand(f.binding, body, source);
+  const current = async (id: string) => workState(await f.host.read("user-123"), owner).commitments.get(id)!;
+  await f.host.commitRoot(f.host.self("user-123"), { type: "MessageReceived", id: "preparing-review", epoch: 0, source: "telegram", chat: owner, text: "Help me finish another task first", at: Date.now() });
+  await command(f.f.input()); await f.host.wake("user-123");
+  const agenda = await current("agenda");
+  await command({ action: "decide", operationId: "grant-agenda", id: agenda.id, expectedVersion: agenda.version, decisionId: agenda.decision!.id, planDigest: agenda.decision!.planDigest, choice: "approve" });
+  await f.host.wake("user-123");
+  expect((await current("agenda")).status).toBe("waiting");
+  await command({ ...f.f.input(), id: "review", operationId: "capture-review", plan: null, dependencyRefs: ["agenda"], nextAction: "Prepare the review slides" });
+  await command({ action: "change", change: "review", operationId: "wait-agenda", id: "review", expectedVersion: (await current("review")).version,
+    waitingFor: "The checked agenda", nextReviewAt: Date.now() + hour, nextAction: "Prepare the review slides" });
+  await f.host.wake("user-123");
+  expect((await f.host.read("user-123")).some(e => e.type === "AikoProactiveDecision" && (e.work as any)?.readyDependencies)).toBe(false);
+  f.f.message(3, "1. Launch status\n2. Budget approval\n3. Hiring plan");
+  await f.host.commitRoot(f.host.self("user-123"), { type: "AikoWorkContactObserved", owner, id: "agenda-arrived", at: Date.now() });
+  await f.host.wake("user-123");
+  const checked = await current("agenda");
+  expect(checked.status).toBe("completed"); expect(checked.evidenceRefs).toHaveLength(1);
+  const original = (await f.host.read("user-123")).find(e => e.type === "AikoProactiveDecision" && (e.work as any)?.readyDependencies)!;
+  expect(original?.work).toMatchObject({ workId: "review", readyDependencies: [{ workId: "agenda", version: checked.version }] });
+  expect(original.text).toContain("Prepare the review slides"); expect(f.sent).toHaveLength(0);
+  await f.restart(); expect(f.sent).toHaveLength(0);
+  if (correction === "prerequisite-reopened") {
+    f.f.contacts.push({ type: "AikoSecretaryUpdate", id: "withdrawn-agenda", updateId: 40,
+      update: { kind: "delete", connection: (f.f.contacts[0]!.update as any).connection, chat, messageIds: [3] } });
+    await f.host.commitRoot(f.host.self("user-123"), { type: "AikoWorkContactObserved", owner, id: "agenda-edited", at: Date.now() });
+  } else if (correction !== "none") await command({ action: "change", change: correction === "cancel" ? "cancel" : "review", operationId: "correct-review", id: "review", expectedVersion: (await current("review")).version,
+    waitingFor: "The checked agenda", nextReviewAt: Date.now() + hour, nextAction: "Prepare a one-page summary instead" });
+  await f.host.wake("user-123");
+  await f.host.seed("user-123", [{ type: "TurnCompleted", turn: "preparing-review", epoch: 0, output: "Your other task is finished.", at: Date.now() }]);
+  await f.host.wake("user-123");
+  const rows = await f.host.read("user-123");
+  const notices = rows.filter(e => e.type === "AikoProactiveAccepted" && (e.work as any)?.workId === "review");
+  expect(notices).toHaveLength(correction === "cancel" || correction === "prerequisite-reopened" ? 0 : 1);
+  if (correction === "revise") expect(notices[0]!.text).toContain("one-page summary instead");
+  if (correction !== "none") expect(rows.some(e => e.type === "AikoProactiveSuppressed" && e.id === original.id)).toBe(true);
+  expect(f.sent.some(s => s.includes("Your other task is finished"))).toBe(true);
+  const sent = f.sent.length; await f.restart(); expect(f.sent).toHaveLength(sent);
+});
+
+for (const changed of [false, true]) test(`pending work contribution survives a busy foreground restart${changed ? " and is invalidated by an owner correction" : " and is delivered once after the answer"}`, async () => {
+  const f = await workOutboxFixture();
+  await f.host.commitRoot(f.host.self("user-123"), {
+    type: "MessageReceived", id: "busy-owner", epoch: 0, source: "telegram", chat: owner,
+    text: "Help me finish this other task first", at: Date.now(),
+  });
+  await applyWorkCommand(f.binding, f.f.input(), { trusted: true, ref: "owner:fixture" });
+  await f.host.wake("user-123");
+  let rows = await f.host.read("user-123");
+  const proposal = rows.find(e => e.type === "AikoProactiveDecision" && e.work)!;
+  expect(proposal.contribution).toMatchObject({ version: 2, action: "notify" });
+  expect(rows.some(e => e.type === "AikoProactiveDeferred" && e.reason === "foreground-busy")).toBe(true);
+  expect(f.sent).toHaveLength(0);
+  await f.restart();
+  expect(f.sent).toHaveLength(0);
+  if (changed) {
+    const work = workState(await f.host.read("user-123"), owner).commitments.get("agenda")!;
+    await applyWorkCommand(f.binding, { action: "change", change: "pause", id: work.id,
+      expectedVersion: work.version, operationId: "owner-changed-plan" }, { trusted: true, ref: "owner:fixture" });
+  }
+  // Trusted fixture history supplies the foreground terminal; the coordinator,
+  // native wait, admission and physical test sender are the production path.
+  await f.host.seed("user-123", [{ type: "TurnCompleted", turn: "busy-owner", epoch: 0, output: "The other task is finished.", at: Date.now() }]);
+  await f.host.wake("user-123");
+  rows = await f.host.read("user-123");
+  const accepted = rows.filter(e => e.type === "AikoProactiveAccepted" && e.id === proposal.id);
+  expect(accepted).toHaveLength(changed ? 0 : 1);
+  expect(f.sent.some(text => text.includes("The other task is finished"))).toBe(true);
+  expect(rows.filter(e => e.type === "AikoDeliverySettled" && e.turn === `proactive:${proposal.id}` && (e.result as any)?.status === "delivered")).toHaveLength(changed ? 0 : 1);
+  if (changed) expect(rows.some(e => e.type === "AikoProactiveSuppressed" && e.id === proposal.id)).toBe(true);
+  const before = f.sent.length;
+  await f.restart();
+  expect(f.sent).toHaveLength(before);
 });

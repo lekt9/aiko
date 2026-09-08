@@ -88,6 +88,14 @@ test("backup API retains the control-plane archive and restores only current VM 
     backups,
     sandbox: sandbox as any,
     resting: async () => true,
+    authorizeRestore: async (_id: string, archive: AccountBackup) => {
+      expect(archive.owner).toBe("owner");
+      return {
+        check: async () => {
+          expect(account.owner).toBe("owner");
+        },
+      };
+    },
     account: async () => structuredClone(account),
     record: async (manifest: any) => {
       recorded = manifest;
@@ -278,4 +286,213 @@ test("VM snapshots include committed WAL state and restore only currently author
     await rm(root, { recursive: true, force: true });
     await rm(target, { recursive: true, force: true });
   }
+});
+
+async function restoreAuthorityFixture() {
+  const bucket = new Bucket(),
+    backups = new CloudBackups(bucket, randomBytes(32).toString("base64"));
+  const archive: AccountBackup = {
+    version: 1,
+    owner: "owner",
+    threads: [],
+    memory: {},
+    state: [],
+  };
+  const values = new Map([
+    ["vm.bin", new Uint8Array([1, 2, 3])],
+    ["account.json", new TextEncoder().encode(JSON.stringify(archive))],
+  ]);
+  const manifest = await backups.save("owner", {
+    files: [...values].map(([path, bytes]) => ({
+      path,
+      bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    })),
+    read: async (path, offset, length) =>
+      values.get(path)!.slice(offset, offset + length),
+  });
+  const effects: string[] = [];
+  let current = true,
+    authorizations = 0;
+  const options: Parameters<typeof backupApi>[1] = {
+    owner: "owner",
+    backups,
+    sandbox: {
+      busy: false,
+      restore: async (produce: any) => {
+        effects.push("stage");
+        await produce({
+          write: async () => {
+            effects.push("write");
+          },
+          abort: async () => {
+            effects.push("abort");
+          },
+          commit: async () => {
+            effects.push("commit");
+          },
+        });
+      },
+    } as any,
+    resting: async () => true,
+    account: async () => {
+      effects.push("account");
+      return archive;
+    },
+    importAccount: async () => {
+      effects.push("import");
+    },
+    record: async () => {},
+    list: async () => [],
+    authorizeRestore: async (id, value, mode) => {
+      authorizations++;
+      expect(id).toBe(manifest.id);
+      expect(value).toEqual(archive);
+      expect(["vm", "account"]).toContain(mode);
+      return {
+        check: async () => {
+          if (!current) throw Error("restore revoked");
+        },
+      };
+    },
+  };
+  return {
+    bucket,
+    backups,
+    manifest,
+    archive,
+    effects,
+    options,
+    revoke: () => {
+      current = false;
+    },
+    count: () => authorizations,
+    run: (mode: "vm" | "account" = "account") =>
+      backupApi(
+        new Request("https://owner.test/api/control/restore", {
+          method: "POST",
+          body: JSON.stringify({ id: manifest.id, mode }),
+        }),
+        options,
+      ),
+  };
+}
+for (const denial of ["missing", "denied", "stale", "invalid"] as const)
+  test(`restore ${denial} authorization performs no VM staging or account effects`, async () => {
+    const f = await restoreAuthorityFixture();
+    if (denial === "missing") delete f.options.authorizeRestore;
+    if (denial === "denied")
+      f.options.authorizeRestore = async () => {
+        throw Error("not authorized");
+      };
+    if (denial === "stale") f.revoke();
+    if (denial === "invalid")
+      f.options.authorizeRestore = async () => ({}) as any;
+    await expect(f.run()).rejects.toThrow();
+    expect(f.effects).toEqual([]);
+  });
+test("VM-only and exact imported retries always reauthorize", async () => {
+  const f = await restoreAuthorityFixture();
+  expect((await f.run("vm")).status).toBe(200);
+  expect(f.effects).not.toContain("import");
+  expect((await f.run()).status).toBe(200);
+  expect((await f.run()).status).toBe(200);
+  expect(f.count()).toBe(3);
+  const before = f.effects.slice();
+  f.revoke();
+  await expect(f.run()).rejects.toThrow("restore revoked");
+  expect(f.effects).toEqual(before);
+  expect(f.count()).toBe(4);
+});
+for (const boundary of ["write", "import", "account"] as const)
+  test(`revocation during ${boundary} aborts staged restore before publication`, async () => {
+    const f = await restoreAuthorityFixture();
+    if (boundary === "write")
+      f.options.sandbox = {
+        busy: false,
+        restore: async (produce: any) =>
+          produce({
+            write: async () => {
+              f.effects.push("write");
+              f.revoke();
+            },
+            abort: async () => {
+              f.effects.push("abort");
+            },
+            commit: async () => {
+              f.effects.push("commit");
+            },
+          }),
+      } as any;
+    if (boundary === "import")
+      f.options.importAccount = async () => {
+        f.effects.push("import");
+        f.revoke();
+      };
+    if (boundary === "account")
+      f.options.account = async () => {
+        f.effects.push("account");
+        f.revoke();
+        return f.archive;
+      };
+    await expect(f.run()).rejects.toThrow("restore revoked");
+    expect(f.effects).toContain("abort");
+    expect(f.effects).not.toContain("commit");
+    if (boundary === "write") expect(f.effects).not.toContain("import");
+    if (boundary === "import") expect(f.effects).not.toContain("account");
+  });
+test("authenticated single-file read rejects limits and tampering before restore staging", async () => {
+  const f = await restoreAuthorityFixture();
+  await expect(
+    f.backups.readFile("owner", f.manifest.id, "account.json", 1),
+  ).rejects.toThrow();
+  await expect(
+    f.backups.readFile("other", f.manifest.id, "account.json", 1024),
+  ).rejects.toThrow();
+  const key = [...f.bucket.objects.keys()].find((k) => k.endsWith("/1/0"))!;
+  f.bucket.objects.get(key)![0] ^= 1;
+  await expect(f.run()).rejects.toThrow();
+  expect(f.effects).toEqual([]);
+  expect(f.count()).toBe(0);
+});
+
+test("restore pins the authorized manifest and aborts if the inventory changes", async () => {
+  const f = await restoreAuthorityFixture();
+  const read = await f.backups.readFile(
+    "owner",
+    f.manifest.id,
+    "account.json",
+    1024,
+  );
+  const expected = structuredClone(read.manifest);
+  expected.files[0]!.sha256 = "0".repeat(64);
+  const calls: string[] = [];
+  await expect(
+    f.backups.restore(
+      "owner",
+      f.manifest.id,
+      {
+        write: async () => {
+          calls.push("write");
+        },
+        commit: async () => {
+          calls.push("commit");
+        },
+        abort: async () => {
+          calls.push("abort");
+        },
+      },
+      expected,
+    ),
+  ).rejects.toThrow("Backup manifest changed");
+  expect(calls).toEqual(["abort"]);
+  delete f.options.authorizeRestore;
+  expect(
+    (
+      await backupApi(
+        new Request("https://owner.test/api/control/backups"),
+        f.options,
+      )
+    ).status,
+  ).toBe(200);
 });

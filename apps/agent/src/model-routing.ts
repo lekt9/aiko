@@ -1,4 +1,5 @@
 import { Infer, type InferRequest } from "tardie";
+import { isContributionInference } from "./reflection-contributions.ts";
 import { infer as modelInfer } from "tardie/model";
 import { modelAdapters } from "tardie/model/adapter";
 import { openAICompatibleAdapter } from "tardie/model/openai";
@@ -345,7 +346,7 @@ export function createModelRouting(options: ModelRoutingOptions) {
       }
     };
   };
-  const layer = (role: ModelRole): Layer.Layer<Infer> => {
+  const layer = (role: ModelRole, contribution = false): Layer.Layer<Infer> => {
     const route = requireRoute(role);
     const capability=capabilityFor(route);
     const stream = options.stream ?? { firstChunkMs: 20000, idleMs: 20000, totalMs: 60000 };
@@ -353,8 +354,9 @@ export function createModelRouting(options: ModelRoutingOptions) {
     const native = modelInfer({
       provider: route.provider, baseUrl: MODEL_PROVIDERS[route.provider].baseUrl, apiKey: options.env[route.secretEnv]!, model: route.model,
       protocol: capability.protocol??"openai-chat-completions", ...contextFor({provider:route.provider,model_id:route.model}),
-      maxTokensLadder: [contextFor({provider:route.provider,model_id:route.model}).maxOutputTokens],
-      throttleRetryDelaysMs: options.throttleRetryDelaysMs ?? DEFAULT_MODEL_RETRY_DELAYS_MS,
+      ...(contribution ? { maxOutputTokens: Math.min(1500, contextFor({provider:route.provider,model_id:route.model}).maxOutputTokens) } : {}),
+      maxTokensLadder: [Math.min(contribution ? 1500 : Infinity, contextFor({provider:route.provider,model_id:route.model}).maxOutputTokens)],
+      throttleRetryDelaysMs: contribution ? [] : options.throttleRetryDelaysMs ?? DEFAULT_MODEL_RETRY_DELAYS_MS,
       fetch: transport(role),
       stream,
     }, modelAdapters({...openAICompatibleAdapter,start:context=>openAICompatibleAdapter.start({...context,fetch:async(input,init)=>{
@@ -380,6 +382,10 @@ export function createModelRouting(options: ModelRoutingOptions) {
       return { ...binding,
         ...(capability.serverCompaction?{compact:responsesCompactor({owner:options.owner,model:{provider:route.provider,model_id:route.model},endpoint:`${MODEL_PROVIDERS[route.provider].baseUrl}/responses/compact`,transport:transport(role,"compact"),custody:{blobs:options.compactionBlobs,current:options.authorizeCompaction}})}:{}),
         react: (request: InferRequest, key?: string, signal?: AbortSignal) => {
+        // Select the bound from the native invocation's retained contract. A
+        // restarted legacy reflection keeps its original provider behavior.
+        if (!contribution && isContributionInference(request, options.owner))
+          return Effect.gen(function* () { return yield* (yield* Infer).react(request, key, signal); }).pipe(Effect.provide(layer(role, true)));
         if (request.model && (request.model.provider !== route.provider || request.model.model_id !== route.model))
           return Effect.succeed({ kind: "fail" as const, error: "Model request override is outside the configured role" });
         const current = status(role);
@@ -393,7 +399,7 @@ export function createModelRouting(options: ModelRoutingOptions) {
             else missingUsage = true;
           };
           remember(action.usage);
-          for (const fallback of config.fallbacks?.[role] ?? []) {
+          for (const fallback of contribution ? [] : config.fallbacks?.[role] ?? []) {
             // A fallback is another inference attempt, never a replay of a tool or a refusal bypass.
             if (signal?.aborted || action.kind !== "fail" ||
                 !(action.failure?.cause === "inference_attempts_exhausted" ||

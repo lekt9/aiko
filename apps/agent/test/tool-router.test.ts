@@ -5,6 +5,13 @@ import { createBunHost } from "tardie/bun/host";
 import type { Event } from "tardie/core/event";
 import { createToolRouterActor, routerEventKey, type ToolRouterBinding, type RouterMethod } from "../src/tool-router.ts";
 import { BrowserLearning } from "../src/browser-learning.ts";
+import { nodeStorage } from "entity-learn";
+import type { HarnessTransportResponse } from "@unbrowse/browser-harness/harness-runtime";
+import { RequestMemory } from "../src/request-memory.ts";
+import { createObservedNetworkTools } from "../src/observed-network.ts";
+import { Effect } from "effect";
+import { Self } from "tardie/core/runtime";
+import { EventLog } from "tardie/core/log";
 import { ownedNetworkDefinitions } from "../src/capability-builder-network.ts";
 import type { ConnectorDescription, Connection } from "../src/connectors.ts";
 const cleanup: (() => Promise<void>)[] = [];
@@ -151,6 +158,62 @@ test("indexed Merkle network DAGs become ready observed skills that execute with
   // A catalog outage never manufactures an Arcade grant or enables discovery.
   expect(await f.call("route", { tasks: [{id: "mail", query: "read Gmail email messages", domain: "gmail.com"}] })).toMatchObject({tasks: [{tools: [], fallbackAllowed: false}]});
 });
+test("semantic request recall describes and routes a fresh dependency replay after router restart", async () => {
+  const f = await fixture(); let sequence = 0;
+  const learning = new BrowserLearning({ threadId: "described-dag", nextSequence: () => ++sequence, emit: async e => { f.owned.push(e); } });
+  const entry = (url: string, body: string, index: number) => ({ startedDateTime: new Date(1000 + index * 100).toISOString(), time: 20,
+    _observationComplete: true, request: { method: "GET", url, headers: [], cookies: [] },
+    response: { status: 200, headers: [], cookies: [], content: { mimeType: "application/json", size: body.length, text: body } } });
+  const entries = [entry("https://api.vendor.com/items", '{"item":"CAPTURED_ID_SENTINEL"}', 0),
+    entry("https://api.vendor.com/details?item=CAPTURED_ID_SENTINEL", '{"restaurants":[{"name":"PRIVATE_NAME_SENTINEL","rating":4}],"posts":[{"title":"PRIVATE_NAME_SENTINEL"}]}', 1)];
+  for (let i = 0; i < entries.length; i++) await learning.observe(entries[i]!, i, true);
+  await learning.compile(entries, [{ callId: "call", action: "navigate", startedAtMs: 999, endedAtMs: 1250, direct: true, resultObserved: true }], "https://api.vendor.com");
+  const prepared = ownedNetworkDefinitions(f.owned).sort((a, b) => b.definition.steps.length - a.definition.steps.length)[0]!;
+  expect(prepared.definition.steps).toHaveLength(2);
+  const storage = nodeStorage(":memory:"); cleanup.push(async () => { storage.close(); });
+  const memory = new RequestMemory({ owner: "123", storage, readOwnedEvents: async () => f.owned,
+    embedding: { model: "deterministic-test-only", dimensions: 2, embed: async texts => texts.map(() => [1, 0]) },
+    transport: { send: async () => { throw Error("Discovery must not execute"); } } });
+  const saved = await memory.index(prepared.toolDigest, ["restaurant", "rating"]);
+  f.owned.push({ type: "AikoRequestMemoryIndexed", toolDigest: prepared.toolDigest, pointerId: saved.pointerId });
+  const recalled = (await memory.search("restaurant rating")).items[0]!;
+  expect(recalled.toolId).toBe(prepared.toolId);
+  expect(recalled.endpoint.description).toContain("restaurant");
+  await f.restart(); f.setUnavailable(true);
+  const route = await f.call("route", { tasks: [{ id: "restaurants", query: "find restaurant rating" }] });
+  expect(route.tasks[0].tools[0].id).toBe(recalled.toolId);
+  // A GET of social posts is not the mutating POST verb; the checked effect wins over prose.
+  expect((await f.call("route", { tasks: [{ id: "posts", query: "find recent posts" }] })).tasks[0].tools[0].id).toBe(recalled.toolId);
+  const described = await f.call("describe", { toolIds: [recalled.toolId] });
+  const tool = described.tools[0], mapping = tool.requirements.execution;
+  expect(tool.requirements.output.fields).toContainEqual({ path: "$.restaurants[].rating", types: ["number"] });
+  expect(tool.requirements.recomputation).toMatchObject({ stepCount: 2, dependencyCount: 1, capturedValues: false });
+  const inputs = Object.fromEntries(prepared.definition.inputs.map(i => [i.name, i.name.includes("0001") ? "items" : "details"]));
+  expect(tool.inputSchema.required.every((k: string) => Object.hasOwn(inputs, k))).toBe(true);
+  const requests: string[] = []; let generation = 0, missingProducer = false;
+  const native = createObservedNetworkTools({ owner: "123", thread: "user-123", redact: s => s, checkArcade: async () => true,
+    send: async (request): Promise<HarnessTransportResponse> => {
+      requests.push(request.url);
+      return { status: 200, headers: {}, classification: "application", body: request.url.endsWith("/items")
+        ? missingProducer ? {} : { item: `fresh-${++generation}` } : { restaurants: [{ name: "CURRENT_PRIVATE_NAME", rating: 5 }] } };
+    } }).find(t => t.spec.name === mapping.tool)!;
+  const run = (callId: string) => Effect.runPromise(native.run({ ...mapping.arguments, [mapping.inputParameter]: inputs },
+    { callId, turn: "replay", signal: new AbortController().signal }).pipe(
+    Effect.provideService(Self, { actor: "aiko", instance: "test", thread: "user-123" }),
+    Effect.provideService(EventLog, { read: Effect.sync(() => f.owned), head: Effect.sync(() => f.owned.length),
+      readFrom: (n: number) => Effect.sync(() => f.owned.slice(n)), append: (rows: Event[]) => Effect.sync(() => { f.owned.push(...rows); }) } as any),
+  )) as Promise<any>;
+  expect(await run("first")).toMatchObject({ status: "completed", browser: false });
+  expect(requests[1]).toContain("fresh-1");
+  expect(await run("second")).toMatchObject({ status: "completed", browser: false });
+  expect(requests[3]).toContain("fresh-2");
+  expect(requests.join(" ")).not.toContain("CAPTURED_ID_SENTINEL");
+  missingProducer = true;
+  expect((await run("missing")).status).not.toBe("completed");
+  expect(requests).toHaveLength(5); // Missing upstream ID blocks the downstream request.
+  expect(JSON.stringify([f.owned, described, recalled, memory.memory.exportArchive()])).not.toMatch(/CAPTURED_ID_SENTINEL|PRIVATE_NAME_SENTINEL|CURRENT_PRIVATE_NAME|fresh-[12]/);
+});
+
 test("collection search favors query schemas over unknown IDs and unrequested folders", async () => {
   const f = await fixture();
   f.catalog.push(entry("GetEmail", "Gmail", "Find unread email messages in Gmail by email ID", "gmail.com", "email_id"), entry("ListDraftEmails", "Gmail", "Find email messages in Gmail drafts", "gmail.com", "limit"), entry("SearchEmails", "Gmail", "Search email messages using a query", "gmail.com", "query"));

@@ -2,9 +2,23 @@
 
 Status: implementation blueprint, updated 2026-09-08. Partial implementation exists in this checkout; the milestone checklists below define acceptance, not a claim that the feature is complete. See the [implementation ledger](structured-databases-status.md) for recorded evidence; recheck the working tree before continuing because host integration is also in progress.
 
-The latest checkpoint includes native reply artifact references, the json-render table UI, authenticated mini-app launch, protected approval detail, and a passing isolated browser witness. Live-source execution, entity round trips and other requirements remain open in the ledger.
+The working tree includes native reply artifact references, the json-render database UI with table/list/board/calendar/chart layouts, authenticated mini-app launch, protected approval detail, bounded staged manual refresh through registered read contracts, loaded-page source refresh controls with acknowledgement recovery, exact entity observation references, versioned row/subject mappings, and manual table-to-memory publication with native recovery. It also contains mapped entity correction and explicit `publish-table` conflict resolution commands. Layouts, saving new views, and the mapped-memory editor have native-host browser evidence, including concurrent edits, failed reads, lost acknowledgements and read-only boundaries; see the implementation ledger. Transient live queries, scheduled refresh, projection enumeration, detach, full capability controls, baseline comparison/resolution UI, and automatic bridge delivery remain unfinished parts of the target.
 
 This plan implements the [structured database design](structured-databases-design.md) inside Aiko's existing Tardigrade runtime. It covers agent-created tables, live API fields, relations and joins, entity-learn round trips, json-render artifacts, inline mini apps, and a standard collection interface for the approval queue.
+
+## Decisions at a glance
+
+| Question | Decision |
+| --- | --- |
+| What does the agent create? | Logical databases containing flexible JSON rows, typed columns, stable relations, and saved views. A row does not need an entity identity. |
+| Where does it live? | Existing owner-scoped SQLite storage, shared by agent tools and the authenticated UI. Introduce another storage backend only when measured requirements justify it. |
+| What makes it Tardigrade-native? | The existing actor admits commands and runs keyed effects; its event log, host wake mechanism, cancellation, and recovery drive database work. |
+| What makes a field live? | A persisted binding identifies an entity observation, registered API read, lookup, or formula. Evaluated values carry freshness and provenance separately. |
+| How does memory round-trip? | Versioned row/subject and field mappings, explicit write authority, exact revision checks, and durable evidence-backed deliveries. |
+| What does the agent return? | A stable database artifact reference that opens the same saved view inline or as a mini app. |
+| Can approvals use this standard? | Yes: the approval service exposes a domain collection. Its existing authenticated decision commands remain the authority for approval transitions. |
+
+First delivery: an agent creates related Projects and Companies tables, returns a saved table artifact in chat, and opens it as an editable mini app. The same renderer shows an approval collection with trusted review controls. Subsequent milestones add live sources and complete entity round trips. Existing implementation work is a foundation; acceptance requires the evidence listed below.
 
 ## Product contract
 
@@ -20,9 +34,19 @@ Standardize the collection contract across three kinds of data:
 
 All three expose stable record identities, typed fields, bounded queries, relations, saved views, revision cursors, and declared capabilities. Capabilities describe which controls to offer; the host still checks every read and command. A join returns a derived view and does not transfer write authority between collections.
 
+The implemented capability envelope describes current query/record actions: local editable fields, mapped-memory review, record creation from selected fields, view saving, and registered domain review. It is calculated from the authenticated caller and current host policy and is never persisted as a grant. Query changes, opening a snapshot, or credential changes require fresh hints. Missing hints expose no mutation controls. New source, lifecycle and bridge actions must extend this contract as they are implemented.
+
 The standard response carries an artifact reference, not a serialized database or a generated executable app. The artifact pins its view definition and renderer catalog; its data mode determines whether opening it reads current authorized values or a retained snapshot. Table identity, entity identity, view identity, and artifact identity remain separate.
 
 For example: create `Companies` and `Projects`, link each project to a company, map the company contact to an entity observation, and bind open issue count to a registered read request. Save a joined launch view and return its artifact in chat. A separate approval view can join pending actions to those same projects. Refresh updates the issue value through native effects; a human decision updates the approval service. Both changes update the open views through the collection subscription contract.
+
+### Simple user experience
+
+The user asks for a tracker, comparison, inventory, or approval inbox. The agent chooses a table when the task needs rows, fields, or joins; entity creation is optional. Offer the same plain controls wherever the collection appears: **Open**, **Filter**, **Refresh**, and authorized editing. A field's detail explains its source and last check. Internal tables become visible only when the agent or user publishes a view.
+
+An ordinary table edit saves through a native command. Editing a mapped memory field explicitly updates memory; editing a local field stays local until publication is requested. If both sides changed, show the two current values and the last synchronized value before asking which to keep. A successful memory write followed by a projection conflict should say “Memory updated; table needs reconciliation,” preserving the user's edit and the actual outcome.
+
+Approval rows share navigation, filtering, relations, and presentation with other tables. Their row detail retains the existing trusted review interaction. This makes the approval queue a first-class database artifact without making approval state an ordinary editable cell.
 
 ## 1. Architectural decision
 
@@ -53,6 +77,18 @@ flowchart TD
 ```
 
 No new model loop, process queue, cron daemon, generic workflow interpreter, or per-table actor is needed. Database dependency planning is a bounded pure algorithm invoked by native effects. Durable execution resumes from native operation events and stored receipts.
+
+### One native operation, end to end
+
+For “refresh the launch tracker and show me the result,” the intended execution is:
+
+1. A native tool or authenticated UI command supplies the saved view and freshness budget. The host derives owner and operation identity, retains private inputs, and admits the operation to the existing thread.
+2. The component projects recorded events into a bounded plan. A keyed effect resolves row relations, source inputs, and current grants; it groups fields sharing one registered read request.
+3. The existing request executor reads the source. Selected values are validated and committed with their lineage only if row inputs, binding generation, connection authority, and cancellation still permit the commit.
+4. Store receipts let a resumed effect recover committed work. Pending dependency or memory deliveries continue through native effects; live UI subscriptions consume authorized revision changes.
+5. The operation reports freshness and coverage. The actor returns the stable artifact reference through its existing response outbox; opening that reference reads the saved view without another inference turn.
+
+Cached reads can skip refresh entirely. A `require-fresh` request must report incomplete/unavailable when the budget or source prevents freshness; it cannot quietly return stale data as current. Reference-only results need an evaluation-scoped delivery path to the caller because their values cannot be reconstructed from persisted receipts. These transient query and subscription paths are acceptance requirements, not claims about today's implementation. The current local query boundary rejects unsupported fresh modes rather than ignoring them. Code mode presently retains tool results even when `retain:false`; exposing transient selected values requires a coordinated change to that shared custody boundary first.
 
 ## 2. Grounding in this checkout
 
@@ -94,7 +130,7 @@ Suggested native tool groups:
 
 - Structure/data: `database_create`, `table_define`, `table_upsert`, `table_delete_rows`, `table_query`.
 - Bindings/evaluation: `table_bind`, `table_refresh`, `database_operation`, `table_explain`.
-- Memory: `table_project_entities`, `table_link_entity`, `table_promote`, `table_detach`.
+- Memory: `table_project_entities`, `table_link_entity`, `table_promote`, `table_correct_entity`, `table_detach`.
 - Presentation: `view_save`, `artifact_create`, `artifact_snapshot`.
 
 Tools return typed outcomes: `committed`, `queued`, `conflict`, `partial`, `unavailable`, or `rejected`, with operation/revision references and bounded coverage. `queued` never means the requested table update or artifact evaluation has completed. Long refreshes return an operation ID; use the existing durable method/intent pattern if a caller needs to wait, and otherwise inspect that operation without resubmitting it.
@@ -153,13 +189,42 @@ Entity bridge operations call the actual entity-learn core through the host adap
 
 Table revisions must become valid source observations before they can be cited through entity-learn `supports`/`dependsOn`; a table revision string is not an observation ID. Suppression/current grants are rechecked on derived reads and exports, so background invalidation delay cannot expose suppressed evidence. Bridge keys and causal ancestry prevent feedback loops. Treat aggregate projections as explicitly non-invertible.
 
+### Explicit round-trip behavior
+
+These are planned product operations; their labels do not imply that every operation is implemented in the current tool surface.
+
+| User intent | Operation and resulting authority |
+| --- | --- |
+| “Show these entities as a table” | Project selected subjects into rows with stable mappings. Entity-owned fields follow exact memory observations; unrelated local columns remain table-owned. |
+| “Remember these selected rows” | Publish explicitly mapped, retainable table-owned fields. Create table evidence first, then write entity observations that cite it. Preserve unmapped entity fields. |
+| “Correct this memory field here” | Submit an entity correction through the memory adapter with the expected observation ID. Refresh the projection from the accepted observation. |
+| “Use a local copy instead” | Detach an allowed selected value into a literal and record its origin. Future source changes no longer update that field; retention restrictions still apply. |
+| “Both sides changed” | Show the baseline, current table value, and current entity value. Resolve against fresh revisions using an explicit choice or merge. |
+
+A mapping records the table/row ID, entity subject, mapping version, column-to-payload paths, per-field authority, and last synchronized row/observation revisions. There is no automatic title matching. Each delivery records its originating operation and causal ancestry so its own resulting observation does not trigger a feedback write.
+
+For a table-owned field, publication follows this sequence:
+
+1. Read an authorized row revision and the expected entity head; validate field mappings and retention.
+2. Persist a private delivery plan and stable idempotency keys before crossing stores.
+3. Create or recover the exact table evidence observation.
+4. Create or recover the target memory observation, citing that evidence and checking the expected head.
+5. Advance the mapping baseline only if the table, mapping, and target still match. Otherwise report a conflict that distinguishes an already-applied memory write from a rejected write.
+6. Settle the delivery through native events. Resume pending deliveries after restart by checking receipts before writing again.
+
+SQLite state and entity memory need not share a transaction. A lost acknowledgement must not create a second observation. Manual publication is the first bridge milestone; automatic propagation requires durable delivery draining, causal invalidation, and independent recovery tests before it is enabled. Arbitrary JSON and aggregates cannot promise a lossless inverse: declare direct path mappings as writable and transformations as read-only unless an explicit inverse is defined and validated.
+
+For an entity-owned correction, require the exact mapping revision, row revision, and current observation ID. Apply only the requested writable paths, preserve unrelated payload and existing provenance dependencies, and project the accepted observation back into eligible mapped cells. Preserve original validity and expiry for untouched facts; correcting a field is not a fresh source check of the whole entity. Record memory commit, projection commit, and baseline advancement separately so a crash or concurrent edit cannot be reported as an all-or-nothing success.
+
+The current commands expose this distinction through `appliedToMemory`, `projectionUpdated`, and `baselineUpdated`. A mixed table/entity mapping with unpublished local changes must retain its prior baseline. Explicit `resolveConflict: "publish-table"` permits a deliberate table-owned replacement against the exact current head; it is not a blanket bypass of revision checks. Complete the other resolution choices and user-facing comparison flow before describing the bridge as fully bidirectional.
+
 ## 6. Scheduling, cancellation, and host parity
 
 Add proposed `databaseNextWake`, `databaseWakeEvent`, `databaseEventKey`, and append/admission predicates following current application patterns. Compose them with existing host wake/deadline calculations. Cloudflare uses its existing single account alarm and reconciler driver; Node uses its existing native host wake/lifetime infrastructure. Implementation must inspect and wire each host's actual path, not assume the Worker helper is sufficient for both.
 
 Persist schedule generation, next due slot, budgets, and occurrence identity. Default missed-slot behavior coalesces overdue refreshes into one current check; do not replay every elapsed interval after an outage. Pausing, replacing, or revoking a schedule invalidates pending work. Read current generations at admission and before accepting results.
 
-Use small native effect batches with saved stage cursors. Cancellation interrupts outstanding reads and prevents new stages; committed stages remain visible with partial/cancelled coverage. Cancelling a foreground wait does not implicitly cancel an independently configured recurring schedule. Database refresh never launches an inference turn just to poll a source.
+Use small native effect batches with saved stage cursors. Cancellation interrupts outstanding reads and prevents new stages; committed stages remain visible with partial/cancelled coverage. Manual staged-refresh recovery now reconciles existing receipts before new-work authority checks, preserving earlier commits and measured/reserved costs after cancellation, revocation, conflicts and expired deadlines. The selected-cell transaction rechecks cancellation after hashing and current target-field access. This does not implement recurring schedule admission or wake composition. Cancelling a foreground wait does not implicitly cancel an independently configured recurring schedule. Database refresh never launches an inference turn just to poll a source.
 
 Resource limits cover candidate rows, joined rows, selected bytes, formula operations, dependency depth, source calls, concurrent refresh groups, and wall-clock deadline. Reject computational cycles, permit ordinary cyclic relations, and expose exhausted budgets. Coalesce repeated invalidations and apply bounded retry/backoff to avoid hot alarm loops.
 
@@ -169,9 +234,13 @@ Preserve the renderer-independent artifact envelope from the design: artifact ID
 
 Use an application-owned json-render catalog and registry for `DatabaseView`, `RecordDetail`, relation cells, freshness/status indicators, filters, and metrics. Compile ordinary table views deterministically. Let the model compose layouts from permitted components when useful. Persist the validated complete spec/version; streamed partial specs cannot execute mutations.
 
-The [json-render documentation site](https://json-render.dev/) describes catalog-defined components/actions and currently demonstrates a basic `Table` with column labels and string rows. Treat that as a rendering primitive. Implement our richer `DatabaseView` component for typed editing, relation navigation, pagination, subscriptions, and command reconciliation; these database semantics belong to our application contract. Pin the chosen json-render version and catalog schema when implementing M2.
+The official [catalog](https://json-render.dev/docs/catalog) and [registry](https://json-render.dev/docs/registry) documentation describes typed component/action definitions mapped to application-owned implementations; the [introduction](https://json-render.dev/docs) also documents inline conversation presentation. Rechecked 2026-09-08. Use our `DatabaseView` component for typed editing, relation navigation, pagination, subscriptions, and command reconciliation; these database semantics belong to our application contract. The web package currently pins `@json-render/core` and `@json-render/react` to `0.20.0`; keep persisted catalog versions explicit and verify APIs against that installed version before adopting examples from newer documentation.
 
 Wire the host query/subscription client into the renderer. Client state holds result pages and edit drafts. Typed handlers submit durable commands with expected row revisions and reconcile results. Inline preview, expanded mini app, and standalone route open the same artifact. Reconnect from a revision cursor, or reload an authorized snapshot if the cursor has expired. Permission loss tears down subscriptions and clears retained client data.
+
+Saved views carry a layout plus optional `titleField`, `groupField`, `dateField`, and `valueField`, validated against the selected query output, including aggregate aliases. Board views require a compatible grouping field; calendars require a timestamp; charts require a numeric value field. All layouts use the same authorized query and canonical record detail. Calendar days use UTC. Charts show exact values for each returned record; aggregations belong in the backend query. Layouts disclose loaded-page coverage, retain undated/unavailable records visibly, and never imply that a page is the whole database.
+
+**Save as new view** creates a new native view and artifact while preserving filters and sorting and removing pagination cursors. It leaves existing artifact definitions pinned. The UI retains immutable command identities through uncertain acknowledgements and background reloads, checking the original operation before retrying. The current two-command flow can leave a saved view if artifact creation fails; it must disclose that partial outcome. Current controls consume host capability hints; the remaining source/lifecycle/bridge actions and client recovery across a full page close remain follow-up work. Snapshot layout changes affect presentation only and expose no live mutation controls. **Refresh sources** separately refreshes selected retained source fields for the loaded root records under an explicit budget; it preserves drafts and the admitted identity through a lost acknowledgement. **Reload table** and background polling remain cached reads. Transient fresh-query controls are not enabled.
 
 Extend `respond` and the existing `AikoResponseRequested` → preparation → delivery path with validated artifact references. Carry them through `Speech`/prepared reply types, durable outbox payloads, protocol/SDK responses, and each supported channel adapter. Validate artifact existence and current access before admission and again before delivery. Preserve backward-compatible text responses and existing exactly-once logical response intent.
 
@@ -197,11 +266,12 @@ Names marked proposed are planned application boundaries, not upstream Tardigrad
 
 | Location | Work |
 | --- | --- |
-| `packages/structured-data/` (proposed) | Runtime-independent schemas, store/query engine, binding planner, storage interfaces; no actor loop or scheduler |
-| `apps/agent/src/database.ts` (proposed) | Owner-bound native tool admission, receipts, query adapter |
-| `apps/agent/src/database-component.ts` (proposed) | Native operation projection/effects, event keys, scheduling and cancellation |
-| `apps/agent/src/database-host.ts` (proposed) | Storage, custody, source and memory bindings; domain collection adapters |
-| `apps/agent/src/database-api.ts` (proposed) | Authenticated query/command/operation/subscription and artifact endpoints |
+| `packages/structured-data/` | Runtime-independent schemas, store/query engine, binding planner, storage interfaces; no actor loop or scheduler |
+| `apps/agent/src/database.ts` | Owner-bound native tool admission, receipts, query adapter |
+| `apps/agent/src/database-component.ts` | Native operation projection/effects, event keys, scheduling and cancellation |
+| `apps/agent/src/database-host.ts` | Storage, custody, source and memory bindings; domain collection adapters |
+| `apps/agent/src/database-entities.ts`, `database-bridge.ts` | Actual entity-learn reads/writes, mapping deliveries, evidence and cross-store reconciliation |
+| `apps/agent/src/database-api.ts` | Authenticated query/command/operation/subscription and artifact endpoints |
 | `apps/agent/src/actor.ts` | Mount component/tools; extend artifact-bearing response preparation |
 | `apps/agent/src/server.ts`, `cloudflare.ts`, `cloudflare-host.ts` | Host binding and admission/recovery/deadline integration; alter generic host only where an actual gap requires it |
 | `apps/agent/src/request-memory.ts`, `observed-network.ts` | Scoped selected-field read adapter and value/check separation; preserve connector authority |
@@ -209,7 +279,7 @@ Names marked proposed are planned application boundaries, not upstream Tardigrad
 | `apps/agent/src/channel-response.ts`, channel/Telegram response adapters | Artifact reference transport through current durable delivery |
 | `apps/agent/src/action-approval.ts` and existing approval API | Preserve canonical commands; expose safe projection and any explicit contract extension |
 | `packages/protocol/`, `packages/sdk/` | Collection/query/command/artifact contracts and client methods |
-| `apps/web/src/components/database/` (proposed) | json-render catalog/registry, grid, record detail, mini-app shell, protected approval detail |
+| `apps/web/src/components/database-artifact.tsx`, `database-workspace.tsx`, `mini-app-screen.tsx` | json-render catalog/registry, grid, record detail, mini-app shell, protected approval detail |
 | Existing backup/export/import modules | Include structured state, retained values, schedules, receipts and pending deliveries |
 | `apps/agent/scripts/audit-native-databases.ts` (proposed) | CLI fixture using the real mounted component/tools and deterministic `Infer` |
 
@@ -257,6 +327,7 @@ Exit: a live field, relation lookup, and formula update with correct freshness; 
 
 - [ ] Implement projection, linking, selective promotion, writable mappings, detach, and non-invertible transform rules.
 - [ ] Add exact evidence observations, baseline conflict detection, and durable bridge deliveries.
+- [ ] Complete correction/conflict UI and explicit resolution choices; disclose memory commit, projection commit, and baseline advancement independently.
 - [ ] Verify suppression/revocation across tables, joins, artifacts and exports before serving results.
 - [ ] Crash at each bridge boundary and verify one logical target observation with stable identity.
 

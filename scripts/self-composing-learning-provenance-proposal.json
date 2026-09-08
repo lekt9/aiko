@@ -1,0 +1,142 @@
+{
+  "registered": false,
+  "requirements": {
+    "S21.C01": {
+      "literal": "Promotion ingestion produces one owner/cause/stream/cursor/version-bound Merkle transition and cited decision; duplicate event creates no extra observation/delivery",
+      "coverage": "Strengthened local joined scope passes source/native window, owner/cause, exact DB commit, Merkle revision/hash policy, decision, cited task notification/bound delivery and duplicate/restart checks."
+    },
+    "S21.C05": {
+      "literal": "Crash between DB ingestion and log receipt reconciles deterministic identity/cursor; send acknowledgement loss remains unknown without blind resend",
+      "coverage": "Separate process exits after real DB commit and physical send pass original commit/origin/cursor/full-history recovery and exact unknown turn/claim no-resend across additional process restart."
+    },
+    "S21.C02": {
+      "literal": "Identical content, timestamps, replay, transition/delivery receipts and notification history trigger no recursive semantic/reflection cycle",
+      "coverage": "Actual default production host: identical saved bytes in a fresh timestamped turn preserve semantic root; genuine retained transition/decision/delivery history replay plus three native explicit reindex requests preserve root and physical counters; process replay remains effect-free."
+    }
+  },
+  "priorEvidence": "/tmp/learning-process-proof-DhpA03/report.json",
+  "currentBlockedEvidence": "/tmp/learning-lifecycle-proof-c4i4mD/report.json",
+  "blocker": "Whole C04 fails: native memory_erase removes the observation/history/archive payload, but deleted source input and reflection evidence remain in native logs across restart. Exact runtime request is in the proof-worker handoff; no assertion or ownership boundary was relaxed.",
+  "inputs": {
+    "scripts/fixtures/self-composing-learning-provenance.ts": "b4d96ee18b2d4e536faef9e8bfdcb5cf803bf3ac758343363f1e5f2ec6be3e43",
+    "scripts/verify-self-composing-learning-provenance.ts": "db45d97a5ca095ef2036c0081bb243b0d8b5b60ba041a17455215dff0f2321a2"
+  },
+  "limitations": [
+    "No registration or acceptance pin update performed.",
+    "Local production Bun/default library/sandbox with controlled physical Infer/Telegram edges; no hosted/live-provider claim.",
+    "Source graph captures 1088 source/dependency files plus lock/patch coverage as recorded; not a claim of global workspace freeze."
+  ],
+  "joinAudit": [
+    "Exact proactive turn, epoch and original claim matched to physical send and single unknown settlement.",
+    "DB cut original hook origin/native sequence row equals recovered origin/row; original DB commit and observation identity match.",
+    "Complete histories for all captured current subjects unchanged across additional process restart; cut observation has exactly one history entry.",
+    "Merkle scope revisions and aiko-memory-semantic/v2 pinned; cited acquisition observation joins accepted notification and exact physical delivery.",
+    "Duplicate original promotion creates no observation or delivery; all three strengthened process modes passed."
+  ],
+  "currentEvidence": "/tmp/learning-process-proof-AAsezz/report.json",
+  "sourceBoundary": {
+    "files": 1188,
+    "drift": [],
+    "sourceRoot": "/tmp/proofs-final-v3-IJMzIF",
+    "before": "/tmp/learning-process-proof-AAsezz/source-before.json",
+    "after": "/tmp/learning-process-proof-AAsezz/source-after.json",
+    "custody": "/tmp/learning-process-proof-AAsezz/candidate-custody.json",
+    "scope": "Read-only isolated dirty candidate and copied resolved dependencies, not the later changing shared worktree. No live workspace source loaded."
+  },
+  "readiness": {
+    "S21.C01": "Whole literal semantic proof passes: unique own-cause ingestion/Merkle/decision cites its own current observation while remaining silent; duplicate/restart adds no observations/delivery. Unregistered pending coordinated source review.",
+    "S21.C05": "Whole literal semantic process proof passes: original native cursor/DB receipt after real commit cut; exact physical send claim stays unknown without repeats over another process restart. Unregistered.",
+    "S21.C02": "Whole scoped literal semantic proof passes; portable Contract 86f0df1e satisfied, unregistered."
+  },
+  "nextAcceptanceAudit": {
+    "contract": "bbc6a878",
+    "evidence": "/tmp/learning-process-proof-aiVn22/report.json",
+    "C03": "Whole literal demonstrated by default native host, real sandbox task acquisition, bound notice, foreign owner denial, and reasoned silent indexing/draft/saved-note cases. Unregistered.",
+    "C02": "Repeated identical content in fresh turn, duplicate/replay and native receipt histories add no reflection/notice. Whole C02 not claimed: explicit timestamp-only semantic transition and adversarial recursive notification-history input are not independently isolated.",
+    "C04": "memory_erase explicitly excludes earlier chat/tool logs, copied execution results, existing context, backups and disk remnants (memory.ts:683/812); whole deletion-copy absence remains unproven. Root owns cleanup.",
+    "C06": "Policy code has quiet hours, dismissals, batching, cooldown and daily interruption bounds; this proof does not run each over process restart/native alarms. Whole criterion unproven.",
+    "C07": "Foreign outcome/notification denial and causal replay proven; cross-owner observation retrieval, native gap/incomplete snapshot/unavailable evidence not joined in this production scenario. Whole criterion unproven.",
+    "parent": "Not attested: C04/C06 and joined C02/C07 obligations remain."
+  },
+  "c02Boundary": {
+    "contract": "86f0df1e",
+    "initialFixtureFailure": "/tmp/learning-process-proof-glOh38/report.json",
+    "fix": "Explicit native wake after test-only host.seed; no assertion weakened",
+    "controlled": "Genuine production acquisition and receipts; deliberate duplicate seeding and bounded AikoIndexRequested stimuli are fixture inputs, not forged outcomes. Controlled physical Infer/Telegram transports; no live-provider claim.",
+    "remaining": "C04 erasure, C06 policy restart matrix, C07 joined negatives and parent remain outside this proof."
+  },
+  "c06Attempt": {
+    "combinedEvidence": "/tmp/learning-process-proof-p4FbRJ/report.json",
+    "sourceFiles": 1101,
+    "sourceDrift": [],
+    "batch": "Native alarm and exactly one notice after real process restart; no added model/code/jobs, second restart no repeat.",
+    "quiet": {
+      "directory": "/tmp/s21-quiet-restart-iNpRIF",
+      "passed": true,
+      "scope": "Persisted UTC quiet window prevents notice across process restart; end-of-quiet alarm delivery not yet exercised."
+    },
+    "disabled": {
+      "directory": "/tmp/s21-disabled-restart-XEJ91y",
+      "passed": true,
+      "scope": "Persisted disabled preferences suppress notice across process restart without repeated work."
+    },
+    "remaining": [
+      "quiet-window expiry alarm",
+      "dismissal restart",
+      "cooldown restart/alarm",
+      "spent daily interruption-budget restart/alarm"
+    ],
+    "wholeC06": false,
+    "compatibilityFix": "Fault injection patches entity-learn core Memory now used by guarded host, preserving real commit and exit71 oracle.",
+    "sourceCaution": "Quiet/disabled extensions ran after combined graph capture; not covered by that earlier zero-drift graph."
+  },
+  "lifecycleContinuation20260908": {
+    "state": "blocked",
+    "registered": false,
+    "command": "cd /tmp/proofs-c04-reviewed-0bhM4M && env -i PATH=\"$PATH\" TMPDIR=/tmp bun --no-env-file scripts/verify-self-composing-learning-lifecycle.ts",
+    "report": "/tmp/learning-lifecycle-proof-c4i4mD/report.json",
+    "exit": 1,
+    "fixtureProcesses": 16,
+    "sourceInputs": 1195,
+    "sourceDrift": [],
+    "custody": "/tmp/learning-lifecycle-proof-c4i4mD/candidate-custody.json",
+    "confirmedAgain": "/tmp/learning-lifecycle-proof-PNbFCh/report.json",
+    "matrix": {"correction": "pass", "deletion": "retention assertion fails", "sourceRevocation": "pass", "artifactSupersession": "pass"},
+    "retainedDeletedPayload": [
+      {"thread": "background-123-indexer", "seq": 6, "type": "AikoHookReceived", "id": "hook:independent-c04-source"},
+      {"thread": "background-123-reflection", "seq": 5, "type": "MessageReceived", "id": "reflect:hook:independent-c04-source"}
+    ],
+    "nativeBoundary": "Authenticated source ingress or real acquired capability; pending notice survives process cut. Native memory_scan/erase with an ok/registered-copies-erased receipt, native remember, trusted owner journal source revocation, and actual record/evaluate/promote supersession. All four stale notices are suppressed. Two more processes preserve exact native sequences and physical counters; erased memory itself does not return.",
+    "regression": {"report": "/tmp/learning-process-proof-ODyaGF/report.json", "exit": 0, "fixtureProcesses": 34, "semanticWholeChildren": ["S21.C01", "S21.C02", "S21.C03", "S21.C05", "S21.C06", "S21.C07"], "sourceInputs": 1195, "sourceDrift": []},
+    "wholeC04": false,
+    "wholeS21": false,
+    "runtimeRequest": ".agent-grid/notes/recovery-20260908/requests/proofs.md",
+    "currentFullGate": {"report": "/tmp/proofs-c04-full-gate.json", "exit": 1, "satisfied": 0, "blocked": 187, "parentsBlocked": 25, "fullCompletion": false},
+    "limits": "No runtime edit, pin refresh, registration, parent aggregation, deployment or real account mutation. Copied candidate/dependencies do not attest later shared edits, actual workerd, live provider, backups or disk remnants. Earlier evidence and pins below remain historical."
+  },
+  "recoveryCheckpoint20260908": {
+    "worker": "proofs",
+    "registered": false,
+    "historicalCurrentEvidence": "/tmp/learning-process-proof-gKqkmR/report.json",
+    "historicalSourceFiles": 1091,
+    "legacyInputPinsAreHistorical": true,
+    "command": "cd /tmp/proofs-final-v3-IJMzIF && env -i PATH=\"$PATH\" TMPDIR=/tmp bun --no-env-file scripts/verify-self-composing-learning-provenance.ts",
+    "exit": 0,
+    "fixtureProcesses": 34,
+    "semanticWholeChildren": ["S21.C01", "S21.C02", "S21.C03", "S21.C05", "S21.C06", "S21.C07"],
+    "C06": "Quiet hold/expiry, disabled preferences, topic dismissal, batching, cooldown and actually spent daily budget persist through native process restarts. Exact retained deadlines produce real AlarmFired; a dismissed outcome never dispatches. Cooldown/budget each acquire two distinct verified artifacts (8 jobs/2 reflection calls), spend one real dispatch, hold the second across restart, then deliver once at eligibility with no new model/code/jobs. Genuine repeated acquisition receipts coalesce without new observations or alerts.",
+    "C07": "Same default production journey supplies independent gap/unavailable source faults and an actual mid-snapshot journal write; native failures are explicit, a distinct later request recovers, owner-authenticated observation reads return 200 only to the owner and 404 to the foreign owner, foreign notifications and revoked citations are suppressed. Two new processes replay the exact four captured native histories with no new work or roots.",
+    "clockBoundary": "Process-local Date.now offsets select noon for the daily-budget setup and advance to retained native deadlines. Physical waits poll at 20ms for at most 15s; every fixture child has a 60s limit. No fabricated alarms, dispatch spend, Checked facts or successful snapshots.",
+    "retainedFailures": [
+      {"report": "/tmp/learning-process-proof-QozvaX/report.json", "reason": "All semantic cases passed but five live runtime sources drifted; exit 1, not matched evidence."},
+      {"report": "/tmp/learning-process-proof-r9QzCw/report.json", "reason": "C07 exact-history assertion caught first-start activation of an improperly initialized foreign fixture thread. Fixed fixture by entering that owner through real ingress before the baseline; did not filter or weaken the history assertion."}
+    ],
+    "remaining": [
+      "S21.C04 whole correction/deletion/revocation/supersession and deleted-private-payload outcome is not attested by these fixtures.",
+      "S21.P requires its own causally joined whole-section witness; do not aggregate these child reports into parent credit.",
+      "Current-source independent registration review is still required. Existing 187 checks, 25 parents, 12 registrations, manifest, plan and gate are unchanged.",
+      "Local Bun/native/sandbox with controlled inference/Telegram edges, not deployed Worker, paid provider or live-account evidence."
+    ],
+    "currentFullGate": {"report": "/tmp/proofs-current-full-gate.json", "exit": 1, "satisfied": 0, "blocked": 187, "fullCompletion": false, "reason": "20 previously registered outcomes are source-blocked at changed apps/agent/package.json; 167 outcomes remain unregistered. No pin refresh."}
+  }
+}

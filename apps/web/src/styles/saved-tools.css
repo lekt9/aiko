@@ -1,0 +1,142 @@
+.saved-tools {
+  color: var(--app-text);
+}
+.saved-tools p {
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.saved-tools h3,
+.saved-tools h4,
+.saved-tools h5 {
+  margin: 16px 0 8px;
+}
+.saved-tools h4 {
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+.saved-tools h5 {
+  font-size: 14px;
+}
+.saved-tool-field {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.saved-tool-field textarea,
+.saved-tool-field select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid var(--app-line);
+  border-radius: 10px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  font: inherit;
+  font-weight: 400;
+}
+.saved-tool-field textarea {
+  resize: vertical;
+}
+.saved-tool-field .saved-tool-code {
+  font:
+    13px/1.6 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+}
+.saved-tool-details {
+  padding: 12px 14px;
+  margin: 16px 0;
+  background: var(--app-field);
+  border-radius: 10px;
+}
+.saved-tools .saved-tool-details > summary {
+  cursor: pointer;
+  min-height: 28px;
+  font-weight: 600;
+  color: var(--app-text);
+}
+.saved-tool-details li {
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+.saved-tools pre {
+  max-width: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font:
+    13px/1.6 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+}
+.saved-tool-editor {
+  min-width: 0;
+  padding: 16px 0;
+  margin: 18px 0;
+  border: 0;
+  border-top: 1px solid var(--app-line);
+}
+.saved-tool-editor legend {
+  padding-right: 12px;
+  font-size: 17px;
+  font-weight: 600;
+}
+.saved-tool-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.saved-tool-actions button,
+.saved-tool-operation button,
+.saved-tools > .app-section-heading button {
+  min-height: 44px;
+}
+.saved-tool-meta,
+.saved-tools small {
+  color: var(--app-secondary);
+  font-size: 13px;
+}
+.saved-tool-error {
+  color: var(--app-danger);
+}
+.saved-tool-notice:empty {
+  display: none;
+}
+.saved-tool-test,
+.saved-tool-output {
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--app-field);
+}
+.saved-tool-operation {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px 14px;
+  border-bottom: 1px solid var(--app-line);
+}
+.saved-tool-operation p {
+  min-width: 0;
+  flex: 1 1 220px;
+}
+.saved-tools :focus-visible {
+  outline: 3px solid var(--app-blue);
+  outline-offset: 3px;
+}
+.saved-tools button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.saved-tools .button:not(.primary) {
+  color: var(--app-text);
+  background: var(--app-field);
+}
+.drawer-managers .saved-tools-entry {
+  min-height: 44px;
+}

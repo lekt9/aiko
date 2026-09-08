@@ -23,6 +23,56 @@ const context = (): RecipeContext => ({
   sso: async () => undefined,
 });
 describe("operator-approved fixed-origin authentication recipes", () => {
+  it("preserves host-only cookies across allowed hosts, including same-name cookies and scoped paths", async () => {
+    const mock = new MockAgent();
+    mock.disableNetConnect();
+    try {
+      mock.get(config.origin).intercept({
+        path: "/identity",
+        headers: { cookie: "sid=primary" },
+      }).reply(200, { username: "alice" });
+      const cookies = [
+        cookie("primary"),
+        cookie("secondary", "secondary.example.com"),
+        { ...cookie("secondary-scoped", "secondary.example.com"), name: "scoped", path: "/app" },
+        { ...cookie("domain-cookie", ".secondary.example.com"), name: "shared", hostOnly: false },
+      ];
+      const result = await createHttpRecipe(config, mock).verify({
+        ...context(), domains: ["service.test", "secondary.example.com"], cookies,
+      });
+      expect(result.cookies).toEqual(cookies);
+      mock.assertNoPendingInterceptors();
+    } finally {
+      await mock.close();
+    }
+  });
+  it.each([
+    ["service.example.com", "sid=primary; shared=domain-cookie"],
+    ["secondary.example.com", "sid=secondary; shared=domain-cookie"],
+    ["child.secondary.example.com", "shared=domain-cookie"],
+  ])("sends only matching cookies to %s without rebinding parent host-only cookies", async (host, header) => {
+    const mock = new MockAgent();
+    mock.disableNetConnect();
+    try {
+      const origin = `https://${host}`;
+      mock.get(origin).intercept({ path: "/identity", headers: { cookie: header } })
+        .reply(200, { username: "alice" });
+      const cookies = [
+        cookie("primary", "service.example.com"),
+        cookie("secondary", "secondary.example.com"),
+        { ...cookie("domain-cookie", ".example.com"), name: "shared", hostOnly: false },
+      ];
+      const result = await createHttpRecipe({ ...config, origin }, mock).verify({
+        ...context(), website: origin,
+        domains: ["service.example.com", "secondary.example.com", "child.secondary.example.com", "example.com"],
+        cookies,
+      });
+      expect(result.cookies).toEqual(cookies);
+      mock.assertNoPendingInterceptors();
+    } finally {
+      await mock.close();
+    }
+  });
   it("logs in privately, verifies destination identity and captures all cookie paths", async () => {
     const mock = new MockAgent();
     mock.disableNetConnect();

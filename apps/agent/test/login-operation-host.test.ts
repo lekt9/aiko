@@ -126,7 +126,7 @@ async function fixture(ttl = 60000) {
                   };
                 if (e.includes("Boolean(document"))
                   return { result: { value: get("authenticated") === "yes" } };
-                if (e.includes("f.requestSubmit")) {
+                if (e.includes("HTMLFormElement.prototype.requestSubmit.call")) {
                   put(
                     "authenticated",
                     get("input") === "654321" ? "yes" : "no",
@@ -219,6 +219,7 @@ async function fixture(ttl = 60000) {
     operation,
     connectionId,
     custody: () => get("custody"),
+    approveExternally: () => put("authenticated", "yes"),
     projected: async () =>
       loginOperationState(await events(), "123", "user-123").get(
         "fixture-login",
@@ -361,6 +362,34 @@ test("scoped API rejects secrets, foreign owner and stale cancelled challenge", 
   expect(f.typed).toHaveLength(0);
   expect(JSON.stringify(await f.events())).not.toContain("PRIVATE_REJECTED");
 });
+
+test("actual native alarm observes app approval across reopen and resumes the original task once", async () => {
+  const f = await fixture();
+  expect((await f.projected()).status).toBe("awaiting_user");
+  f.approveExternally();
+  await f.restart();
+  const due = (await f.projected()).nextProbeAt!;
+  expect(due).toBeLessThan((await f.projected()).expiresAt);
+  await new Promise((resolve) =>
+    setTimeout(resolve, Math.max(0, due - Date.now()) + 100),
+  );
+  await f.drive();
+  expect(await f.projected()).toMatchObject({
+    status: "connected",
+    continued: true,
+  });
+  expect(f.custody()).toBe("yes");
+  expect(f.typed).toEqual([]);
+  expect((await f.events()).some((e) => e.type === "AlarmFired")).toBe(true);
+  await f.restart();
+  await f.drive();
+  expect(
+    (await f.events()).filter(
+      (e) =>
+        e.type === "MessageReceived" && e.id === "login-resume:fixture-login",
+    ),
+  ).toHaveLength(1);
+}, 15000);
 
 test("actual native method alarm expires a waiting login across reopen", async () => {
   const f = await fixture(500);

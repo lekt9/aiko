@@ -2,7 +2,9 @@ import { loginUuid } from "./native-login-observation.ts";
 import { randomUUID } from "node:crypto";
 import type { routerCaller } from "./connector-router-host.ts";
 import type { ConnectorEngine } from "./connectors.ts";
+import type { NativeLoginRenderer } from "./native-login-render.ts";
 import { boundedText } from "./security.ts";
+import { LOGIN_IMPORT_MAX_BYTES, LOGIN_IMPORT_SIZE_MESSAGE, loginImportCapacityError } from "../../../packages/protocol/src/login-import.ts";
 
 const json = (body: unknown, status = 200) =>
   Response.json(body, {
@@ -31,6 +33,7 @@ export async function connectorApi(
   request: Request,
   engine: ConnectorEngine,
   route?: ReturnType<typeof routerCaller>,
+  renderLogin?: NativeLoginRenderer,
 ): Promise<Response> {
   const url = new URL(request.url),
     path = url.pathname.replace(/^\/v1\//, "/api/");
@@ -58,9 +61,16 @@ export async function connectorApi(
     }
     if (request.method !== "POST")
       return json({ error: "method_not_allowed" }, 405);
-    const body = JSON.parse(
-      await boundedText(new Response(request.body), 8192),
-    );
+    const loginImport = path === "/api/connectors/imports/logins";
+    let text: string;
+    try {
+      text = await boundedText(new Response(request.body), loginImport ? LOGIN_IMPORT_MAX_BYTES : 8192);
+    } catch (error) {
+      if (loginImport && error instanceof Error && error.message === "response too large")
+        return json({ error: "request_too_large", message: LOGIN_IMPORT_SIZE_MESSAGE }, 413);
+      throw error;
+    }
+    const body = JSON.parse(text);
     if (path === "/api/connectors/route" && route) {
       if (
         !body ||
@@ -96,6 +106,9 @@ export async function connectorApi(
         "challengeId",
         "expectedRevision",
         "submissionId",
+        "sourceConnectionId",
+        "assistanceId",
+        "assistMethod",
         "x",
         "y",
         "text",
@@ -170,10 +183,12 @@ export async function connectorApi(
     }
     if (path === "/api/connectors/imports/logins") {
       if (
-        !Array.isArray(body.rows) ||
+        !body || !Array.isArray(body.rows) || body.rows.length === 0 ||
         Object.keys(body).some((k) => k !== "rows")
       )
         return json({ error: "invalid_body" }, 400);
+      const capacityError = loginImportCapacityError(body.rows);
+      if (capacityError) return json({ error: "request_too_large", message: capacityError }, 413);
       return await managerRoute(() => engine.importLogins(body.rows));
     }
     const allowed = fields[path];
@@ -190,11 +205,18 @@ export async function connectorApi(
       return json({ error: "invalid_body" }, 400);
     if (path === "/api/connectors/native") {
       const { connectionId, ...input } = body;
+      if ((input.sourceConnectionId !== undefined || input.assistMethod !== undefined) && input.action !== "assist" || input.assistanceId !== undefined && !["assist", "assist_consent"].includes(input.action)) return json({error:"invalid_login_binding"},400);
       if ([input.attemptId,input.challengeId,input.submissionId].some(value=>value!==undefined&&!loginUuid(value)) ||
           input.expectedRevision!==undefined&&(!Number.isSafeInteger(input.expectedRevision)||input.expectedRevision<1) ||
           input.code!==undefined&&(input.action!=="credentials"||!loginUuid(input.attemptId)||!loginUuid(input.challengeId)||!loginUuid(input.submissionId)||!Number.isSafeInteger(input.expectedRevision)||input.expectedRevision<1))
         return json({error:"invalid_login_binding"},400);
-      return json(await engine.nativeControl(connectionId, input, request.signal));
+      const view = await engine.nativeControl(connectionId, input, request.signal);
+      // The generator receives the resulting metadata, NEVER input/body or
+      // credentials. It projects field kinds again at its own Infer boundary.
+      const layout = renderLogin && ["form", "login", "credentials", "allow_origin"].includes(input.action)
+        ? await renderLogin({ status: view.status, fields: view.fields, requiresOrigin: view.requiresOrigin, pageError: view.pageError }, request.signal)
+        : undefined;
+      return json({ ...view, ...(layout ? { layout } : {}) });
     }
     if (path.endsWith("/complete"))
       return json(await engine.completeAuth(body.connectionId));

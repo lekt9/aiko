@@ -179,32 +179,60 @@ export class CloudBackups {
     validateBackupFiles(value.files);
     return value;
   }
-  async restore(owner: string, id: string, sink: BackupSink) {
+  private async readVerifiedFile(
+    manifest: BackupManifest,
+    index: number,
+    write: (offset: number, bytes: Uint8Array) => Promise<void>,
+  ) {
+    const file = manifest.files[index]!,
+      hash = createHash("sha256");
+    if (file.bytes === 0) await write(0, new Uint8Array());
+    for (let offset = 0; offset < file.bytes; offset += BACKUP_CHUNK_BYTES) {
+      const bytes = await this.readObject(
+        `${this.prefix(manifest.owner, manifest.id)}/${index}/${offset}`,
+        BACKUP_CHUNK_BYTES + 28,
+      );
+      if (bytes.length !== Math.min(BACKUP_CHUNK_BYTES, file.bytes - offset))
+        throw Error("Backup chunk size mismatch");
+      hash.update(bytes);
+      await write(offset, bytes);
+    }
+    if (hash.digest("hex") !== file.sha256)
+      throw Error("Backup file integrity mismatch");
+  }
+  /** Authenticated bounded read using the same encrypted manifest/chunks as restore. */
+  async readFile(owner: string, id: string, path: string, maxBytes: number) {
+    if (
+      !Number.isSafeInteger(maxBytes) ||
+      maxBytes < 0 ||
+      maxBytes > 64 * 1024 * 1024
+    )
+      throw Error("Invalid backup read bound");
     const manifest = await this.manifest(owner, id),
-      prefix = this.prefix(owner, id);
+      index = manifest.files.findIndex((file) => file.path === path);
+    if (index < 0 || manifest.files[index]!.bytes > maxBytes)
+      throw Error("Backup file unavailable or exceeds read bound");
+    const bytes = new Uint8Array(manifest.files[index]!.bytes);
+    await this.readVerifiedFile(manifest, index, async (offset, chunk) => {
+      bytes.set(chunk, offset);
+    });
+    return { manifest, bytes };
+  }
+  async restore(
+    owner: string,
+    id: string,
+    sink: BackupSink,
+    expected?: BackupManifest,
+  ) {
     try {
+      const manifest = await this.manifest(owner, id);
+      if (expected && JSON.stringify(manifest) !== JSON.stringify(expected))
+        throw Error("Backup manifest changed after authorization");
       for (let index = 0; index < manifest.files.length; index++) {
-        const file = manifest.files[index]!,
-          hash = createHash("sha256");
-        if (file.bytes === 0) await sink.write(file.path, 0, new Uint8Array());
-        for (
-          let offset = 0;
-          offset < file.bytes;
-          offset += BACKUP_CHUNK_BYTES
-        ) {
-          const bytes = await this.readObject(
-            `${prefix}/${index}/${offset}`,
-            BACKUP_CHUNK_BYTES + 28,
-          );
-          if (
-            bytes.length !== Math.min(BACKUP_CHUNK_BYTES, file.bytes - offset)
-          )
-            throw Error("Backup chunk size mismatch");
-          hash.update(bytes);
-          await sink.write(file.path, offset, bytes);
-        }
-        if (hash.digest("hex") !== file.sha256)
-          throw Error("Backup file integrity mismatch");
+        const file = manifest.files[index]!;
+        await this.readVerifiedFile(manifest, index, (offset, bytes) =>
+          sink.write(file.path, offset, bytes),
+        );
       }
       await sink.commit(manifest);
       return manifest;

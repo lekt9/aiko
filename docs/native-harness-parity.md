@@ -1,5 +1,7 @@
 **Native harness parity — implementation and evidence**
 
+Aiko can run independent work at the same time, continue tasks in the background, and reuse data across turns. Workers start with recorded browser knowledge and can use explicitly granted browser controls when a page needs interaction. Coding tasks automatically load project guidance, get recoverable workspaces, and must pass checks before being reported complete.
+
 Updated 8 September 2026. This replaces the open tracker for the 21 requirements derived from the supplied CodeGraff audit. “Implemented” means the behavior below exists in the current source and has direct local verification; it does not claim arbitrary provider compatibility or a live deployment.
 
 Tardie owns execution, delegation, cancellation, subscriptions, scheduling and recovery through its existing actors, methods, packages and journals. The checked-in [Tardie patch](../patches/tardie@0.22.0.patch) extends those primitives. Private blobs retain inputs, results and context; they do not supply execution authority or introduce another scheduler. Browser request graphs, entity-learn memory, approvals and the existing capability registry remain the shared discovery and execution path.
@@ -10,7 +12,7 @@ Tardie owns execution, delegation, cancellation, subscriptions, scheduling and r
 | 2 | Fast branches continue before slow siblings | The [segment runner](../apps/agent/src/code-sandbox-runner.ts) and [sandbox adapter](../apps/agent/src/code-sandbox.ts) propagate completion order and stable native ordinals. | [Fast continuation, held sibling, replay, `Promise.race`, cancellation and bundled evaluator tests](../apps/agent/test/code-sandbox-completion.test.ts). A segment cannot settle while it still owns running work. |
 | 3 | A parked execution does not block unrelated ready executions | The native code reactor selects ready work independently of a parked sibling. [Native patch](../patches/tardie@0.22.0.patch). | [Parked execute beside ready execute](../apps/agent/test/native-tool-batches.test.ts#L146). [Legacy replay](../apps/agent/test/code-sandbox-upgrade.test.ts) preserves earlier `aiko-code/1` identities and behavior. |
 | 4 | Eligible execution during model generation | [Speculation parsing](../apps/agent/src/code-speculation.ts), [private harness integration](../apps/agent/src/code-harness.ts) and native speculation events authorize and adopt an exact streamed read prefix. | [Real streamed tool arguments, early read, later write, adoption, cancellation and cold replay](../apps/agent/test/code-speculation.test.ts). Only explicitly marked safe reads and closed literal prefixes qualify: up to eight candidates/statements and 64 KiB source. Arbitrary writes or dynamic programs do not speculate. |
-| 5 | General-purpose scoped workers | [Native worker package and child actor](../apps/agent/src/code-agents.ts) support `research`, `browser`, `compute` and `coding` with durable owner grants. Mounted tools recheck the grant and resources on each effect and retained-result read. | [Worker scope, actual indexed reads/writes, compute and resource-denial tests](../apps/agent/test/code-workers.test.ts); [native coding worker](../apps/agent/test/coding-workspace.test.ts). Only host-mounted capabilities are available; child text cannot install tools or inherit unrelated account actions. |
+| 5 | General-purpose scoped workers | [Native worker package and child actor](../apps/agent/src/code-agents.ts) support `research`, `browser`, `compute` and `coding` with durable owner grants. Browser workers can navigate and interact through the existing controller with explicit operation/origin grants. Mounted tools recheck grants on each effect and retained-result read. | [Worker scope, actual indexed reads/writes, compute and Bun browser control](../apps/agent/test/code-workers.test.ts); [scoped browser consent, proxy, driver, cancellation and replay](../apps/agent/test/worker-browser-control.test.ts); [native coding worker](../apps/agent/test/coding-workspace.test.ts). Child text cannot install tools or inherit unrelated account actions. |
 | 6 | Background workers and durable handles | `agents.run({background:true})` returns the native call handle. `agents.status`, `agents.result` and `agents.cancel` inspect, await or cancel owned work. Native invocation links retain ownership after the parent replies. [Worker package](../apps/agent/src/code-agents.ts). | [Background completion, parent-terminal cancellation, failed cleanup, revocation, result-source checks and recovery](../apps/agent/test/code-workers.test.ts). Outstanding worker count and budgets are bounded. Uncertain process cleanup is recorded as unknown, not success. |
 | 7 | Per-worker provider, model and effort | [Routing](../apps/agent/src/model-routing.ts) exposes configured role/fallback routes and explicit effort policies; [worker grants](../apps/agent/src/code-agents.ts) pin the selected reference and effort. | [Production Cloudflare assembly checks actual model and effort fields](../apps/agent/test/code-workers-cloudflare.test.ts#L99); [route, override and budget tests](../apps/agent/test/model-routing.test.ts). Endpoints and credentials are host configuration. An explicit worker model does not silently fall back. |
 | 8 | Bun and Cloudflare worker parity | Both [Bun service](../apps/agent/src/server.ts) and [Cloudflare account assembly](../apps/agent/src/cloudflare.ts) resolve native children, mount their scopes and retain owner-bound storage. [Cloudflare host](../apps/agent/src/cloudflare-host.ts) validates and atomically restores child lineage. | [Actual Bun service and cold restart](../apps/agent/test/code-workers.test.ts#L500), [production Cloudflare bundle](../apps/agent/test/code-workers-cloudflare.test.ts), and [forged/default-denied/import rollback cases](../apps/agent/test/code-workers.test.ts#L1183). Cloudflare platform storage and provider I/O use local test fixtures; this is not a deployed-Worker test. |
@@ -19,9 +21,9 @@ Tardie owns execution, delegation, cancellation, subscriptions, scheduling and r
 | 11 | Large result handles and slice/filter/project | `tools.retain`, `tools.bind`, `tools.load` and `tools.query` provide bounded handles and JSON-pointer queries. Source-specific authorization remains attached to derived values. [Working data implementation](../apps/agent/src/code-data.ts). | [Multi-MiB result, cold query, fabricated handles, prototype paths and input-specific revocation](../apps/agent/test/code-data.test.ts). Values are capped at 32 MiB and query results at 64 KiB. Querying reconstructs a bounded value in host memory; this is not an out-of-core database. |
 | 12 | Model-aware context policy | [Actor](../apps/agent/src/actor.ts) and [worker](../apps/agent/src/code-agents.ts) compaction receive route-aware context policies instead of an unconditional 32K window. [Routing](../apps/agent/src/model-routing.ts) accounts for configured context and output limits. | [Worker route/context tests](../apps/agent/test/model-worker-routing.test.ts) and [native provider checkpoint/recovery tests](../apps/agent/test/native-provider-compaction.test.ts). Unconfigured behavior retains the existing default; provider limits must be explicitly configured correctly. |
 | 13 | Provider-specific prompt caching | [Model capabilities](../apps/agent/src/model-capabilities.ts) and [routing](../apps/agent/src/model-routing.ts) apply configured OpenAI-compatible cache fields, scope keys to the owner/thread/model/prompt prefix and preserve usage accounting. | [Cache and protocol wire tests](../apps/agent/test/model-capabilities.test.ts). Cache controls are deployment capabilities, not assumed model features; unsupported Cerebras protocol/cache combinations are rejected. A cache hint does not guarantee a provider cache hit. |
-| 14 | Native provider server compaction | Native `Infer.compact` checkpoints retain private provider state through [provider custody](../apps/agent/src/model-compaction.ts), [code/source custody](../apps/agent/src/code-harness.ts) and exact historic-model [role routing](../apps/agent/src/inference-routing.ts). | [Full provider output, repeated compaction, cold rehydration, scope and revocation](../apps/agent/test/model-compaction.test.ts); [source, workflow and chained-result compaction custody](../apps/agent/test/code-data.test.ts); [native scheduled checkpoints, usage, model switches and failure recovery](../apps/agent/test/native-provider-compaction.test.ts). Requires an explicitly configured Responses route. Failed compaction retains the prior context/checkpoint. |
+| 14 | Native provider server compaction | Native `Infer.compact` checkpoints retain private provider state through [provider custody](../apps/agent/src/model-compaction.ts), [code/source custody](../apps/agent/src/code-harness.ts) and exact historic-model [role routing](../apps/agent/src/inference-routing.ts). | [Full provider output and cold rehydration](../apps/agent/test/model-compaction.test.ts); [workflow and chained-result custody](../apps/agent/test/code-data.test.ts); [automatic project guidance and current-source revocation](../apps/agent/test/code-context-custody.test.ts); [native scheduled checkpoints and failure recovery](../apps/agent/test/native-provider-compaction.test.ts). Requires an explicitly configured Responses route. Unverifiable legacy opaque windows are discarded; raw history remains available. |
 | 15 | General MCP management | [General MCP](../apps/agent/src/general-mcp.ts) exposes configured server lifecycle, tool discovery and schema-checked calls; [HTTP](../apps/agent/src/general-mcp-http.ts) and [local stdio](../apps/agent/src/general-mcp-stdio.ts) are trusted transport adapters. | [Actual SDK discovery/calls, native code-mode receipts, disconnect/reconnect, replacement and stdio environment tests](../apps/agent/test/general-mcp.test.ts). Workers need explicit server/tool grants pinned to the configured revision. Upstream annotations do not grant effect authority. |
-| 16 | Project instructions, skills and plugins | [Project context](../apps/agent/src/project-instructions.ts) reads applicable root-to-cwd `AGENTS.md`/`CLAUDE.md` afresh, discovers scoped skills and loads selected bodies. Plugin/MCP manifests supply bounded metadata. [Filesystem source](../apps/agent/src/project-instructions-node.ts) confines access to an explicit root. | [Precedence, fresh reads, explicit skill loading, plugin metadata, traversal/symlink and budget tests](../apps/agent/test/project-instructions.test.ts); production-host project integration in both worker suites. Discovery does not install plugins, start servers, run hooks or grant filesystem/network access. |
+| 16 | Project instructions, skills and plugins | Configured coding repositories automatically mount [project context](../apps/agent/src/project-instructions.ts) in both hosts through the existing [coding runtime](../apps/agent/src/coding-workspace-host.ts). Each inference reads applicable root-to-cwd `AGENTS.md`/`CLAUDE.md`, discovers scoped skills, and records a native preparation receipt. Explicit tool calls load selected skill bodies. | [Actual stock Bun and Cloudflare hosts, uploaded CLI and cold recovery](../apps/agent/test/project-host.test.ts); [scope/precedence, plugin metadata, confinement and budgets](../apps/agent/test/project-instructions.test.ts); [source custody through compaction](../apps/agent/test/code-context-custody.test.ts). Discovery does not install plugins, start servers, run hooks or grant access. |
 | 17 | Worker worktrees and merge lifecycle | [Coding runner](../apps/agent/src/coding-workspace-runner.ts) creates owner/thread worktrees with durable operation receipts; [host transport](../apps/agent/src/coding-workspace-host.ts) runs the trusted bundle through existing compute. | [Real Git worktree/restart and fresh-test merge tests](../apps/agent/test/coding-workspace.test.ts), including dirty-target preservation. Mutation, tests, merge and close require the creating native thread; same-owner other threads may inspect. Merge is fast-forward only and refuses moved/dirty/conflicting targets. There is no automatic conflict resolution or remote PR publication. |
 | 18 | Repository editing and code intelligence | `coding_workspace` offers bounded list/read/edit/index/query operations under explicit repository grants. Edits require expected content hashes; the runner maintains a lexical text/symbol index. [Tools](../apps/agent/src/coding-workspace.ts), [runner](../apps/agent/src/coding-workspace-runner.ts). | [Real edits/index/query, replay guards, confinement and hosted bundled CLI](../apps/agent/test/coding-workspace.test.ts). This is lexical symbol extraction, not a language server or codedb replacement. Repository roots are trusted VM configuration, never tool-supplied host paths. |
 | 19 | Turn-level undo | The coding runner retains private before-images and restores a named turn with conflict checks. Unknown acknowledgements remain unknown and can still be explicitly undone. [Runner](../apps/agent/src/coding-workspace-runner.ts). | [Turn undo across restart](../apps/agent/test/coding-workspace.test.ts) and [lost edit acknowledgement](../apps/agent/test/coding-workspace.test.ts). Restoration is bounded and refuses conflicting later changes; it is not a global machine rollback. |
@@ -32,19 +34,75 @@ Tardie owns execution, delegation, cancellation, subscriptions, scheduling and r
 
 - Independent placement means distinct native lineage, thread history and workspace within the same owner's physical Bun process or account Durable Object. Inspection reports `physicalPlacement: "account-host"`; it does not imply another DO or another compute machine.
 - Memory is owner-scoped and deliberately shared with that owner's workers. Browser origin/action grants restrict execution targets; they do not create a separate memory visibility policy. Exact worker lineage, full source/target addresses and owner bindings are checked separately.
-- Browser workers discover and reuse recorded requests/actions. Research and browser workers can inspect the parent's existing page through the same serialized controller; research requires a public session, and browser scope requires an explicit origin grant. New navigation and UI actions remain with the primary controller. Learned writes use the parent's approval journal and match consent to the exact action digest, inputs and current connection revision. Credentials remain in trusted host/session adapters.
+- Browser workers discover and reuse recorded requests/actions. Research and browser workers can inspect the parent's existing page through the same serialized controller. Browser control additionally requires explicit `browserOperations` and origin grants; older grants with no operations permit no UI control. Navigation and interactions use the same controller, proxy, capture/index pipeline and native receipts. Interactions require the owner's exact preview approval. Tabs are excluded, current page ownership is checked, and proxy egress stays within granted origins. Learned writes use the parent's approval journal and match the action digest, inputs and current connection revision. Credentials remain in trusted host/session adapters.
 - Compute and coding are separate scopes. Coding workers cannot bypass repository/action/check grants by calling arbitrary `sandbox_exec`. They use the same trusted coding runner on Bun and Cloudflare through existing owner compute.
-- Project and MCP mounts are trusted host factories. Text in a page, repository instruction, skill, plugin manifest or upstream MCP description cannot create a capability grant. Retained results recheck current source authority, including worker resources and MCP revisions.
+- Project and MCP mounts come from trusted owner configuration, with optional custom host factories. Text in a page, repository instruction, skill, plugin manifest or upstream MCP description cannot create a capability grant. Retained results and opaque context recheck current source authority, including worker resources and MCP revisions.
 - Speculation adopts only the exact validated final call and physical inference attempt. An abandoned or cancelled attempt may have performed an authorized read; a later unadopted attempt may perform that read again. Adopted calls replay under their recorded identities without another effect.
+
+## Browser specialist delegated from chat
+
+Decision, 8 September 2026: use the existing native child machinery for a dedicated browser-specialist profile, rather than nesting Browser Use, Kuri or another agent loop inside Tardigrade. The [specialist definition](../apps/agent/src/browser-actor.ts) keeps agent-browser and the owner-bound controller/session infrastructure underneath. Chat owns the request, conversation and synthesis; the child owns multi-step website work and returns concise evidence.
+
+New `agents.run({scope:"browser", ...})` calls pin `profile: "browser-v1"` in the durable `AikoWorkerGranted` event. Both Bun and Cloudflare select its instructions from the currently authorized grant in `workerInference`, including an explicitly selected model route. This is a specialized native child actor, not a new actor address, service, scheduler or VM. Keep the `aiko` identity and native child addresses stable: existing lineage, tool authorization, cancellation, private context and recovery depend on them. Preserve each released profile's behavior; use a new profile version for a future incompatible specialist change. Unknown profiles fail closed. Legacy grants without a profile retain the generic worker and original output contract.
+
+When code mode mounts browser scope, chat is instructed to delegate multi-step website tasks and interactions by default. It discovers exact origins first, sends a self-contained brief and bounded budget, and grants only the needed operations or recorded actions. A quick read, search, screenshot delivery or secure sign-in can keep its existing path. This is model-facing routing guidance, not a keyword router or a guarantee that every real model will choose delegation. Reconsider that balance if measured task success, delegation rate or latency shows it is unhelpful; do not remove direct tools merely to force routing.
+
+The specialist uses a native retrieve → inspect → execute → verify loop, falls back to explicitly granted UI operations, and returns the native `browser_result_v1` contract unless the caller supplies an explicit output override:
+
+```ts
+type BrowserTaskResult = {
+  status: "completed" | "blocked" | "uncertain",
+  summary: string,
+  sources: { url: string, finding: string }[],
+  receipts: { reference: string, status: "completed" | "blocked" | "unknown" }[],
+  nextStep: string
+}
+```
+
+Foreground `agents.run` and background `agents.result` expose this as `result.output`. The native output validator rejects malformed results. A native completed terminal means the child returned; it does **not** mean the website task succeeded. Read `output.status`, preserve partial findings and explain `nextStep` for blocked or uncertain work. Sources and receipt references in this object remain model claims, not newly authorized or independently verified receipts. Original native receipts and current source authority stay authoritative. Never respawn an uncertain action or retry it through a different route.
+
+[Profile/contract checks](../apps/agent/test/browser-actor.test.ts) cover dispatch, replay compatibility, custom outputs, unavailable profiles and grant-bound inference. The [actual Bun host checks](../apps/agent/test/code-workers.test.ts) cover chat → specialist → result, rejected output, denied consent, owner cancellation and lost acknowledgements without repeated effects. The [production Cloudflare assembly fixture](../apps/agent/test/code-workers-cloudflare.test.ts) checks specialist prompts, model/effort, the native contract and cold recovery. These use synthetic models and browser/provider transports: they verify wiring and boundaries, not autonomous model quality or a live deployed browser journey.
+
+The initial browser-specialist verification, before the index expansion below, passed **132 tests across 13 files, 1,085 assertions, no failures**: the four suites above plus `code-harness`, `code-data`, `code-context-custody`, `model-worker-routing`, `native-tool-batches`, `code-sandbox-upgrade`, `browser`, `browser-tabs` and `channel-response`. Agent and Worker typechecks, the normal agent build (including entity-learn integrity), and Wrangler's deployment dry run also passed. This is not a full monorepo pass, a live-model comparison or a deployment; do not add these overlapping counts to the earlier matrix baseline below.
+
+### Native endpoint retrieval and graph inspection
+
+The [worker index tools](../apps/agent/src/worker-index.ts) reuse the existing owner-log Merkle validators, endpoint descriptions and router ranker. They do not start a browser, replay a request, read cached response bodies, or introduce another agent loop or graph database.
+
+- `worker_index_search({query, offset?, limit?})` ranks endpoint concepts, observed output fields, route descriptions and input contracts **after** filtering every prerequisite origin and optional action digest against the worker grant. This is lexical retrieval over observed semantic metadata, not the browser VM's vector search. Refine a query or use the granted origin when response semantics are unavailable. An empty query lists accessible definitions.
+- Results retain `toolDigest`/`artifactDigest`, caller `inputs`, provenance and historical `pointerId` where available, and add `endpoint`, `executeWith`, pagination and coverage. A pointer receipt does not prove current private pointer availability. Search defaults to eight results, permits up to 32 per page and bounds returned context to 24 KB; `omitted` reports individually oversized entries.
+- `worker_index_describe({toolDigest?, artifactDigest?, offset?, limit?})` accepts exactly one digest. It returns the endpoint and paged topological graph: prerequisite IDs, origins, route templates and symbolic caller/response producers. Constants and module implementations are omitted. Follow `graph.nextOffset`; graph pages default to four steps and allow at most eight, within 24 KB. Current grant and source checks also fence retained graph reads.
+- Call `observed_network_run` with that exact digest and fresh caller inputs. Its existing executor resolves response bindings from current upstream results; a missing producer stops the dependent request. Provider routing, current session availability, owner approval and uncertain-effect recovery remain execution checks, not discovery claims. In particular, a native signed-in browser is **not** an implicit host-HTTP cookie grant; see [request fidelity and session boundaries](request-memory-and-workflows.md#request-fidelity-instagram-readiness-and-login-reuse).
+
+Inside the browser child's `execute`, discovery and inspection look like this:
+
+```js
+const found = await tools.call({
+  name: "worker_index_search", arguments: { query: "restaurant rating", limit: 4 }
+});
+const candidate = found.definitions?.[0]; // Inspect relevance, effect and required inputs first.
+if (!candidate) return found; // Refine the query or report the missing route.
+const selector = candidate.toolDigest
+  ? { toolDigest: candidate.toolDigest } : { artifactDigest: candidate.artifactDigest };
+return await tools.call({ name: "worker_index_describe", arguments: selector });
+// Inspect all graph pages, then call observed_network_run with selector + fresh inputs.
+// Never reconstruct raw HTTP or repeat an uncertain effect through UI.
+```
+
+[Retrieval checks](../apps/agent/test/worker-index.test.ts) cover output-concept search, paged dependency bindings, fresh producer execution, missing producers, invalid metadata, grants, cancellation and constant omission. The native child [capture/index/citation/replay test](../apps/agent/test/code-workers.test.ts) also exercises graph discovery and recovery; the [Cloudflare assembly fixture](../apps/agent/test/code-workers-cloudflare.test.ts) checks the mounted graph contract and empty-index fallback. These are synthetic execution checks, not a live-model evaluation or a promise that every recorded endpoint can be replayed.
+
+The index-expansion regression run on 8 September 2026 passed **110 of 111 tests across 12 files**. The remaining `worker-browser-control` driver fixture also fails in isolation: its unmocked `ownedTabs` call fails with agent-browser `process_failed`. No driver/runtime changes were made for this index work. Agent and Worker typechecks, the agent build, and Wrangler's deployment dry run passed; no deployment or live-site replay was performed.
 
 **Worker usage inside `execute`**
 
-Inspect what this host actually mounts before choosing a scope or model:
+These JavaScript examples run inside the primary agent's `execute` tool. Inspect what this host actually mounts before choosing a scope or model:
 
 ```js
 const catalog = await agents.models({});
-return catalog; // configured model refs/efforts, scopes and MCP resources
+return catalog; // items, scopes, browserOperations and mcp
 ```
+
+`items` contains the configured model routes, with `provider`, `model_id` and supported `efforts`. The other fields describe the mounted worker scopes, permitted browser operation names, and owner-configured MCP resources. This is a complete local catalogue; it has no search, pricing or pagination. If `items` is empty, omit `model` to use the host's default. If a scope or browser operation is missing, configure that capability before delegating it.
 
 Start a browser worker that can use only a named HTTPS origin. Optional `actions` further narrows the grant to recorded `sha256:` tool/action digests returned by discovery.
 
@@ -59,16 +117,33 @@ const worker = await agents.run({
 return { handle: worker.callId, status: await agents.status({ id: worker.callId }) };
 ```
 
+For a worker that also needs page controls, pass an explicit list from `catalog.browserOperations`, for example `browserOperations: ["navigate", "click", "fill"]`. This cannot be combined with a narrowed `actions` digest list: granting general UI control would bypass that action restriction. The worker invokes `worker_browser_navigate`, `worker_browser_click`, or the corresponding discovered name through `tools.call({name, arguments})`, including the granted `origin` in its arguments. Interactions pause for the owner's preview approval. Open **Browser · observations & approvals** to review the pending action; the authenticated API exposes the same decision through `GET /api/browser` and `POST /api/browser/approval`. Browser results require the current authorized session; retained private page data remains unavailable after restart until that session is restored.
+
 Later executions use the returned handle:
 
 ```js
-return await agents.result({ id: "<returned callId>" });
+const result = await agents.result({ id: "<returned callId>" });
+return result; // For a new browser task, inspect result.output.status and nextStep.
 // Or: return await agents.cancel({ id: "<returned callId>" });
 ```
 
 `agents.result` parks using the native response protocol while the worker runs. `agents.status` returns current terminal evidence without waiting. API cancellation of the owning turn also reaches its background workers after the parent has replied. Default delegation remains foreground research. There may be at most four pending workers; requests cannot enable unconfigured budget escalation.
 
-For explicit selection, pass a `{provider, model_id}` listed by `agents.models`, and an `effort` listed for that exact model. Deployment configuration uses the existing conversation/RAG/browser role and fallback settings plus `AIKO_MODEL_EFFORTS`, for example:
+For explicit selection, copy just `provider` and `model_id` from the chosen catalogue item; its other fields are discovery metadata. Pass an `effort` only when it is listed for that exact model:
+
+```js
+const catalog = await agents.models({});
+const selected = catalog.items[0]; // choose the configured route for this task
+if (!selected) return { error: "No worker model override is configured; omit model to use the default." };
+const { provider, model_id } = selected;
+return await agents.run({
+  text: "Research the requested topic and cite the sources.",
+  model: { provider, model_id },
+  scope: "research"
+});
+```
+
+Deployment configuration uses the existing conversation/RAG/browser role and fallback settings plus `AIKO_MODEL_EFFORTS`, for example:
 
 ```json
 {
@@ -94,7 +169,7 @@ The host must already mount that server/tool for the owner and child. The durabl
 
 **Trusted host mounts**
 
-Code mode requires its existing configured registry/sandbox transport (`AIKO_CODE_MODE=true`). These additional callbacks are application bindings, not model arguments or Wrangler string variables:
+Start with the [hosted setup guide](aiko-hosted.md) or [local agent setup](../apps/agent/README.md). Code mode requires its existing configured registry/sandbox transport (`AIKO_CODE_MODE=true`). Local page controls also require the [browser setup](aiko-browser.md#run), including `AIKO_BROWSER_ENABLED=true` and an explicit Chromium executable; the hosted account uses its existing owner browser runtime. `catalog.browserOperations` confirms that controls are mounted. Configured coding repositories with `read` and `list` grants automatically supply project guidance; no custom factory is needed. These optional callbacks override the default application bindings:
 
 | Capability | Bun `createService(config, overrides)` | Cloudflare application binding |
 |---|---|---|
@@ -102,7 +177,22 @@ Code mode requires its existing configured registry/sandbox transport (`AIKO_COD
 | MCP server grants and connector | `overrides.mcp(owner, thread)` returning `McpBinding` | `AIKO_MCP(owner, thread)` returning `McpBinding` |
 | Project instructions/skills/plugins | `overrides.projectContext(owner, thread)` returning `ProjectContextOptions` | `AIKO_PROJECT_CONTEXT(owner, thread)` returning `ProjectContextOptions` |
 
-A Bun project mount can return `source: projectFilesystemSource(trustedRoot)` from [project-instructions-node.ts](../apps/agent/src/project-instructions-node.ts), with explicit `owner`, `thread`, `redact` and optional project-relative `cwd`. A Cloudflare mount supplies the portable `read(path, signal)` / `list(path, signal)` source. Neither host searches arbitrary global skill/plugin directories. `project_context_manifest` discovers the bounded catalogue; `project_context_load` loads an explicitly selected discovered file.
+The stock mount reads project files inside the configured coding runtime through a finite read operation with the existing native invocation identity. A sole readable repository is selected automatically. With several repositories, discover and select one through the native tools:
+
+```js
+return await tools.call({ name: "project_context_manifest", arguments: {} });
+// Then, using a repository ID returned in repositories:
+// return await tools.call({
+//   name: "project_context_manifest",
+//   arguments: { repository: "app", cwd: "src" }
+// });
+```
+
+`cwd` is relative to the repository root; use `""` for the root. Add `workspace` only for an existing registered coding worktree. A selection with `repository` starts a new context, so omitting `workspace` returns to that repository's root. Successful coding activity follows the active worktree; explicit cwd selection survives later edits. Each inference rereads root-to-cwd guidance. The skill catalogue is automatic; to load a relevant body, call `tools.call({name:"project_context_load", arguments:{path:"<path from manifest.skills>"}})`. Plugin/MCP files expose sanitized metadata and do not start integrations.
+
+Custom Bun mounts can return `source: projectFilesystemSource(trustedRoot)` from [project-instructions-node.ts](../apps/agent/src/project-instructions-node.ts), with explicit `owner`, `thread`, `redact` and optional project-relative `cwd`. A custom Cloudflare mount supplies the portable `read(path, signal)` / `list(path, signal)` source. Provide stable `sourceRevision` and a current `authorizeRetained` callback for authorized context reuse after restart. Otherwise a per-instance revision deliberately invalidates old source custody. Neither host searches arbitrary global skill/plugin directories. Returning no binding from a configured override suppresses the default mount.
+
+Automatic guidance records only owner/thread, native inference identity, tool definition digest and resolved project selector in `AikoProjectContextPrepared`; file bodies remain private. The native harness checks that source before and after inference, carries its permissions through chained provider compaction, and rejects revoked or unverifiable opaque windows. Historical worktree guidance remains readable under the same current repository/worker grant after a worktree closes; closure itself is not a separate history-access revocation.
 
 Repository grants are operator configuration in `AIKO_CODING_REPOSITORIES` (or parsed `config.codingRepositories`), keyed by owner. Paths refer to pre-provisioned repositories inside owner compute:
 
@@ -138,7 +228,57 @@ Reconciliation records an unknown original outcome and reports the current works
 
 The linked tests exercise real native actors, journals, private storage, request compilation, entity-learn memory, the MCP SDK and actual temporary Git/filesystem/process operations. Production Bun and bundled Cloudflare assemblies are included, with deterministic transports where external services would otherwise be required. Hosted coding runs the actual bundled CLI against a local gateway fixture. These checks do not establish live endpoint support, production account grants, deployed Cloudflare behavior or paid-model quality.
 
-Test totals and build results should be taken from the final verification run, not summed from overlapping focused suites. The original audit's baseline test count is not evidence that these new requirements were already present.
+The earlier integration baseline passed **413 tests across 38 files**, with **5 live-browser skips**, **0 failures** and **4,328 assertions**. It includes coding recovery, both compute suites, stock project mounts, scoped worker browser control, and automatic context custody with independent review regressions. TypeScript validation and the Cloudflare build (including rebuilt browser, compute and coding assets, and Wrangler's deployment dry run) passed. The normal Bun build, including its required source-integrity check, also passed. No deployment occurred.
+
+Memory validation separately passed **59 Aiko tests across 5 files** (1,370 assertions) and **16 library tests** (246 assertions). `bun scripts/check-entity-learn.ts --upstream /home/deck/work/entity-learn` verified all 23 library files against pinned commit `2e18c86c0fde16a470fc155f64f36120184223cb`. The [memory source pin](../packages/entity-learn/README.md) is a local, unpublished upstream commit; it is not claimed to be remotely retrievable.
+
+A previous run during concurrent source edits failed once in the database read-adapter test. Its cause was not confirmed; the isolated test, its ordered 23-file prefix and the final 38-file run passed on the resulting source. Totals above come from one final run and do not add overlapping focused suites.
+
+On 8 September 2026, a separate real-Chromium run enabled every current live gate in `browser-replay.test.ts` and `browser-session-transport.test.ts`: **24 tests, 134 assertions, 0 failures and 0 skips**. The six gated checks include physical SDK cookie installation/revocation, blank-context installation, native encrypted-custody restoration, real page links, HttpOnly request replay and local learned indexing. The [request-memory witness](../artifacts/request-memory/live-pipeline-witness.json) records two observed requests, two indexed pointers, two semantic matches, a completed two-request replay and transient consumption without response values in the retained archive. This is local isolated-browser evidence, distinct from the earlier integration baseline and from a hosted deployment.
+
+**Reproduce the local real-browser checks**
+
+Use [the existing local HTTPS fixture](../scripts/native-browser-fixture.ts). It supplies the exact replay page, synthetic HttpOnly cookie and read/redirect/error routes. `UNLOCK_FIXTURE_PORT` accepts 0–65535; its default `0` allocates an available port. The older `test/browser-replay-fixture.ts` lacks the current navigation-links page. The following uses a dedicated profile and fixed test ports; choose unused ports and keep the host mapping consistent. These certificate and proxy exceptions apply only to this isolated fixture browser.
+
+```bash
+set -euo pipefail
+export AIKO_QA_CHROME=/absolute/path/to/chrome
+AIKO_QA_DIR=$(mktemp -d /tmp/aiko-parity-browser-XXXXXX)
+export AIKO_QA_DIR
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -subj /CN=replay-fixture.aiko.ai \
+  -keyout "$AIKO_QA_DIR/fixture.key" -out "$AIKO_QA_DIR/fixture.crt"
+UNLOCK_FIXTURE_TLS_KEY="$AIKO_QA_DIR/fixture.key" \
+UNLOCK_FIXTURE_TLS_CERT="$AIKO_QA_DIR/fixture.crt" \
+UNLOCK_FIXTURE_PORT=8190 bun scripts/native-browser-fixture.ts &
+AIKO_QA_FIXTURE_PID=$!
+"$AIKO_QA_CHROME" --headless=new --remote-debugging-address=127.0.0.1 \
+  --remote-debugging-port=9358 --user-data-dir="$AIKO_QA_DIR/profile" \
+  --no-first-run --no-default-browser-check --no-proxy-server \
+  --ignore-certificate-errors \
+  '--host-resolver-rules=MAP replay-fixture.aiko.ai 127.0.0.1:8190' about:blank \
+  >"$AIKO_QA_DIR/chrome.log" 2>&1 &
+AIKO_QA_CHROME_PID=$!
+trap 'kill "$AIKO_QA_CHROME_PID" "$AIKO_QA_FIXTURE_PID" 2>/dev/null; wait "$AIKO_QA_CHROME_PID" "$AIKO_QA_FIXTURE_PID" 2>/dev/null' EXIT
+# Wait for this isolated browser to accept CDP connections.
+AIKO_REPLAY_TEST_CDP=$(curl --fail --silent --show-error --noproxy '*' \
+  --retry 20 --retry-connrefused --retry-delay 1 --max-time 2 \
+  http://127.0.0.1:9358/json/version | python3 -c 'import json,sys; print(json.load(sys.stdin)["webSocketDebuggerUrl"])')
+export AIKO_REPLAY_TEST_CDP
+BU_NAME=aiko-parity-qa BU_CDP_URL=http://127.0.0.1:9358 \
+BH_NO_BROWSER_COOKIES=1 browser-harness <<'PY_BROWSER'
+new_tab("https://replay-fixture.aiko.ai/")
+wait_for_load()
+print(page_info())
+PY_BROWSER
+AIKO_SESSION_TEST_CDP="$AIKO_REPLAY_TEST_CDP" AIKO_REPLAY_TEST_EMBEDDING=1 \
+AIKO_NATIVE_SESSION_CHROME="$AIKO_QA_CHROME" \
+  bun test apps/agent/test/browser-replay.test.ts apps/agent/test/browser-session-transport.test.ts
+```
+
+Keep exactly one tab at the replay origin and run the checks sequentially; duplicate tabs make page ownership ambiguous, and concurrent navigation changes the observed request window. Never attach this recipe to a personal or another worker's browser. Stop only the two recorded process IDs, then remove the dedicated test directory when its logs are no longer needed.
+
+The embedding check uses the pinned local CPU MiniLM model and `/tmp/aiko-request-embedding-qa`; an empty cache may download public model files and exceed the 60-second test deadline. Prewarm that cache through `createRequestEmbedding(...).embed(["fixture"])` if needed, then rerun the actual check. The native encrypted-custody check creates its own temporary profile and navigates to public `https://example.com` with a synthetic fixture cookie; it needs public connectivity. The blank SDK-install check and isolated CDP cookie test need no remote application. None of these checks calls a paid model, provisions a VM or deploys code. `browser-unlock-auth.test.ts` and `observed-network.test.ts` have no live-browser environment gates.
 
 **Working data usage**
 

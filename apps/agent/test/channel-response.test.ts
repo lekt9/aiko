@@ -126,6 +126,24 @@ test("message status uses native terminals and resumed epochs, and exposes confi
     {type:"TurnResumed",turn:"status-turn",failedEpoch:0,epoch:1,at:6},
   ]);
   expect((await read()).pending).toEqual(["status-turn"]);
+  await f.f.host.seed("user-123", [
+    {type:"TurnFailed",turn:"status-turn",epoch:1,error:"fixture",at:7},
+    {type:"AikoVoiceStarted",turn:"status-turn",epoch:1,at:8},
+  ]);
+  const preparing = await read();
+  expect(preparing.pending).toEqual([]);
+  expect(preparing.preparing).toEqual(["status-turn"]);
+  await f.f.host.seed("user-123", [
+    {type:"AikoReplyPrepared",turn:"status-turn",epoch:1,result:{text:"Ready"},at:9},
+  ]);
+  expect((await read()).preparing).toEqual([]);
+  await f.f.host.seed("user-123", [
+    {type:"TurnResumed",turn:"status-turn",failedEpoch:1,epoch:2,at:10},
+    {type:"AikoVoiceStarted",turn:"status-turn",epoch:0,at:11},
+  ]);
+  const resumed = await read();
+  expect(resumed.pending).toEqual(["status-turn"]);
+  expect(resumed.preparing).toEqual([]);
   expect(f.counts().modelCalls).toBe(0);
 });
 

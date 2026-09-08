@@ -3,8 +3,11 @@ import { DEMO_WORKSPACE } from "../lib/app-mode";
 async function handle(request: Request) {
   const path = new URL(request.url).pathname;
   if (
+    path === "/api/harness/library" || path.startsWith("/api/harness/library/") ||
+    path === "/api/channels/browser-watches" || path.startsWith("/api/channels/browser-watches/") ||
     path === "/api/databases" || path.startsWith("/api/databases/") || path === "/api/observed-actions/approval" || path === "/api/messages" ||
     path === "/api/approvals" ||
+    path === "/api/promises" || path.startsWith("/api/promises/") ||
     path === "/api/connectors" ||
     path.startsWith("/api/connectors/") ||
     path === "/api/secretary" ||

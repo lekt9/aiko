@@ -3,6 +3,9 @@
 const key = process.env.UNLOCK_FIXTURE_TLS_KEY;
 const cert = process.env.UNLOCK_FIXTURE_TLS_CERT;
 if (!key || !cert) throw Error("Fixture TLS files required");
+const port = Number(process.env.UNLOCK_FIXTURE_PORT ?? 0);
+if (!Number.isSafeInteger(port) || port < 0 || port > 65535)
+  throw Error("UNLOCK_FIXTURE_PORT must be an integer from 0 to 65535");
 const sessions = new Set<string>();
 const form =
   '<form method="post" action="/login"><label>Email<input autocomplete="username" name="username"></label><label>Password<input type="password" name="password"></label><button>Sign in</button></form>';
@@ -10,7 +13,7 @@ const app =
   '<a href="/logout">Sign out</a><a href="/projects">Projects</a><a href="/projects?id=12">Project 12</a><main>Project review due tomorrow</main>';
 const server = Bun.serve({
   hostname: "127.0.0.1",
-  port: 0,
+  port,
   tls: { key: Bun.file(key), cert: Bun.file(cert) },
   async fetch(request) {
     const url = new URL(request.url);

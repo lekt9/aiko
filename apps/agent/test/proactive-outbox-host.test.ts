@@ -3,7 +3,7 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {Database} from 'bun:sqlite';
 import {Effect,Layer} from 'effect';
-import {actor} from 'tardie';
+import {actor,handles} from 'tardie';
 import {createBunHost} from 'tardie/bun/host';
 import {EventLog} from 'tardie/core/log';
 import type {Event} from 'tardie/core/event';
@@ -11,7 +11,7 @@ import {createCloudflareAccountHost,type AccountStorage} from '../src/cloudflare
 import {voiceAndOutbox} from '../src/actor.ts';
 import {openMemory, type MemoryBinding} from '../src/memory.ts';
 import {harnessDigest} from '../src/harness-library.ts';
-import {defaultProactivePreferences,proactiveAppendAllowed,proactiveEventKey,proactiveEvidence,proactivePolicy} from '../src/proactive-policy.ts';
+import {defaultProactivePreferences,proactiveAppendAllowed,proactiveEventKey,proactiveEvidence,proactivePolicy,proactiveWaitMethod} from '../src/proactive-policy.ts';
 
 // Trusted retained-row seeding exercises the native outbox/append boundary,
 // not production HTTP admission or the upstream proactive decision producer.
@@ -25,8 +25,10 @@ async function fixture(backend:Backend,at=Date.now()){
  const supports=[saved.id],topics=proactiveEvidence(memory,supports)!.topics;
  let seeding=true,rejectClaim=false,afterClaim:(()=>void)|undefined,substituteWinner=false;
  let sends=0,rejected=0,unknown=false,db:Database|undefined,host:any;
+ let voiceStarted:(()=>Promise<void>)|undefined;
+ const evidenceAtSend:boolean[]=[];
  const attempted:Event[][]=[],returned:Event[][]=[];
- const production=voiceAndOutbox('123',input=>Effect.succeed({text:input.kind==='task'?input.receipt:'Fixture answer',source:'template' as const}),async(chat)=>{expect(chat).toBe('123');sends++;return {status:unknown?'unknown' as const:'delivered' as const};},{live:true,redact:s=>s,memory});
+ const production=voiceAndOutbox('123',input=>Effect.promise(async()=>{await voiceStarted?.();return {text:input.kind==='task'?input.receipt:'Fixture answer',source:'template' as const};}),async(chat)=>{expect(chat).toBe('123');evidenceAtSend.push(!!proactiveEvidence(memory,supports));sends++;return {status:unknown?'unknown' as const:'delivered' as const};},{live:true,redact:s=>s,memory});
  const wrapped={...production,machine:{...production.machine,output:(state:any)=>{
   const output=production.machine.output(state);
   return {...output,transitions:seeding?[]:output.transitions.map((t:any)=>t.kind!=='effect'?t:{...t,act:(input:any,signal:AbortSignal)=>Effect.gen(function*(){
@@ -43,7 +45,7 @@ async function fixture(backend:Backend,at=Date.now()){
    if(claimed)returned.push(structuredClone(result as Event[]));return result;
   })})};
  }}};
- const definition=actor({name:'aiko',methods:{},components:[wrapped]});
+ const definition=actor({name:'aiko',methods:{proactiveWait:proactiveWaitMethod},components:[handles(proactiveWaitMethod,wrapped)]});
  const keyOf=(e:Event)=>proactiveEventKey(e)??production.keys!.keyOf(e)??(['AikoProactiveDecision','AikoProactiveAccepted'].includes(e.type)?`fixture:${e.type}:${e.owner}:${e.id}`:undefined);
  const canAppend=(t:string,events:readonly Event[],read:()=>readonly Event[])=>{
   if(!proactiveAppendAllowed(events,read,t)){rejected++;return false;}
@@ -70,8 +72,9 @@ async function fixture(backend:Backend,at=Date.now()){
   {type:'AikoProactiveDispatchAuthorized',owner:'123',id,decisionId:id,turn:`proactive:${id}`,epoch:0,chat:'123',at,topics,supports,claimId,policyRevision:'default'},
   {type:'AikoDeliveryStarted',turn:`proactive:${id}`,epoch:0,at,proactiveClaimId:claimId},
  ];
- return {seed,seedClaim:async(events:Event[])=>{seeding=true;await host.seed(thread,events);},decision,prefs,claim,topics,attempted,returned,
+ return {seed,seedClaim:async(events:Event[])=>{seeding=true;await host.seed(thread,events);},decision,prefs,claim,topics,attempted,returned,memory,evidenceAtSend,
   setReject:()=>{rejectClaim=true;},setUnknown:()=>{unknown=true;},setWinner:()=>{substituteWinner=true;},after:(f:()=>void)=>{afterClaim=f;},
+  duringVoice:(f:()=>Promise<void>)=>{voiceStarted=f;},
   forget:()=>{const m=openMemory(memory);try{m.forget(saved.subject,saved.id,'fixture-forget-after-claim');}finally{m.close();}},
   counts:()=>({sends,rejected}),rows:()=>host.read(thread) as Promise<Event[]>,
   drive:async()=>{seeding=false;if(backend==='bun')await host.recover();else await host.wake(thread);},
@@ -80,6 +83,23 @@ async function fixture(backend:Backend,at=Date.now()){
  };
 }
 for(const backend of ['bun','account'] as const){
+ test(`${backend}: an owner turn arriving during voice preparation retains the contribution through restart`,async()=>{
+  const at=Date.now(),f=await fixture(backend,at);
+  try{
+   const contribution={version:2,topic:harnessDigest(['ready']),trigger:'ready',triggerSupports:f.decision('late-busy')[0]!.supports,createdAt:at,notBefore:at,expiresAt:at+86400000,action:'notify'};
+   await f.seed(f.decision('late-busy').slice(0,2).map(e=>({...e,contribution})));
+   f.duringVoice(async()=>{f.duringVoice(async()=>{});await f.seedClaim([{type:'MessageReceived',owner:'123',id:'direct',source:'telegram',chat:'123',text:'Please check my next meeting',at:Date.now()}]);});
+   await f.drive();
+   expect(f.counts().sends).toBe(0);
+   expect((await f.rows()).find(e=>e.type==='AikoProactiveDeferred')).toMatchObject({stage:'dispatch',reason:'foreground-busy',contributionVersion:2});
+   expect((await f.rows()).some(e=>e.type==='AikoDeliveryStarted')).toBe(false);
+   await f.restart();await f.drive();expect(f.counts().sends).toBe(0);
+   await f.seedClaim([{type:'TurnCompleted',turn:'direct',epoch:0,output:'Your meeting is at 3pm.',at:Date.now()}]);
+   await f.drive();
+   expect((await f.rows()).filter(e=>e.type==='AikoDeliverySettled'&&e.turn==='proactive:late-busy'&&(e.result as any)?.status==='delivered')).toHaveLength(1);
+   const sent=f.counts().sends;await f.restart();await f.drive();expect(f.counts().sends).toBe(sent);
+  }finally{await f.close();}
+ });
  test(`${backend}: silent claim append rejection never reaches physical sender`,async()=>{
   const f=await fixture(backend);try{await f.seed(f.decision('reject'));f.setReject();await f.drive();
    expect(f.counts().sends).toBe(0);expect(f.counts().rejected).toBeGreaterThan(0);
@@ -117,6 +137,28 @@ for(const backend of ['bun','account'] as const){
    expect((await f.rows()).filter(e=>e.type==='AikoProactiveDispatchAuthorized')).toHaveLength(1);
    expect((await f.rows()).find(e=>e.type==='AikoDeliverySettled')?.result).toMatchObject({status:'rejected',reason:'proactive-evidence-or-policy-changed-before-send'});
   }finally{await f.close();}
+ });
+ test(`${backend}: final evidence check has no asynchronous hydration gap before the sender`,async()=>{
+  const f=await fixture(backend);let restore:(()=>void)|undefined;
+  try{
+   await f.seed(f.decision('final-read-race'));
+   f.after(()=>{
+    const m=openMemory(f.memory),prototype=Object.getPrototypeOf(m),get=prototype.get;
+    m.close();
+    const intercepted=spyOn(prototype,'get').mockImplementation(function(this:typeof m,id:string){
+     const hit=get.call(this,id);intercepted.mockRestore();
+     // A native forget queued after the final synchronous citation read. An
+     // awaited step before send would let that forget invalidate the draft.
+     queueMicrotask(f.forget);return hit;
+    });
+    restore=()=>intercepted.mockRestore();
+   });
+   await f.drive();
+   expect(f.counts().sends).toBe(1);
+   expect(f.evidenceAtSend).toEqual([true]);
+   expect(proactiveEvidence(f.memory,(f.decision('unused')[0] as any).supports)).toBeUndefined();
+   await f.restart();await f.drive();expect(f.counts().sends).toBe(1);
+  }finally{restore?.();await f.close();}
  });
  test(`${backend}: exact claim loser neither sends nor settles the winner`,async()=>{
   const f=await fixture(backend);try{await f.seed(f.decision('race'));f.setWinner();await f.drive();expect(f.counts().sends).toBe(0);

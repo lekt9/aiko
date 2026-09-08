@@ -18,6 +18,7 @@ export function databaseApprovals(owner: string, thread: string, now: () => numb
     ] },
     rows: () => ({ rows: rows.map(row => ({ ...row, value: { values: { ...row.value.values, canDecide: row.value.values.state === "pending" && Date.parse(String(row.value.values.expiresAt)) > now() } } })), revision: 1, complete: true }),
     revision: () => createHash("sha256").update(canonical(collection.rows().rows.map(row => [row.id, row.revision, row.value.values.canDecide]))).digest("hex"),
+    actions: [{ kind: "approval.review", label: "Review action" }],
     coverage: "Action approvals on the owner foreground thread. Browser prompts and secretary policy approvals retain their existing queues until their domain adapters are added.",
   };
   return { collection, update: (events: readonly Event[]) => {

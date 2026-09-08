@@ -5,6 +5,7 @@ import { Self } from "tardie/core/runtime";
 import type { NativeTool } from "tardie/component/tool";
 import type { Event } from "tardie/core/event";
 import { ownedNetworkDefinitions } from "./capability-builder-network.ts";
+import { endpointInterface, ownedEndpointDescriptions } from "./observed-endpoint.ts";
 import { canonicalStringify, sha256 } from "@unbrowse/browser-harness/har";
 import { validateNetworkToolDefinition, networkToolDigest, type NetworkToolDefinition } from "@unbrowse/browser-harness/network-tool-catalog";
 import { validateSiteHarnessArtifact, SITE_HARNESS_SCHEMA_VERSION, SITE_HARNESS_EXECUTOR_ABI } from "@unbrowse/browser-harness/harness-artifact";
@@ -75,8 +76,8 @@ export class RequestMemory {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(binding.owner) || !binding.embedding.model || !Number.isInteger(binding.embedding.dimensions) || binding.embedding.dimensions < 1 || binding.embedding.dimensions > 4096) throw new Error("Invalid binding");
     this.memory = new Memory({ storage: binding.storage, scope: `request-memory:${binding.owner}` });
   }
-  private async definition(digest: string) {
-    const observed = ownedNetworkDefinitions(await this.binding.readOwnedEvents()).find(e => e.toolDigest === digest);
+  private async definition(digest: string, events?: readonly Event[]) {
+    const observed = ownedNetworkDefinitions(events ?? await this.binding.readOwnedEvents()).find(e => e.toolDigest === digest);
     if (!observed) throw new Error("Owned network evidence unavailable");
     artifact(observed.definition);
     if (observed.definition.sessionRequirements.length && !await this.binding.authorizeSession?.(observed.definition.sessionRequirements,[...new Set(observed.definition.steps.map(step=>step.origin))])) throw new Error("Session replay unavailable");
@@ -86,13 +87,15 @@ export class RequestMemory {
   async index(toolDigest: string, concepts: string[], responses: Record<string, unknown> = {}, signal?: AbortSignal) {
     if (!Array.isArray(concepts) || !concepts.length || concepts.length > 16 || concepts.some(c => typeof c !== "string" || !safeLabel.test(c))) throw new Error("Use bounded concept labels, never response summaries");
     validateNoSecrets(concepts);
-    const definition = await this.definition(toolDigest);
+    const events = await this.binding.readOwnedEvents();
+    const definition = await this.definition(toolDigest, events);
+    const endpoint = endpointInterface(definition.steps, ownedEndpointDescriptions(events, ownedNetworkDefinitions(events)).get(toolDigest));
     const shapes: Record<string, Shape[]> = {};
     for (const [step, body] of Object.entries(responses)) {
       if (!definition.steps.some(s => s.id === step)) throw new Error("Unknown response step");
       shapes[step] = responseShape(body);
     }
-    const structural = { definition, concepts: [...new Set(concepts)].sort(), shapes };
+    const structural = { definition, concepts: [...new Set(concepts)].sort(), shapes, endpoint };
     validateNoSecrets(structural);
     const document = canonicalStringify({concepts:structural.concepts,shapes,inputs:definition.inputs}).slice(0,3500);
     const transient = this.binding.embedResponseValues ? Object.values(responses).map(responseDocument).join("\n").slice(0,12000) : "";
@@ -108,7 +111,7 @@ export class RequestMemory {
       return {pointerId:cached.observation.id,requestIds:definition.evidence.map(e=>e.requestId),model:this.binding.embedding.model,cached:true};
     }
     // Small encoders truncate by tokens: response semantics must precede verbose DAG/schema metadata.
-    const vectors = await this.binding.embedding.embed([`${structural.concepts.join(" ")}\n${transient}\n${document}`], signal);
+    const vectors = await this.binding.embedding.embed([`${endpoint.name}\n${structural.concepts.join(" ")}\n${transient}\n${endpoint.description}\n${document}`], signal);
     if (vectors.length !== 1) throw new Error("Embedding count mismatch");
     const payload: Pointer = { version: 1, owner: this.binding.owner, ...structural, model: this.binding.embedding.model, embedding: vector(vectors[0]!, this.binding.embedding.dimensions) };
     const saved = this.memory.remember({ subject, title: structural.concepts.join(" "), type: "request-pointer", payload: payload as unknown as Json }, { key: `index:${indexDigest}`, producer: { kind: "tool", reference: toolDigest } });
@@ -129,11 +132,13 @@ export class RequestMemory {
     const q = vector(vectors[0]!, this.binding.embedding.dimensions);
     signal?.throwIfAborted();
     // Evidence must still be present. Retrieval does not authorize a session or replay any request.
-    const definitions = new Set(ownedNetworkDefinitions(await this.binding.readOwnedEvents()).map(e => e.toolDigest));
+    const events = await this.binding.readOwnedEvents(), reads = ownedNetworkDefinitions(events);
+    const definitions = new Map(reads.map(e => [e.toolDigest, e]));
+    const descriptions = ownedEndpointDescriptions(events, reads);
     return this.memory.journal.read(() => {
       const reasons = new Set<string>();
       let after: string | undefined, scanned = 0, corpusBytes = 0;
-      type Item = { pointerId: string; toolDigest: string; sourceTraceDigest: string; observedAt: number; freshness: "requires-check"; score: number; concepts: string[]; shapes: Record<string, Shape[]>; requestIds: string[]; inputs: NetworkToolDefinition["inputs"] };
+      type Item = { pointerId: string; toolId: string; endpoint: ReturnType<typeof endpointInterface>; toolDigest: string; sourceTraceDigest: string; observedAt: number; freshness: "requires-check"; score: number; concepts: string[]; shapes: Record<string, Shape[]>; requestIds: string[]; inputs: NetworkToolDefinition["inputs"] };
       let items: Item[] = [];
       do {
         signal?.throwIfAborted();
@@ -145,10 +150,12 @@ export class RequestMemory {
           if (corpusBytes > 16 * 1024 * 1024) { reasons.add("corpus_byte_budget"); break; }
           try {
             const p = this.pointer(hit.observation.id);
-            if (!definitions.has(networkToolDigest(p.definition))) { reasons.add("evidence_unavailable"); continue; }
+            const definition = definitions.get(networkToolDigest(p.definition));
+            if (!definition) { reasons.add("evidence_unavailable"); continue; }
             if (p.model !== this.binding.embedding.model || p.embedding.length !== q.length) { reasons.add("embedding_space_mismatch"); continue; }
             const v = vector(p.embedding, q.length);
-            items.push({ pointerId: hit.observation.id, toolDigest: networkToolDigest(p.definition), sourceTraceDigest:p.definition.sourceTraceDigest,
+            items.push({ pointerId: hit.observation.id, toolId: definition.toolId,
+              endpoint: endpointInterface(definition.definition.steps, descriptions.get(definition.toolDigest)), toolDigest: networkToolDigest(p.definition), sourceTraceDigest:p.definition.sourceTraceDigest,
               observedAt:hit.observation.observedAt, freshness:"requires-check", score: q.reduce((sum,x,i) => sum + x*v[i]!, 0), concepts: p.concepts, shapes: p.shapes, requestIds: p.definition.evidence.map(e => e.requestId), inputs: p.definition.inputs });
           } catch { reasons.add("invalid_pointer"); }
         }
@@ -206,7 +213,7 @@ export class RequestMemory {
 export function createRequestMemoryTools(memory: RequestMemory): NativeTool<Self>[] {
   const specs = [
     { name: "request_memory_index", description: "Index an owned observed request DAG by digest and concept labels. Stores structural pointers only.", properties: { toolDigest: {type:"string"}, concepts: {type:"array",items:{type:"string"}} }, required:["toolDigest","concepts"] },
-    { name: "request_memory_search", description: "Semantic embedding retrieval of owned request pointers; no cached response values.", properties: {query:{type:"string"}}, required:["query"] },
+    { name: "request_memory_search", description: "Semantic retrieval of owned request pointers, endpoint contracts and toolIds for tool_router_describe. No cached response values; retrieval grants no execution authority.", properties: {query:{type:"string"}}, required:["query"] },
     { name: "request_memory_hydrate", description: "Recompute a read-only request DAG. Responses go to transient host analysis; only a receipt enters the log.", properties: {pointerId:{type:"string"},inputs:{type:"object"}}, required:["pointerId"] },
   ];
   return specs.map(spec => ({ spec: {name:spec.name,description:spec.description,inputSchema:{type:"object",properties:spec.properties,required:spec.required,additionalProperties:false}}, run: (input,context) => Effect.gen(function* () {

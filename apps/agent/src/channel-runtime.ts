@@ -1,5 +1,6 @@
 import {
   channelControlState,
+  channelSendRetryPlan,
   controlOperationId,
   type ChannelControlPlan,
 } from "./channel-controls.ts";
@@ -42,11 +43,24 @@ export type ChannelDelivery = {
 };
 export type ChannelAdapterOperation =
   "decode" | "poll" | "send" | "reconcile" | "subscribe" | "remove" | "renew";
+/** Secret-free identity of one prepared private-runner HTTP request. */
+export interface ChannelDispatchPermitIdentity {
+  owner: string;
+  operationId: string;
+  jobDigest: `sha256:${string}`;
+  requestDigest: `sha256:${string}`;
+  nonce: string;
+  expiresAt: number;
+  policyDigest: string;
+}
+export type ChannelDispatchPermitResult = { status: "permitted" | "denied" | "unknown" };
 /** Root registry implements execute with its pinned, verified sandbox harness.
  * authenticate / authorize / artifactAllowed / validateReceipt are trusted host capabilities,
  * not callbacks selected from provider JSON or generated adapter output.
  */
 export interface ChannelRuntimePorts {
+  /** Trusted implementation capability, not a claim from artifact metadata. */
+  dispatchGuardSupported?(binding: ChannelBinding): boolean;
   controlPolicy?(
     binding: ChannelBinding,
     plan: ChannelControlPlan,
@@ -77,6 +91,12 @@ export interface ChannelRuntimePorts {
     input: unknown,
     key: string,
     signal: AbortSignal,
+    /** Optional host authority fence. Implementations accepting guarded work
+     * must call it after preparation, immediately before physical dispatch. */
+    dispatchGuard?: { beforeDispatch(): Promise<void>;
+      /** A trusted adapter supplies policyCurrent; it runs synchronously inside
+       * the actual native permit commit, after all preparation awaits. */
+      permit?(identity: ChannelDispatchPermitIdentity, signal?: AbortSignal, policyCurrent?: () => boolean): Promise<ChannelDispatchPermitResult> },
   ): Promise<unknown>;
   validateReceipt(
     binding: ChannelBinding,
@@ -715,8 +735,8 @@ export function createChannelRuntime(
           Object.keys(p).sort().join(",") !==
             "action,backoffMs,expiresAt,firstAt,id,intervalMs,leaseLeadMs,maxRuns,partition" ||
           !/^[a-zA-Z0-9._:-]{1,160}$/.test(p.id) ||
-          !["poll", "renew"].includes(p.action) ||
-          !b.artifact.operations.includes(p.action) ||
+          !["poll", "renew", "retry-send"].includes(p.action) ||
+          !b.artifact.operations.includes(p.action === "retry-send" ? "send" : p.action) ||
           b.status !== "active" ||
           ![
             p.maxRuns,
@@ -771,10 +791,19 @@ export function createChannelRuntime(
               s.plan.channel === id &&
               s.plan.generation === generation &&
               s.p.action === p.action &&
-              !["stopped", "exhausted", "retired"].includes(s.reason ?? ""),
+              (p.action !== "retry-send" || s.p.partition === p.partition) &&
+              (p.action === "retry-send" || !["stopped", "exhausted", "retired"].includes(s.reason ?? "")),
           )
         )
           throw Error("channel_control_already_registered");
+        if (p.action === "retry-send") {
+          const original = find(own(events,b),"OutputPrepared",p.partition);
+          const settled = find(own(events,b),"OutputSettled",p.partition);
+          if (!original || (settled?.result as ChannelDelivery)?.status !== "failed" ||
+            channelSendRetryPlan(events,b,p.partition) ||
+            !(yield* safe(()=>ports.validateReceipt(b,"send",settled!.result))))
+            throw Error("channel_retry_requires_verified_failure");
+        }
         if (p.action === "renew") {
           const prior = own(events, b).findLast(
             (e) =>
@@ -1189,6 +1218,12 @@ export function createChannelRuntime(
             try {
               if (p.action === "poll")
                 yield* api.requestPoll(b.id, b.generation, p.partition, id);
+              else if (p.action === "retry-send") {
+                const original = find(own(yield* log.read,b),"OutputPrepared",p.partition);
+                const prepared = original && (yield* safe(()=>open(original)));
+                if (!prepared) return stop("output_unavailable");
+                yield* api.prepare(b.id,b.generation,{...(prepared.input as Parameters<typeof api.prepare>[2]),operationId:id});
+              }
               else
                 yield* api.requestSubscription(
                   b.id,
@@ -2041,7 +2076,13 @@ export function createChannelRuntime(
                   evidence: "host:generation_cancelled",
                 };
               else if (!find(own(yield* log.read, b), "OutputStarted", id)) {
+                const currentEvents = yield* log.read;
+                const retryPlan = channelSendRetryPlan(currentEvents,b,id);
+                const retryState = retryPlan && channelControlState(currentEvents,owner).find(s=>s.plan===retryPlan || s.plan.id===retryPlan.id && s.plan.channel===b.id && s.plan.generation===b.generation);
+                const retryAllowed = !retryPlan || !!retryState && retryState.reason === "pending" && retryState.p.expiresAt > now() &&
+                  (yield* safe(()=>ports.controlPolicy?.(b,retryState.p) ?? Promise.resolve(undefined))) === retryPlan.policyDigest;
                 if (
+                  !retryAllowed ||
                   !(yield* safe(() => ports.artifactAllowed(b))) ||
                   !(yield* safe(() =>
                     ports.authorize(
@@ -2051,6 +2092,7 @@ export function createChannelRuntime(
                       {
                         ...(prepared.input as object),
                         destination: prepared.destination,
+                        ...(retryState ? {deliveryId:channelOperationKey(b,"send",retryState.p.partition)} : {}),
                         artifact: prepared.artifact,
                       },
                     ),
@@ -2077,6 +2119,7 @@ export function createChannelRuntime(
                       {
                         ...(prepared.input as object),
                         destination: prepared.destination,
+                        ...(retryState ? {deliveryId:channelOperationKey(b,"send",retryState.p.partition)} : {}),
                       },
                       id,
                       signal,
@@ -2121,7 +2164,7 @@ export function createChannelRuntime(
                       operationId: channelOperationKey(
                         b,
                         "send",
-                        String(request.outputId),
+                        String((channelSendRetryPlan(events,b,String(request.outputId))?.plan as ChannelControlPlan | undefined)?.partition ?? request.outputId),
                       ),
                     },
                     id,

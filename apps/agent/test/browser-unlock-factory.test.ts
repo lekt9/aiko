@@ -43,6 +43,21 @@ async function fixture() {
 }
 const navigation={action:"navigate" as const,url:"https://example.com/dashboard"};
 
+test("task wrappers retain separate navigation scope and share account custody without clearing sibling cookies",async()=>{
+ const f=await fixture(),closed:string[]=[];
+ const root:BrowserDriver={...f.driver,forTab:async key=>({...f.driver,close:async()=>{closed.push(key);}})};
+ const account=await withUnlockBrowser(async()=>root,{config:f.config,engine:()=>({search:async()=>({status:"absent",connectors:[],fallbackAllowed:true,message:"fixture"})})})({owner:"123",domains:["*"],emit:async()=>{}});
+ const a=await account.forTab!("a"),b=await account.forTab!("b");
+ await a.execute(navigation);
+ await expect(b.screenshot!()).rejects.toThrow("Navigate");
+ await b.execute({...navigation,url:"https://example.com/second"});
+ await account.screenshot!();
+ const before=f.order.length;await a.close();expect(closed).toEqual(["a"]);expect(f.order.slice(before)).not.toContain("clear");
+ await b.screenshot!();f.status.verified=false;f.status.renewable=false;
+ await expect(b.screenshot!()).rejects.toThrow("Unlock session");
+ await account.close();
+});
+
 test("actual host wrapper and SDK install before first navigation, recheck without reinjection, replace changed revision",async()=>{
  const f=await fixture();const first=await f.wrapped.execute(navigation);
  expect(first).toEqual({completed:true});expect(f.order.indexOf("install:4")).toBeGreaterThan(f.order.indexOf("sdk:session"));expect(f.order.indexOf("execute:navigate")).toBeGreaterThan(f.order.indexOf("install:4"));

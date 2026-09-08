@@ -1,5 +1,5 @@
-import type { DatabaseArtifactResult, DatabaseCatalog, DatabaseCommandInput, DatabaseOperationResult, DatabaseQuery, DatabaseQueryResult, DatabaseReplyArtifact } from "@unlock/protocol";
-export type { DatabaseArtifactResult, DatabaseCatalog, DatabaseCommandInput, DatabaseOperationResult, DatabaseQuery, DatabaseQueryResult } from "@unlock/protocol";
+import type { DatabaseArtifactResult, DatabaseCatalog, DatabaseCommandInput, DatabaseFieldInput, DatabaseFieldResult, DatabaseMappingResult, DatabaseOperationResult, DatabaseQuery, DatabaseQueryResult, DatabaseReplyArtifact, DatabaseSourceCatalog } from "@unlock/protocol";
+export type { DatabaseArtifactResult, DatabaseCatalog, DatabaseCommandInput, DatabaseFieldInput, DatabaseFieldResult, DatabaseMappingResult, DatabaseOperationResult, DatabaseQuery, DatabaseQueryCapabilities, DatabaseQueryResult, DatabaseSourceCatalog } from "@unlock/protocol";
 export type AikoRequestOptions = { signal?: AbortSignal };
 export type AikoReplyArtifact = DatabaseReplyArtifact;
 export type AikoAdmission = { status: "accepted" | "duplicate"; id: string };
@@ -89,6 +89,9 @@ export function createAikoClient(options: {
     throw new Error(
       "Aiko requires HTTPS or loopback HTTP without URL credentials",
     );
+  const timeoutMs = options.timeoutMs ?? 15_000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 2_147_483_647)
+    throw new TypeError("timeoutMs must be a non-negative timer duration");
   base.pathname = `${base.pathname.replace(/\/$/, "")}/`;
   const request = async <T>(
     path: string,
@@ -96,36 +99,77 @@ export function createAikoClient(options: {
     body?: object,
     opts?: AikoRequestOptions,
   ): Promise<T> => {
-    const token =
-      typeof options.token === "function"
-        ? await options.token()
-        : options.token;
-    const response = await (options.fetch ?? globalThis.fetch)(
-      new URL(path, base),
-      {
-        method,
-        redirect: "error",
-        cache: "no-store",
-        headers: {
-          authorization: `Bearer ${token}`,
-          ...(body ? { "content-type": "application/json" } : {}),
-        },
-        ...(body ? { body: JSON.stringify(body) } : {}),
-        signal: AbortSignal.any([
-          AbortSignal.timeout(options.timeoutMs ?? 15_000),
-          ...(opts?.signal ? [opts.signal] : []),
-        ]),
-      },
-    );
-    const value = await response.json();
-    if (!response.ok)
-      throw new AikoPlaneError(
-        response.status,
-        /^[a-z_]+$/.test(value?.error ?? value?.status ?? "")
-          ? (value.error ?? value.status)
-          : "request_failed",
-      );
-    return value as T;
+    // Bound credential lookup, custom transports and response consumption as one call.
+    const controller = new AbortController();
+    const signal = controller.signal;
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    const onCallerAbort = () => controller.abort(opts?.signal?.reason);
+    const timer = setTimeout(() => controller.abort(new DOMException("Request timed out", "TimeoutError")), timeoutMs);
+    let onAbort: () => void = () => {};
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => {
+        void reader?.cancel(signal.reason).catch(() => {});
+        reject(signal.reason);
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    if (opts?.signal?.aborted) onCallerAbort();
+    else opts?.signal?.addEventListener("abort", onCallerAbort, { once: true });
+    try {
+      return await Promise.race([
+        aborted,
+        (async () => {
+          signal.throwIfAborted();
+          const token = typeof options.token === "function" ? await options.token() : options.token;
+          // A late credential must never dispatch a cancelled write.
+          signal.throwIfAborted();
+          const response = await (options.fetch ?? globalThis.fetch)(new URL(path, base), {
+            method,
+            redirect: "error",
+            cache: "no-store",
+            headers: {
+              authorization: `Bearer ${token}`,
+              ...(body ? { "content-type": "application/json" } : {}),
+            },
+            ...(body ? { body: JSON.stringify(body) } : {}),
+            signal,
+          });
+          if (signal.aborted) {
+            void response.body?.cancel(signal.reason).catch(() => {});
+            signal.throwIfAborted();
+          }
+          reader = response.body?.getReader();
+          let text = "";
+          const decoder = new TextDecoder();
+          try {
+            if (reader) for (;;) {
+              const chunk = await reader.read();
+              signal.throwIfAborted();
+              if (chunk.done) break;
+              text += decoder.decode(chunk.value, { stream: true });
+            }
+            text += decoder.decode();
+          } finally {
+            reader?.releaseLock();
+            reader = undefined;
+          }
+          signal.throwIfAborted();
+          const value = JSON.parse(text);
+          if (!response.ok)
+            throw new AikoPlaneError(
+              response.status,
+              /^[a-z_]+$/.test(value?.error ?? value?.status ?? "")
+                ? (value.error ?? value.status)
+                : "request_failed",
+            );
+          return value as T;
+        })(),
+      ]);
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      opts?.signal?.removeEventListener("abort", onCallerAbort);
+    }
   };
   return {
     discover: (opts?: AikoRequestOptions) =>
@@ -169,6 +213,9 @@ export function createAikoClient(options: {
         request<{ status: "cancelling" }>("v1/cancel", "POST", { id }, opts),
     },
     databases: {
+      field: (input: DatabaseFieldInput, opts?: AikoRequestOptions) => request<DatabaseFieldResult>("v1/databases/field", "POST", input, opts),
+      mapping: (mappingId: string, opts?: AikoRequestOptions) => request<DatabaseMappingResult>(`v1/databases/mappings/${encodeURIComponent(mappingId)}`, "GET", undefined, opts),
+      sources: (opts?: AikoRequestOptions) => request<DatabaseSourceCatalog>("v1/databases/sources", "GET", undefined, opts),
       catalog: (opts?: AikoRequestOptions) => request<DatabaseCatalog>("v1/databases", "GET", undefined, opts),
       query: (query: DatabaseQuery, opts?: AikoRequestOptions) => request<DatabaseQueryResult>("v1/databases/query", "POST", { query }, opts),
       command: (input: DatabaseCommandInput, opts?: AikoRequestOptions) => request<DatabaseOperationResult>("v1/databases/commands", "POST", input, opts),

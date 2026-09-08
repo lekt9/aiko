@@ -24,7 +24,7 @@ describe("account connector proxy", () => {
     process.env.AIKO_CONNECTOR_ORIGIN = "https://agent.example";
     const fetch = vi.fn(async () => Response.json({ status: "committed" }));
     vi.stubGlobal("fetch", fetch);
-    for (const [path, method] of [["/api/databases/artifacts/projects", "GET"], ["/api/databases/changes", "GET"], ["/api/databases/query", "POST"], ["/api/observed-actions/approval", "POST"], ["/api/messages", "GET"]]) {
+    for (const [path, method] of [["/api/databases/field", "POST"], ["/api/databases/mappings/person", "GET"], ["/api/databases/artifacts/projects", "GET"], ["/api/databases/changes", "GET"], ["/api/databases/query", "POST"], ["/api/observed-actions/approval", "POST"], ["/api/messages", "GET"]]) {
       const result = await handleConnectorRequest(new Request(`https://web.example${path}`, { method, headers: { authorization: "Bearer user-only", "content-type": "application/json", origin: "https://web.example" }, ...(method === "POST" ? { body: "{}" } : {}) }));
       expect(result.status).toBe(200);
       const [url, options] = fetch.mock.calls.at(-1) as unknown as [URL, RequestInit];
@@ -159,4 +159,24 @@ it("forwards bound OTP privately once and does not retry a lost upstream reply",
   expect(JSON.parse(String(init.body))).toEqual(body);
   expect(response.status).toBe(503);expect(response.headers.get("cache-control")).toBe("no-store");
   expect(await response.text()).not.toContain(body.code);
+});
+
+describe("browser watch owner API proxy",()=>{
+  it("forwards only exact owner watch operations through existing account authentication",async()=>{
+    process.env.AIKO_CONNECTOR_ORIGIN="https://agent.example";
+    const fetch=vi.fn(async()=>Response.json({available:true,result:[]}));vi.stubGlobal("fetch",fetch);
+    for(const [suffix,method] of [["","GET"],["/discovery","GET"],["/configure","POST"],["/control","POST"],["/sample","POST"],["/reconcile","POST"],["/acknowledge-gap","POST"]]){
+      const path=`/api/channels/browser-watches${suffix}`;
+      const response=await handleConnectorRequest(new Request(`https://web.example${path}`,{method,headers:{authorization:"Bearer owner-only",origin:"https://web.example","content-type":"application/json"},...(method==="POST"?{body:"{}"}:{})}));
+      expect(response.status).toBe(200);
+      const [url,options]=fetch.mock.calls.at(-1) as unknown as [URL,RequestInit];
+      expect(url.pathname).toBe(path);expect(options.headers).toMatchObject({Authorization:"Bearer owner-only"});
+    }
+    const count=fetch.mock.calls.length;
+    for(const path of ["/api/channels/browser-watches/arbitrary","/api/channels/browser-watches?owner=another","/api/channels/browser-watches/discovery?token=private"]){
+      expect((await handleConnectorRequest(new Request(`https://web.example${path}`,{headers:{authorization:"Bearer owner-only"}}))).status).toBe(404);
+    }
+    expect(fetch).toHaveBeenCalledTimes(count);
+    expect((await handleConnectorRequest(new Request("https://web.example/api/channels/browser-watches"))).status).toBe(401);
+  });
 });

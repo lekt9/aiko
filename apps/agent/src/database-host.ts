@@ -14,6 +14,8 @@ export function createDatabaseBinding(options: {
   storeOptions?: StoreOptions;
   readEvents?: DatabaseBinding["readEvents"];
   sources?: DatabaseBinding["sources"];
+  sourceCatalog?: DatabaseBinding["sourceCatalog"];
+  entities?: DatabaseBinding["entities"];
 }): DatabaseBinding {
   const blobs = harnessBlobStore(options.kv);
   const approvals = databaseApprovals(options.owner, options.thread, options.storeOptions?.now);
@@ -22,9 +24,25 @@ export function createDatabaseBinding(options: {
   return {
     owner: options.owner,
     thread: options.thread,
-    store: new StructuredStore(options.storage, options.owner, { ...options.storeOptions, domains }),
+    store: new StructuredStore(options.storage, options.owner, { ...options.storeOptions, domains,
+      canReadDependency: dependency => {
+        if (options.storeOptions?.canReadDependency?.(dependency) === false) return false;
+        if (dependency.source?.kind === "entity") {
+          if (!options.entities) return false;
+          options.entities.authorize(dependency.source);
+        }
+        return true;
+      },
+      dependencyState: dependency => {
+        const local = options.storeOptions?.dependencyState?.(dependency) ?? "fresh";
+        if (local !== "fresh") return local;
+        return dependency.source?.kind === "entity" && options.entities ? options.entities.state(dependency.source) : "fresh";
+      },
+    }),
     readEvents: options.readEvents,
     sources: options.sources,
+    sourceCatalog: options.sourceCatalog,
+    entities: options.entities,
     collections: approvals.update,
     authorize: options.authorize,
     custody: {

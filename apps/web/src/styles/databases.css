@@ -19,3 +19,50 @@
 .db-conversation { grid-template-columns: minmax(0, 1fr); }
 .db-conversation > section, .db-artifact, .db-workspace { min-width: 0; max-width: 100%; }
 .db-toolbar form { min-width: 0; }
+.db-refresh-controls { padding: 14px 20px; border-bottom: 1px solid var(--db-line); }
+.db-refresh-controls p { margin: 8px 0 0; line-height: 1.5; }
+.db-refresh-controls button { min-height: 44px; }
+.db-layout-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--db-line); }
+.db-layout-controls label { display: grid; gap: 5px; font-size: 12px; color: var(--db-muted); min-width: 0; }
+.db-layout-controls p { width: 100%; margin: 0; }
+.db-layout-caption { margin: 0; padding: 10px 20px; color: var(--db-muted); font-size: 12px; }
+.db-record-list { list-style: none; padding: 0; margin: 0; }
+.db-record-list > li + li { border-top: 1px solid var(--db-line); }
+.db-record-card { padding: 14px 18px; min-width: 0; overflow-wrap: anywhere; }
+.db-artifact .db-record-title { text-align: left; justify-content: start; border: 0; padding: 0; font-weight: 600; min-height: 36px; }
+.db-record-card dl { margin: 6px 0 0; display: grid; gap: 6px; }
+.db-record-card dl > div { display: grid; grid-template-columns: minmax(70px,1fr) minmax(0,2fr); gap: 12px; }
+.db-record-card dt { font-size: 12px; color: var(--db-muted); }
+.db-record-card dd { margin: 0; font-variant-numeric: tabular-nums; }
+.db-record-card .db-stale { margin-left: 6px; }
+.db-board { display: flex; gap: 14px; padding: 8px 20px 20px; overflow: auto; max-height: 65vh; align-items: start; }
+.db-board-column { flex: 0 0 260px; min-width: 0; background: color-mix(in srgb,var(--db-blue) 4%,var(--db-paper)); border: 1px solid var(--db-line); border-radius: 10px; padding: 10px; }
+.db-board-column h3 { display: flex; justify-content: space-between; gap: 12px; margin: 0 0 10px; padding: 8px; font-size: 13px; overflow-wrap: anywhere; }
+.db-board-column h3 span { font-variant-numeric: tabular-nums; color: var(--db-muted); }
+.db-board-column .db-record-list { display: grid; gap: 8px; }
+.db-board-column .db-record-list > li { border: 1px solid var(--db-line); background: var(--db-paper); border-radius: 7px; }
+.db-board-column > p { padding: 0 8px; font-size: 12px; }
+.db-calendar-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 20px 0; }
+.db-calendar-heading h3 { margin: 0; font-size: 17px; }
+.db-calendar-scroll { overflow: auto; }
+.db-calendar-week,.db-calendar-days { display: grid; grid-template-columns: repeat(7,minmax(140px,1fr)); min-width: 980px; }
+.db-calendar-week span { padding: 8px 12px; color: var(--db-muted); font-size: 12px; border-bottom: 1px solid var(--db-line); }
+.db-calendar-days { list-style: none; padding: 0; margin: 0; }
+.db-calendar-days > li { min-height: 100px; border-right: 1px solid var(--db-line); border-bottom: 1px solid var(--db-line); min-width: 0; }
+.db-calendar-days time { position: relative; display: block; font-variant-numeric: tabular-nums; font-size: 12px; padding: 8px 12px; }
+.db-calendar-blank { background: color-mix(in srgb,var(--db-line) 25%,var(--db-paper)); }
+.db-calendar-days .db-record-card { padding: 0 12px 12px; }
+.db-calendar-days .db-record-card dl { display: none; }
+.db-undated { padding: 10px 20px; }.db-undated h3 { font-size: 14px; }
+.db-chart { margin: 0; padding: 14px 20px 20px; }
+.db-chart figcaption { font-weight: 600; }.db-chart figcaption span { display: block; font-weight: 400; color: var(--db-muted); font-size: 12px; margin-top: 4px; }
+.db-chart ol { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 18px; }
+.db-chart-label { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; overflow-wrap: anywhere; }
+.db-chart-label > span { font-variant-numeric: tabular-nums; text-align: right; }
+.db-artifact .db-chart-label button { padding: 0; border: 0; justify-content: start; text-align: left; }
+.db-chart-track { height: 18px; position: relative; background: color-mix(in srgb,var(--db-line) 40%,var(--db-paper)); }
+.db-chart-track > span { position: absolute; top: 3px; bottom: 3px; background: var(--db-blue); }
+.db-chart-track > .db-chart-negative { background: #8f6112; }
+.db-chart-zero { position: absolute; top: -2px; bottom: -2px; border-left: 1px solid var(--db-ink); z-index: 1; }
+.db-inline :is(.db-board,.db-calendar-scroll,.db-record-list,.db-chart) { max-height: 290px; overflow: auto; }
+@media(max-width:600px) { .db-layout-controls { padding: 12px; gap: 8px; }.db-layout-controls label { flex: 1 1 110px; }.db-board { padding: 8px 12px 12px; }.db-chart-label { flex-wrap: wrap; }.db-chart-label > span { text-align: left; } }

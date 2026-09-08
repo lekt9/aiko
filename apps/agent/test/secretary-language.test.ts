@@ -175,3 +175,62 @@ test("owner API view and command receipts expose the same grounded conversationa
     "fresh evidence",
   );
 });
+
+test("expiration stays visible without inventing a voluntary handoff or promising an inactive review", () => {
+  const w = proposal();
+  w.decision!.status = "expired";
+  w.handling = "owner";
+  const view = workView(
+    [
+      workEvent("AikoWorkTransition", {
+        owner: w.owner,
+        id: w.id,
+        previous: 0,
+        snapshot: w,
+      }),
+    ],
+    w.owner,
+    now + 2 * hour,
+  );
+  expect(view.commitments[0].lane).toBe("needs_you");
+  expect(view.commitments[0].language.status).toContain("without an answer");
+  expect(view.commitments[0].language.status).not.toContain("You’re handling");
+  const brief = workBriefLanguage(
+    view.commitments,
+    "decisions",
+    now + 2 * hour,
+  );
+  expect(brief).toContain("decision window has passed");
+  expect(brief).not.toContain("Next review:");
+  expect(workDecisionLanguage(w, [], now + 2 * hour)).toBeUndefined();
+  expect(workCommandLanguage("change", "review", w, [])).toContain(
+    "hand it back",
+  );
+  w.control = "paused";
+  expect(workCommandLanguage("change", "review", w, [])).toContain(
+    "still paused",
+  );
+  expect(workCommandLanguage("change", "review", w, [])).not.toContain(
+    "I’ll review this on",
+  );
+});
+
+test("a declined proposal and a stopped reminder retain their actual meaning", () => {
+  const w = proposal();
+  w.decision!.status = "declined";
+  w.handling = "owner";
+  expect(workStatusLanguage(w)).toContain("declined this proposal");
+  expect(workStatusLanguage(w)).not.toContain("You’re handling");
+  w.decision = undefined;
+  w.handling = "aiko";
+  w.status = "waiting";
+  const status = workStatusLanguage(w, [
+    receipt("delivered"),
+    receipt("blocked", "reminder"),
+  ]);
+  expect(status).toContain("reminder was stopped before sending");
+  expect(status).not.toContain("I’ve sent Maya the reminder");
+  expect(
+    workStatusLanguage(w, [{ ...receipt("delivered"), owner: "789" }]),
+  ).not.toContain("I’ve asked Maya");
+});

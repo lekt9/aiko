@@ -34,7 +34,7 @@ export { openRouterEmbeddings, GEMINI_EMBEDDING_2 } from "./embeddings.js";
 export type { EmbeddingProvider, EmbeddingAdmission, EmbeddingRequest, EmbeddingUsage } from "./embeddings.js";
 export { MemoryError } from "./types.js";
 export type { MemoryStorage } from "./storage.js";
-export type { MemoryArchive } from "./journal.js";
+export type { MemoryArchive, ErasureFence, RestoreAuthority, ArchiveErasureCheck, ErasureCommit, OnErasure, SubjectErasureInput, PreparedSubjectErasure } from "./journal.js";
 export type { Json, RememberInput, Observation, Producer, Source, SourceInput, SourceRunner, SourceResult,
   RecallInput, RecallResult, MemoryHit, WriteOptions, MemoryKind } from "./types.js";
 export { rememberInput as validateRememberInput, sourceInput as validateSourceInput, safePayload as validatePayload,

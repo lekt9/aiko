@@ -1,3 +1,8 @@
+import { browserWatchApi } from "./browser-watch-api.ts";
+import { harnessLibraryApi, harnessLibraryReadRequest } from "./harness-library-api.ts";
+import { configuredBrowserWatchPolicy, parseBrowserWatchDeployment } from "./browser-watch-config.ts";
+import { browserEventKey, browserEventAppendAllowed, browserEventIngress, type BrowserProducerPolicy } from "./browser-events.ts";
+import { browserWatchEventKey, browserWatchAppendAllowed } from "./browser-watches.ts";
 import { createSecretaryWorkBinding, secretaryWorkApi, secretaryWorkView } from "./secretary-work.ts";
 import { armAt } from "tardie/cloudflare/alarm";
 import { workAppendAllowed, workEventKey, workExternalEventAllowed } from "./commitments.ts";
@@ -9,11 +14,14 @@ import { databaseInference } from "./database.ts";
 import { databaseEventKey, databaseExternalEventAllowed } from "./database-component.ts";
 import { databaseApi } from "./database-api.ts";
 import { reauthorizeReplyResult } from "./database-artifacts.ts";
-import { parseDatabaseWriteOwners } from "./config.ts";
-import { ProjectContext, type ProjectContextOptions } from "./project-instructions.ts";
+import { parseDatabaseWriteOwners, parseContributionOwners, contributionModeFor } from "./config.ts";
+import { withContributionInference } from "./reflection-contributions.ts";
+import { ProjectContext, projectContextEventKey, type ProjectContextOptions } from "./project-instructions.ts";
+import { WORKER_BROWSER_OPERATIONS } from "./browser.ts";
 import { GeneralMcp, type McpBinding } from "./general-mcp.ts";
 import { configuredMcpBinding, parseMcpServers } from "./general-mcp-config.ts";
-import { createObservedNetworkTools, resolveObservedRead } from "./observed-network.ts";
+import { createObservedNetworkTools, resolveObservedRead, listObservedReads } from "./observed-network.ts";
+import { databaseEntities } from "./database-entities.ts";
 import { publicWebTool } from "./public-web.ts";
 import { telegramWebhookResponse } from "./telegram-webhook.ts";
 import { channelLogSourceEventKey, channelLogSourceAppendAllowed, type ChannelLogSourcePolicy } from "./channel-log-source.ts";
@@ -27,7 +35,8 @@ import { registryManagementContinuations, type RegistryManagementPolicy } from "
 import { mediaHostEventKey,mediaIngressApi,telegramMediaAdmission } from "./media-host.ts";
 import { mediaProcessingEventKey,mediaProcessingAppendAllowed } from "./media-processing.ts";
 import { codeResultCustody } from "./code-result-custody.ts";
-import { harnessBlobStore } from "./harness-library.ts";
+import { HarnessLibrary, harnessBlobStore } from "./harness-library.ts";
+import { memoryObservationDependency } from "./retained-result-dependencies.ts";
 import type {ComputeHarnessHostConfig} from "./compute-harness.ts";
 import {defaultRegistryBinding, type RegistrySandboxTransport} from "./registry-defaults.ts";
 import {harnessDigest} from "./harness-library.ts";
@@ -42,7 +51,7 @@ import {loginObservationEvent,type NativeLoginObservation} from "./native-login-
 import {connectorLoginEventKey} from "./connector-login.ts";
 import {hostedLoginOperation,guardLoginOperationInput,loginOperationApi,loginRuntimeEvent} from "./login-operation-host.ts";
 import {loginOperationEventKey,loginOperationNextWake,loginOperationWakeEvent,loginOperationExternalEventAllowed} from "./login-operation.ts";
-import { createHostedChannels, channelApi, type ChannelAdapterBindings, type HostedChannels } from "./channel-host.ts";
+import { createHostedChannels, channelApi, browserWatchActorAdmissionRequired, browserWatchDispatchAdmissionRequired, type ChannelAdapterBindings, type HostedChannels, type BrowserWatchHostPolicy } from "./channel-host.ts";
 import { channelEventKey, channelAppendAllowed } from "./channel-bindings.ts";
 import { parseManagerProviders } from "./password-manager-mcp.ts";
 import { approvalMenu } from "./telegram-mini-app.ts";
@@ -55,6 +64,7 @@ import {
   methodIngressKeyOf,
 } from "tardie/core/method";
 import { turnEpochOf, turnTerminalOf } from "tardie/code/execution/turns";
+import { preparingReplies } from "./channel-response.ts";
 import { validateActor } from "tardie/core/actor";
 import { withRequiredResponse } from "./channel-response.ts";
 import { parseFallbackVerbosity } from "./fallback-verbosity.ts";
@@ -86,9 +96,12 @@ import { createOpsLogger, type OpsLogger } from "./ops.ts";
 const workerOps = createOpsLogger((text) => text);
 import { FilePasswordManagerHost } from "./password-managers.ts";
 import { connectorApi } from "./connector-api.ts";
+import { createNativeLoginRenderer } from "./native-login-render.ts";
 import { DurableObject } from "cloudflare:workers";
 import { createHash } from "node:crypto";
-import { Memory, cloudflareStorage } from "entity-learn/cloudflare";
+import { cloudflareStorage, type ErasureFence } from "entity-learn/cloudflare";
+import { memoryRestoreAuthority, memoryRestoreGate, openGuardedMemory } from "./memory-restore.ts";
+import { createMemoryAuthorityRegistry } from "./memory-authority-host.ts";
 import { browserTraceKeys } from "@unbrowse/browser-harness/trace";
 import { harKeys } from "@unbrowse/browser-harness/network-facts";
 import { infer as modelInference } from "tardie/model";
@@ -177,6 +190,8 @@ import {
   promiseNextWake,
   promiseWakeEvent,
 } from "./promises.ts";
+import { promiseApi } from "./promise-api.ts";
+import { withPromiseExecution } from "./promise-execution.ts";
 import { CONSOLE_HTML } from "./console.ts";
 import type { AikoConfig } from "./config.ts";
 import { CloudBackups } from "./cloud-backup.ts";
@@ -205,9 +220,16 @@ export interface AikoCloudflareEnv {
    * Without it, channel mutations fail closed. Root may bind the verified harness registry. */
   AIKO_PROVIDER_ADAPTERS?: ProviderAdapterPolicies;
   AIKO_LOG_SOURCES?: ChannelLogSourcePolicy;
+  AIKO_BROWSER_PRODUCERS?: BrowserProducerPolicy;
+  AIKO_BROWSER_WATCHES?: BrowserWatchHostPolicy;
+  /** Owner-scoped deployment catalog. No callbacks or credentials in this JSON. */
+  AIKO_BROWSER_WATCH_CONFIG?: string;
   AIKO_CHANNEL_ADAPTERS?: { forOwner(owner: string): ChannelAdapterBindings | undefined };
   AIKO_BACKUPS?: R2Bucket;
   AIKO_BACKUP_KEY?: string;
+  /** Trusted synchronous control-plane checkpoint; never an archive/request-supplied value.
+   * Required for memory recovery into a destination without retained local authority. */
+  AIKO_MEMORY_RESTORE_AUTHORITY?: (owner: string) => ErasureFence | undefined;
   CONNECTOR_ASSETS?: Fetcher;
   AIKO_ACCOUNTS: DurableObjectNamespace<AikoAccountDO>;
   AIKO_REGISTRY: DurableObjectNamespace<AikoRegistryDO>;
@@ -251,6 +273,9 @@ export interface AikoCloudflareEnv {
   AIKO_REPLY_STYLE?: string;
   AIKO_VERBOSE_FALLBACKS?: string;
   AIKO_VERBOSE_FALLBACKS_SINCE?: string;
+  AIKO_COGNITIVE_CONTRIBUTION_OWNERS?: string;
+  AIKO_COGNITIVE_CONTRIBUTION_SHADOW_OWNERS?: string;
+  AIKO_COGNITIVE_RECOVERY_OWNERS?: string;
 }
 type Principal = {
   owner: string;
@@ -305,6 +330,7 @@ function configOf(env: AikoCloudflareEnv, requireModel = true): AikoConfig {
     modelCapabilities: env.AIKO_MODEL_CAPABILITIES,
     codingRepositories: parseCodingRepositories(env.AIKO_CODING_REPOSITORIES),
     mcpServers: parseMcpServers(env.AIKO_MCP_SERVERS),
+    browserWatchDeployment: parseBrowserWatchDeployment(env.AIKO_BROWSER_WATCH_CONFIG),
     modelRouting: parseModelRouting(
       {
         AIKO_MODEL: env.AIKO_MODEL,
@@ -348,6 +374,9 @@ function configOf(env: AikoCloudflareEnv, requireModel = true): AikoConfig {
       replyStyle === "thinkfeel" && env.AIKO_VOICE_ENABLED === "true",
     replyStyle,
     ...parseFallbackVerbosity(env.AIKO_VERBOSE_FALLBACKS, env.AIKO_VERBOSE_FALLBACKS_SINCE),
+    cognitiveContributionOwners: parseContributionOwners(env.AIKO_COGNITIVE_CONTRIBUTION_OWNERS),
+    cognitiveContributionShadowOwners: parseContributionOwners(env.AIKO_COGNITIVE_CONTRIBUTION_SHADOW_OWNERS),
+    cognitiveRecoveryOwners: parseContributionOwners(env.AIKO_COGNITIVE_RECOVERY_OWNERS),
     voiceKey: env.AIKO_VOICE_KEY,
     toolCallLimit: null,
     publicWeb: false,
@@ -409,52 +438,36 @@ function telegramOf(
     : undefined;
 }
 
-/** A durable inventory only; it never holds conversations, credentials, or entity memory. */
 /**
  * Account object naming epoch. Bumping this abandons (and effectively resets)
  * every wedged account object: fresh names recreate empty objects while the
  * durable registry keyed by raw owner id still admits the same accounts.
  */
-const ACCOUNT_OBJECT_EPOCH = "v2";
+const ACCOUNT_OBJECT_GENERATION = 2;
+const ACCOUNT_OBJECT_EPOCH = `v${ACCOUNT_OBJECT_GENERATION}`;
 export const accountObjectName = (owner: string) =>
   `${ACCOUNT_OBJECT_EPOCH}:${owner}`;
 
 export class AikoRegistryDO extends DurableObject<AikoCloudflareEnv> {
+  private authority?: ReturnType<typeof createMemoryAuthorityRegistry>;
   constructor(ctx: DurableObjectState, env: AikoCloudflareEnv) {
     super(ctx, env);
     this.ctx.storage.sql.exec(
       "CREATE TABLE IF NOT EXISTS accounts(owner TEXT PRIMARY KEY,created_at INTEGER NOT NULL)",
     );
   }
+  private control() {
+    return this.authority ??= createMemoryAuthorityRegistry(this.ctx.storage, ACCOUNT_OBJECT_GENERATION)
+      .catch(error => { this.authority = undefined; throw error; });
+  }
   async admit(owner: string, maximum?: number) {
-    if (!safeUserId(owner)) throw new Error("Invalid owner");
-    const accepted = this.ctx.storage.transactionSync(() => {
-      if (
-        this.ctx.storage.sql
-          .exec("SELECT 1 FROM accounts WHERE owner=?", owner)
-          .toArray().length
-      )
-        return true;
-      const count = this.ctx.storage.sql
-        .exec<{ count: number }>("SELECT COUNT(*) AS count FROM accounts")
-        .toArray()[0].count;
-      if (maximum !== undefined && count >= maximum) return false;
-      this.ctx.storage.sql.exec(
-        "INSERT INTO accounts VALUES(?,?)",
-        owner,
-        Date.now(),
-      );
-      return true;
-    });
-    await this.ctx.storage.sync();
-    return accepted;
+    return (await this.control()).admit(owner, maximum);
+  }
+  async memoryAuthority(owner: string) {
+    return (await this.control()).read(owner);
   }
   async list() {
-    return this.ctx.storage.sql
-      .exec<{ owner: string; created_at: number }>(
-        "SELECT owner,created_at FROM accounts ORDER BY owner",
-      )
-      .toArray();
+    return (await this.control()).list();
   }
 }
 
@@ -470,14 +483,18 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     capabilities?: ReturnType<typeof createCloudflareCapabilities>;
     connectors: ConnectorEngine;
     route: ReturnType<typeof routerCaller>;
+    renderLogin: ReturnType<typeof createNativeLoginRenderer>;
     telegram: ReturnType<typeof telegramOf>;
     channels?: HostedChannels;
     media?:import("./media-host.ts").MediaHost;
     registryReadiness:()=>ReturnType<typeof registryReadiness>;
+    harnessLibrary?: HarnessLibrary;
+    harnessLibraryCurrent: () => boolean;
     providerAdapters?: import("./provider-adapter.ts").ProviderAdapterHost;
     experiments?: import("./harness-experiment.ts").HarnessExperimentBinding;
   }>;
   private admission = Promise.resolve();
+  private readonly memoryRestore = memoryRestoreGate();
   private failures = 0;
   private opsRedactor?: (text: string) => string;
   private opsFor(): OpsLogger {
@@ -592,11 +609,20 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         thread,
         stateDir: "durable-object",
         redact,
+        withErasure: operation => this.memoryRestore(operation),
+        eraseCopies: async (observations, operationId) => {
+          const blobs = (registry?.sources?.library ?? registry?.library)?.blobs ?? harnessBlobStore(workflowKV);
+          if (!blobs.eraseDependencies) throw Error("Private memory copy cleanup unavailable");
+          return blobs.eraseDependencies(owner, observations.map(memoryObservationDependency), operationId);
+        },
         openMemory: (adapters) =>
-          new Memory({
+          openGuardedMemory({
             storage: nativeStorage,
             scope: memoryScope(owner),
             adapters,
+            ...(this.env.AIKO_MEMORY_RESTORE_AUTHORITY ? {
+              restoreAuthority: () => this.env.AIKO_MEMORY_RESTORE_AUTHORITY!(owner),
+            } : {}),
           }),
         readPage: (after, limit) => host.readPage(thread, after, limit),
         readSourcePage: async (source, after, limit) => {
@@ -635,12 +661,13 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         }),
     };
     const databases = createDatabaseBinding({ owner, thread: `user-${owner}`, storage: nativeStorage, kv: workflowKV,
+      entities: databaseEntities(binding(`user-${owner}`)),
       readEvents: () => host.read(`user-${owner}`),
+      sourceCatalog: () => listObservedReads({ owner, thread: `user-${owner}`, redact, readEvents: () => host.read(`user-${owner}`) }),
       sources: async (sourceId, digest, signal) => {
         if (sourceId !== digest) throw Error("Registered source digest required");
         const source = await resolveObservedRead({ owner, thread: `user-${owner}`, redact, readEvents: () => host.read(`user-${owner}`), checkArcade: async domain => (await connectors.search(domain)).fallbackAllowed, session: (origin, signal) => ensureUnlockSession({ owner, origin, config: config.connectorVault, search: domain => connectors.search(domain), signal, renew: false }) }, digest, signal);
-        return { ...source, execute: (inputs, consume, signal, budget) => source.execute(inputs,
-          (step, body) => consume(step, body === undefined ? undefined : JSON.parse(JSON.stringify(body))), signal, budget) };
+        return source;
       },
       authorize: async kind => {
         const current = configOf(this.env, false);
@@ -711,6 +738,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
           management: () => this.env.AIKO_REGISTRY_MANAGEMENT?.(owner),
           providerAdapters: this.env.AIKO_PROVIDER_ADAPTERS,
           logSources: this.env.AIKO_LOG_SOURCES,
+          browserWatches: !!this.env.AIKO_BROWSER_WATCHES || !!config.browserWatchDeployment?.owners[owner],
           disabledReason: config.codeMode !== true ? "code_mode_disabled" : undefined,
           missingReason: config.mode === "live" && !config.modelKey ? "sandbox_secret_not_configured" : "sandbox_transport_not_configured",
           policy: registryPolicy,
@@ -741,6 +769,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     });
     const doStore = {
       get: (key: string) => this.ctx.storage.get(key),
+      // Same SQLite-backed DO namespace, read inside the native Router commit.
+      getSync: (key: string) => this.ctx.storage.kv.get(key),
       set: (key: string, value: unknown) => this.ctx.storage.put(key, value),
       list: async (prefix: string) => [
         ...(await this.ctx.storage.list({ prefix })).values(),
@@ -773,6 +803,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
           event("AikoHooksActivated", { id: "background-v1" }),
         );
         await host.commitRoot(host.self(`user-${owner}`), e.type==="AikoPrivateLoginObserved" ? loginObservationEvent(owner,e as unknown as NativeLoginObservation) : e);
+        if(e.type==="AikoConnectionChanged"&&e.owner===owner&&e.provider==="browser"&&e.status==="disconnected")
+          await channels?.watches?.disconnect(e.connectionId);
         await this.kick(host);
       },
       readOwnedLogs: async (boundOwner) =>
@@ -807,6 +839,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       readOwnedEvents: () => host.read(`user-${owner}`),
       listWorkflows: () => workflows.engine.list(),
       listCodeWorkflows: () => workflowStore.listCode!(owner),
+      harnessLibrary: () => registry?.sources?.library ?? registry?.library,
       codeToolSpecs: () => codeHarnesses.get(`user-${owner}`)?.toolSpecs() ?? [],
       vaultDomains: async () =>
         Object.keys(config.connectorVault?.accounts[owner]?.connections ?? {}),
@@ -878,7 +911,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
             stream: { firstChunkMs: 90000, idleMs: 90000, totalMs: 300000 },
           })
         : undefined;
-    const model = withSpokenHistory(
+    const makeModel = (contribution = false) => withSpokenHistory(
       config.mode === "demo"
         ? demoInference
         : !config.modelKey && !routing
@@ -895,7 +928,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                 // Verified against the gateway model catalog; native compaction owns this window.
                 contextWindowTokens:
                   config.model === "glm-5.3-flash" ? 1_000_000 : 32_768,
-                maxOutputTokens: 4096,
+                maxOutputTokens: contribution ? 1500 : 4096,
+                ...(contribution ? { maxTokensLadder: [1500] } : {}),
                 fetch: modelBudget.transport(owner, this.env.AIKO_MODEL_FETCH),
                 throttleRetryDelaysMs: [],
                 // Native Tardigrade stream bounds handle provider stalls. Do not
@@ -904,23 +938,63 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
               modelAdapters(openAICompatibleAdapter),
             ),
     );
+    const model = withContributionInference(makeModel(), makeModel(true));
+    const renderLogin = createNativeLoginRenderer({ owner, instance: config.instanceId ?? config.mode,
+      layer: () => routing?.layer("conversation") });
     const workerContextFor=(model:import("tardie/inference/reference").ModelRef|undefined)=>{
       return routing?.contextForHistory(model).contextWindowTokens??config.modelRouting?.contextWindowTokens??32768;
     };
     const mcpClients=new Map<string,GeneralMcp|undefined>();
     const projectContexts=new Map<string,ProjectContext|undefined>();
-    const projectFor=(thread:string)=>{if(!projectContexts.has(thread)){const options=this.env.AIKO_PROJECT_CONTEXT?.(owner,thread);if(options&&(options.owner!==owner||options.thread!==thread))throw Error("Foreign project context binding");projectContexts.set(thread,options?new ProjectContext(options):undefined);}return projectContexts.get(thread);};
+    const projectFor=(thread:string)=>{
+      const currentCoding=this.env.AIKO_PROJECT_CONTEXT?undefined:configOf(this.env,false).codeMode?codingFor():undefined;
+      const cached=projectContexts.get(thread);
+      if(!projectContexts.has(thread)||!this.env.AIKO_PROJECT_CONTEXT&&cached?.options.remote?.grantRevision!==currentCoding?.grantRevision){
+        const options=this.env.AIKO_PROJECT_CONTEXT?this.env.AIKO_PROJECT_CONTEXT(owner,thread):currentCoding?.projectContext(thread,redact,()=>projectCodingFor(thread));
+        if(options&&(options.owner!==owner||options.thread!==thread))throw Error("Foreign project context binding");
+        projectContexts.set(thread,options?new ProjectContext(options):undefined);
+      }
+      return projectContexts.get(thread);
+    };
     const mcpFor=(thread:string)=>{if(!mcpClients.has(thread)){const binding=this.env.AIKO_MCP?this.env.AIKO_MCP(owner,thread):configuredMcpBinding({owner,thread,servers:()=>parseMcpServers(this.env.AIKO_MCP_SERVERS),env:this.env as unknown as Readonly<Record<string,unknown>>,redact,current:()=>!!validOwner(configOf(this.env,false),owner)&&configOf(this.env,false).codeMode===true&&bindingOf(thread)?.owner===owner});if(binding&&(binding.owner!==owner||binding.thread!==thread))throw Error("Foreign MCP binding");mcpClients.set(thread,binding?new GeneralMcp(binding):undefined);}return mcpClients.get(thread);};
-    const coding=capabilities&&config.codingRepositories?.[owner]?.length?new CodegraffCodingWorkspace(capabilities.compute,{repositories:[...config.codingRepositories[owner]!],runnerBundle:codingRunnerBundle,bunVersion:"1.4.0"}):undefined;
+    let coding:CodegraffCodingWorkspace|undefined,codingConfiguration:string|undefined;
+    const codingFor=()=>{
+      const repositories=configOf(this.env,false).codingRepositories?.[owner];
+      if(!capabilities||!repositories?.length)return undefined;
+      const revision=harnessDigest(repositories);
+      if(!coding||codingConfiguration!==revision){coding=new CodegraffCodingWorkspace(capabilities.compute,{repositories:[...repositories],runnerBundle:codingRunnerBundle,bunVersion:"1.4.0"});codingConfiguration=revision;}
+      return coding;
+    };
+    codingFor();
+    const projectCodingFor=async(thread:string)=>{
+      const current=configOf(this.env,false),bound=bindingOf(thread);
+      if(!validOwner(current,owner)||!current.codeMode||bound?.owner!==owner||!["foreground","child"].includes(bound.role)||registry?.availability?.()||registry?.unavailableReason)return undefined;
+      if(bound.role==="child"&&!workerGrantOf(workerBindingFor(thread),await host.read(`user-${owner}`),await host.read(thread)))return undefined;
+      return codingFor();
+    };
     const workerBindingFor=(thread:string):WorkerBinding=>({owner,thread,readParent:()=>host.read(`user-${owner}`),readChild:()=>host.read(thread),mcpCurrent:()=>mcpFor(thread)?.binding.servers()??[],active:()=>!!validOwner(configOf(this.env,false),owner)&&configOf(this.env,false).codeMode===true&&bindingOf(thread)?.owner===owner&&!registry?.availability?.()&&!registry?.unavailableReason,modelLayer:(model,effort)=>{if(!routing)throw Error("Worker model routing unavailable");return routing.layerFor(model,effort);}});
     const channelAdapters = this.env.AIKO_CHANNEL_ADAPTERS?.forOwner(owner) ?? registry?.providerAdapters?.adapters;
     const registryLibrary=registry?.sources?.library??registry?.library;
     const registryJournal={read:()=>host.read(`user-${owner}`),append:async(events:Event[])=>{await host.seed(`user-${owner}`,events);}};
     const wiring=registryLibrary?.verifiers.size&&registry?.authorizeReceiving?{blobs:registryLibrary.blobs,...channelHarnessHandlers(registry.sources?sourceAwareHarnessBinding(registryLibrary,registryJournal):registryLibrary,registryJournal,registry.authorizeReceiving,{accepts:(...a)=>registry.continuations?.accepts(...a)??Promise.resolve(false),execute:(...a)=>registry.continuations!.execute(...a),reconcile:(...a)=>registry.continuations!.reconcile(...a)})}:undefined;
+    const deployedWatchConfig = config.browserWatchDeployment?.owners[owner];
+    if (deployedWatchConfig && (!capabilities || connectorVault(config.connectorVault, owner) || !wiring || !registryLibrary || !registry?.defaultAuthorityRef || !this.ctx.storage.kv))
+      throw Error("Browser watches require native private sign-in, synchronous account storage, and the enabled harness registry");
+    if (deployedWatchConfig && this.env.AIKO_BROWSER_WATCHES)
+      throw Error("Configure browser watches with either deployment JSON or an in-process factory");
+    const browserWatches = this.env.AIKO_BROWSER_WATCHES ?? (deployedWatchConfig ? configuredBrowserWatchPolicy({
+      owner, configuration: () => configOf(this.env, false).browserWatchDeployment,
+      connections: connectors, runner: capabilities!.sandbox,
+      library: new HarnessLibrary(registry!.sources ? sourceAwareHarnessBinding(registryLibrary!, registryJournal) : registryLibrary!, registryJournal),
+      receivingAuthority: registry!.defaultAuthorityRef!,
+      current: () => !!validOwner(configOf(this.env, false), owner) && configOf(this.env, false).codeMode === true && !registry?.availability?.() && !registry?.unavailableReason,
+    }) : undefined);
     const channels = channelAdapters || wiring ? createHostedChannels(owner, () => host, channelAdapters, {
       requireThinkFeel,
       wiring,
       logSources:registry?.logSources,
+      browserWatches:browserWatches?context=>{const watch=browserWatches(context);return {...watch,current:()=>!!validOwner(configOf(this.env,false),owner)&&watch.current()};}:undefined,
+      browserProducers:this.env.AIKO_BROWSER_PRODUCERS?{grant:producer=>this.env.AIKO_BROWSER_PRODUCERS!(owner).find(g=>g.owner===owner&&g.producer===producer),current:()=>!!validOwner(configOf(this.env,false),owner)}:undefined,
       bridge:channelAdapters&&wiring?(this.env.AIKO_CHANNEL_BRIDGE?.(owner)??registry?.providerAdapters?.bridge):undefined,
       beforeCommit: async () => {
         const recoveryAt = Date.now() + 1000;
@@ -957,6 +1031,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         databaseEventKey(e) ??
         workerEventKey(e) ??
       codingWorkspaceEventKey(e) ??
+        projectContextEventKey(e) ??
         harnessExperimentTrialEventKey(e) ??
         agentKeys.keyOf(e) ??
         cancellationKeys.keyOf(e) ??
@@ -969,7 +1044,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         automationEventKey(e) ??
         channelEventKey(e) ??
         channelWiringEventKey(e) ??
-        channelBridgeEventKey(e) ?? channelLogSourceEventKey(e) ??
+        channelBridgeEventKey(e) ?? channelLogSourceEventKey(e) ?? browserEventKey(e) ?? browserWatchEventKey(e) ??
         hostedChannelDeadlineKey(e) ??
         mediaHostEventKey(e) ?? mediaProcessingEventKey(e) ??
         harnessLibraryEventKey(e) ??
@@ -989,8 +1064,10 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
           : e.type === "AikoSandboxAllocationReconciled"
             ? `aiko-sandbox-reconcile:${e.id}`
             : undefined),
+      canDeliver: (_thread,events,read) => !browserWatchActorAdmissionRequired(events) ||
+        !!channels?.actorAdmissionAllowed(events,read) && browserWatchAppendAllowed(events,read),
       canAppend: (_thread, events, read) =>
-        workAppendAllowed(_thread,events,read) && proactiveAppendAllowed(events,read,_thread) && mediaProcessingAppendAllowed(events,read) && automationAppendAllowed(events, read) && channelAppendAllowed(events, read) && channelWiringAppendAllowed(events,read) && harnessLibraryAppendAllowed(events,read) && channelBridgeAppendAllowed(events,read) && channelLogSourceAppendAllowed(events,read),
+        (channels?.dispatchAdmissionAllowed(events,read)??!browserWatchDispatchAdmissionRequired(events)) && workAppendAllowed(_thread,events,read) && proactiveAppendAllowed(events,read,_thread) && mediaProcessingAppendAllowed(events,read) && automationAppendAllowed(events, read) && channelAppendAllowed(events, read) && channelWiringAppendAllowed(events,read) && harnessLibraryAppendAllowed(events,read) && channelBridgeAppendAllowed(events,read) && channelLogSourceAppendAllowed(events,read) && browserEventAppendAllowed(events,read) && browserWatchAppendAllowed(events,read),
       actorFor: (thread) => {
         if(harnessExperimentTrialIsChild(thread))return registryTrialActor(
           requested => requested === owner && validOwner(configOf(this.env, false), owner) ? registry?.experiments : undefined,
@@ -1011,6 +1088,10 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                     const grant=workerGrantOf(workerBindingFor(thread),await host.read(`user-${owner}`),await host.read(thread));
                     return grant&&(grant.scope==="research"||grant.scope==="browser")?{scope:grant.scope,origins:grant.origins}:undefined;
                   }})??[]),
+                  ...(capabilities?.browser.workerControlTools(owner,thread,{parentThread:`user-${owner}`,current:async()=>{
+                    const grant=workerGrantOf(workerBindingFor(thread),await host.read(`user-${owner}`),await host.read(thread));
+                    return grant?.scope==="browser"?{scope:"browser" as const,origins:grant.origins,browserOperations:grant.browserOperations,actions:grant.actions}:undefined;
+                  },journal:{read:()=>host.read(`user-${owner}`),append:rows=>host.seed(`user-${owner}`,rows)}})??[]),
                   ...(capabilities ? [capabilities.searchFor(memory),...capabilities.computeToolsFor(memory)] : []),
                   ...(coding?codingWorkspaceTools(coding.binding(thread,redact)):[]),
                   ...(this.env.AIKO_WORKER_TOOLS?.(owner,thread)??[]),
@@ -1048,7 +1129,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                           !!registry?.logSources,
                         )
                       : bound.role === "reflection"
-                        ? createReflectionActor(memory)
+                        ? createReflectionActor(memory, { contributions: contributionModeFor(config, owner) !== "disabled" })
                         : createAikoActor({
                             secretaryWork: createSecretaryWorkBinding(host, memory, config.botToken ? secretaryTelegram(config.botToken) : undefined),
                             databases,
@@ -1066,17 +1147,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                             harnessLibrary:registry?.library,
                             loginOperation:hostedLoginOperation(owner,()=>host,()=>connectors),
                             automations: true,
-                            promises: capabilities
-                              ? {
-                                  executors: {
-                                    harness: (segment, signal) =>
-                                      capabilities.sandbox.codeSegment(
-                                        segment,
-                                        signal ?? AbortSignal.timeout(120_000),
-                                      ),
-                                  },
-                                }
-                              : undefined,
+                            promises: !!capabilities && !!harnessFor(thread),
                             owner,
                             memory,
                             voice,
@@ -1084,6 +1155,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                             publicWeb: false,
                             send: telegram?.send,
                             background: true,
+                            contributionMode: contributionModeFor(config, owner),
+                            cognitiveRecovery: config.cognitiveRecoveryOwners?.includes(owner) ?? false,
                             toolRouter: {
                               owner,
                               thread,
@@ -1094,7 +1167,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                             workflowTools: workflows.codeTools(),
                             codeHarness: harnessFor(thread),
                             contextWindowTokens:workerContextFor,
-                            workers:{scopes:["research","browser",...(capabilities?["compute" as const]:[]),...(coding||this.env.AIKO_WORKER_TOOLS?.(owner,thread).some(t=>t.spec.name.startsWith("coding_"))?["coding" as const]:[])],models:()=>routing?.models()??[],mcp:()=>mcpFor(thread)?.binding.servers()??[],active:()=>!!validOwner(configOf(this.env,false),owner)&&configOf(this.env,false).codeMode===true,readChild:child=>bindingOf(child)?.owner===owner?host.read(child):Promise.reject(Error("Foreign worker"))},
+                            workers:{scopes:["research","browser",...(capabilities?["compute" as const]:[]),...(coding||this.env.AIKO_WORKER_TOOLS?.(owner,thread).some(t=>t.spec.name.startsWith("coding_"))?["coding" as const]:[])],browserOperations:capabilities?WORKER_BROWSER_OPERATIONS:[],models:()=>routing?.models()??[],mcp:()=>mcpFor(thread)?.binding.servers()??[],active:()=>!!validOwner(configOf(this.env,false),owner)&&configOf(this.env,false).codeMode===true,readChild:child=>bindingOf(child)?.owner===owner?host.read(child):Promise.reject(Error("Foreign worker"))},
                             capabilityBuilder: {
                               owner,
                               thread,
@@ -1187,21 +1260,29 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                 )
               : role === "child" ? workerInference(model,workerBindingFor(thread)) : model;
         const ordinaryBase = role === "foreground" ? databaseInference(databases, rawBase) : rawBase;
-        const projectBase=(role==="foreground"||role==="child")?projectFor(thread)?.inference(ordinaryBase)??ordinaryBase:ordinaryBase;
-        const base=(role==="foreground"||role==="child")&&(coding||this.env.AIKO_WORKER_TOOLS?.(owner,thread).some(tool=>tool.spec.name.startsWith("coding_")))?codingWorkspaceInference(projectBase,owner,thread,coding?.grantRevision):projectBase;
+        const base=(role==="foreground"||role==="child")&&(coding||this.env.AIKO_WORKER_TOOLS?.(owner,thread).some(tool=>tool.spec.name.startsWith("coding_")))?codingWorkspaceInference(ordinaryBase,owner,thread,coding?.grantRevision):ordinaryBase;
         const harness =
           role === "foreground" || role === "child"
             ? harnessFor(thread)
             : undefined;
-        if(!harness)return base;
+        if(!harness)return (role==="foreground"||role==="child")?projectFor(thread)?.inference(base)??base:base;
         const wiring=role==="foreground"?channels?.wiring:undefined;
         const ordinary=wiring?wiring.sandboxLayer(harness.sandboxLayer()):harness.sandboxLayer();
         const sandbox=registry?.continuations?.sandboxLayer(ordinary)??ordinary;
-        return Layer.merge(harness.inference(base),sandbox);
+        const prepared=harness.inference(base);
+        const contextual=projectFor(thread)?.inference(prepared)??prepared;
+        return Layer.merge(role === "foreground" && capabilities
+          ? withPromiseExecution(contextual, owner, () => host.read(`user-${owner}`))
+          : contextual, sandbox);
       },
     });
+    await channels?.refresh();
     this.ops("runtime.boot_completed", { owner, ms: Date.now() - bootStarted });
-    return { host, config, binding, databases, redact, capabilities, connectors, route, telegram, channels, media:registry?.media, providerAdapters:registry?.providerAdapters, experiments:registry?.experiments, registryReadiness:()=>registryReadiness(registry,configOf(this.env, false).codeMode===true&&!!harnessFor(`user-${owner}`)) };
+    return { host, config, binding, databases, redact, capabilities, connectors, route, renderLogin, telegram, channels, media:registry?.media, providerAdapters:registry?.providerAdapters, experiments:registry?.experiments, registryReadiness:()=>registryReadiness(registry,configOf(this.env, false).codeMode===true&&!!harnessFor(`user-${owner}`)),
+      harnessLibrary: registryLibrary && !registry?.availability?.() && !registry?.unavailableReason
+        ? new HarnessLibrary(registry?.sources ? sourceAwareHarnessBinding(registryLibrary, registryJournal) : registryLibrary, registryJournal) : undefined,
+      harnessLibraryCurrent: () => !!validOwner(configOf(this.env, false), owner) && configOf(this.env, false).codeMode === true && !registry?.availability?.() && !registry?.unavailableReason,
+    };
   }
   private serialize<T>(operation: () => Promise<T>): Promise<T> {
     const next = this.admission.then(operation);
@@ -1224,6 +1305,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     capabilities?: ReturnType<typeof createCloudflareCapabilities>,
   ) {
     if (!capabilities || !this.owner) return undefined;
+    const watchAt = await capabilities.sandbox.watchMaintenanceDeadline();
+    if (watchAt !== undefined) return validOwner(configOf(this.env,false),this.owner) ? watchAt : Date.now()+120_000;
     const sandbox = await capabilities.sandbox.status();
     if (
       !("id" in sandbox) ||
@@ -1412,6 +1495,13 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       const { host, capabilities, connectors } = await this.open(this.owner);
       await connectors.flushEvents();
       const at = Date.now();
+      const watchAt = await capabilities?.sandbox.watchMaintenanceDeadline();
+      if (watchAt !== undefined) {
+        if (!validOwner(configOf(this.env,false),this.owner))
+          await capabilities!.sandbox.revokeWatchLeases(AbortSignal.timeout(60_000));
+        else if (watchAt <= at)
+          await capabilities!.sandbox.maintainWatchLease(AbortSignal.timeout(60_000));
+      }
       const tick = automationWakeEvent(
         await host.read(`user-${this.owner}`),
         at,
@@ -1476,6 +1566,11 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
           .catch(() => undefined);
     }
   }
+  async receiveBrowserEvents(owner:string,request:Request):Promise<Response>{
+    if(!validOwner(configOf(this.env,false),owner))return json({error:"browser_source_unavailable"},404);
+    const {host,channels}=await this.open(owner);
+    return browserEventIngress(request,channels?.browserAdmission,()=>this.kick(host));
+  }
   /** Receive-only RPC: resolve current configured capability again inside its owner DO. */
   async receiveChannel(owner:string,request:Request):Promise<Response>{
     return createChannelPublicIngress({lookup:async(route,token)=>{const grant=this.env.AIKO_CHANNEL_INGRESS?await this.env.AIKO_CHANNEL_INGRESS(route,token):await (await this.open(owner)).providerAdapters?.lookup(route,token);return grant?.owner===owner?grant:undefined;},hosted:async account=>account===owner?(await this.open(owner)).channels:undefined,wake:async()=>{const {host}=await this.open(owner);await this.kick(host);}})(request);
@@ -1487,11 +1582,11 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
   ): Promise<Response> {
     if (!principal.operator && principal.owner !== owner)
       return json({ error: "forbidden" }, 403);
-    if (!principal.scopes.includes(request.method === "GET" || /^\/(?:api|v1)\/databases\/query$/.test(new URL(request.url).pathname) ? "read" : "write"))
+    if (!principal.scopes.includes(harnessLibraryReadRequest(request) || /^\/(?:api|v1)\/databases\/(?:query|field)$/.test(new URL(request.url).pathname) ? "read" : "write"))
       return json({ error: "forbidden" }, 403);
     const handleStarted = Date.now();
     const handlePath = new URL(request.url).pathname;
-    const { host, config, binding, databases, redact, capabilities, connectors, route, channels, media, registryReadiness:readiness } =
+    const { host, config, binding, databases, redact, capabilities, connectors, route, renderLogin, channels, media, registryReadiness:readiness, harnessLibrary, harnessLibraryCurrent } =
       await this.open(owner);
     const url = new URL(request.url);
     if (/^\/(?:api|v1)\/databases(?:\/|$)/.test(url.pathname)) return databaseApi(request, databases, {
@@ -1517,16 +1612,32 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       wake: () => this.kick(host),
     });
     if(["/api/harness/readiness","/v1/harness/readiness"].includes(url.pathname)&&request.method==="GET")return json(readiness());
+    if (/^\/(?:api|v1)\/harness\/library(?:\/|$)/.test(url.pathname)) return harnessLibraryApi(request, owner, harnessLibrary, principal, {
+      current: () => { const currentConfig = configOf(this.env, false), current = authenticate(request, currentConfig);
+        return !!validOwner(currentConfig, owner) && current?.owner === owner &&
+          current.scopes.includes(harnessLibraryReadRequest(request) ? "read" : "write") && (!harnessLibrary || harnessLibraryCurrent()); },
+      wake: () => { this.ctx.waitUntil(host.wake(`user-${owner}`)); },
+    });
     if (/^\/(?:api|v1)\/login-operations(?:\/|$)/.test(url.pathname))
       return this.serialize(async()=>{
         const recoveryAt=Date.now()+1000,current=await this.ctx.storage.getAlarm();
         if(current===null||current>recoveryAt)await this.ctx.storage.setAlarm(recoveryAt);
         return loginOperationApi(request,owner,host,connectors,principal,()=>{this.ctx.waitUntil(host.wake(`user-${owner}`));});
       });
+    if (/^\/(?:api|v1)\/channels\/browser-watches(?:\/|$)/.test(url.pathname))
+      return browserWatchApi(request, owner, channels?.watches, principal, () => {this.ctx.waitUntil(host.wake(`user-${owner}`));});
     if (/^\/(?:api|v1)\/channels(?:\/|$)/.test(url.pathname))
       return channelApi(request, owner, channels, principal, () => {
         this.ctx.waitUntil(host.wake(`user-${owner}`));
       }, () => host.read(`user-${owner}`));
+    if (/^\/(?:api|v1)\/promises(?:\/|$)/.test(url.pathname)) {
+      if (!config.codeMode || !capabilities) return json({ error: "promises_unavailable", message: "Scheduled tasks need a configured native code executor. Your saved tasks have not been changed." }, 503);
+      return this.serialize(() => promiseApi(request, owner, principal, {
+        read: () => host.read(`user-${owner}`),
+        append: events => host.seed(`user-${owner}`, events),
+        wake: () => this.kick(host),
+      }));
+    }
     if (["/api/secretary/work", "/v1/secretary/work"].includes(url.pathname))
       return this.serialize(() => secretaryWorkApi(request, createSecretaryWorkBinding(host, binding("user-" + owner),
         config.botToken ? secretaryTelegram(config.botToken) : undefined), () => this.kick(host)));
@@ -1535,13 +1646,13 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     if (/^\/(?:api|v1)\/connectors(?:\/|$)/.test(url.pathname)) {
       // The connector engine serializes its own mutations. Private login and
       // progress must not wait behind an unrelated long-running actor slice.
-      if (/\/native(?:\/progress)?$/.test(url.pathname)) return connectorApi(request, connectors, route);
-      return this.serialize(() => connectorApi(request, connectors, route));
+      if (/\/native(?:\/progress)?$/.test(url.pathname)) return connectorApi(request, connectors, route, renderLogin);
+      return this.serialize(() => connectorApi(request, connectors, route, renderLogin));
     }
     if (["/api/control/backup","/api/control/backups","/api/control/restore"].includes(url.pathname)) {
       if (!principal.operator) return json({error:"forbidden"},403);
       if (!this.env.AIKO_BACKUPS || !this.env.AIKO_BACKUP_KEY || !capabilities) return json({error:"backup_not_configured"},503);
-      return this.serialize(async () => {
+      return this.serialize(() => this.memoryRestore(async () => {
         const account = async ():Promise<AccountBackup> => {
           const memory=openMemory(binding(`user-${owner}`));
           try {
@@ -1554,6 +1665,28 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
           return await backupApi(request,{
             owner,backups:new CloudBackups(this.env.AIKO_BACKUPS!,this.env.AIKO_BACKUP_KEY!),sandbox:capabilities.sandbox,
             resting:()=>host.resting(),account,
+            authorizeRestore: async (_id, archive, mode) => {
+              const externalRequired = !!this.env.AIKO_MEMORY_RESTORE_AUTHORITY;
+              const memory = openMemory(binding(`user-${owner}`));
+              let expected: ErasureFence;
+              try {
+                expected = memory.checkArchiveErasure(archive.memory).fence;
+                if (mode === "vm") {
+                  const live = memory.erasureFence();
+                  if (live.seq !== expected.seq || live.digest !== expected.digest)
+                    throw Error("Restore native account memory before restoring its VM");
+                }
+              }
+              finally { memory.close(); }
+              const check = async () => {
+                const current = memoryRestoreAuthority(cloudflareStorage(this.ctx.storage), memoryScope(owner),
+                  externalRequired || this.env.AIKO_MEMORY_RESTORE_AUTHORITY ? () => this.env.AIKO_MEMORY_RESTORE_AUTHORITY?.(owner) : undefined);
+                if (!current || current.scope !== expected.scope || current.seq !== expected.seq || current.digest !== expected.digest)
+                  throw Error("Memory restore authority changed or unavailable");
+              };
+              await check();
+              return { check };
+            },
             list:async()=>[...(await this.ctx.storage.list({prefix:"backup:"})).values()],
             record:async manifest=>{await this.ctx.storage.put(`backup:${manifest.id}`,{id:manifest.id,at:manifest.at,files:manifest.files.length,bytes:manifest.files.reduce((n,f)=>n+f.bytes,0)});},
             importAccount:async(id,archive)=>{
@@ -1567,14 +1700,18 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
               }
               const memory=openMemory(binding(`user-${owner}`));
               try {
-                await host.importHistory(`backup:${id}`,archive.threads as {thread:string;events:Event[]}[],{fingerprint:createHash("sha256").update(JSON.stringify(archive.memory)).digest("hex"),import:()=>{memory.importArchive(archive.memory);}});
+                // The exact retry path skips its sidecar. Check authority before
+                // entering it, and again in the native atomic first import.
+                memory.checkArchiveErasure(archive.memory);
+                await host.importHistory(`backup:${id}`,archive.threads as {thread:string;events:Event[]}[],{fingerprint:createHash("sha256").update(JSON.stringify(archive.memory)).digest("hex"),import:()=>{memory.checkArchiveErasure(archive.memory);memory.importArchive(archive.memory);}});
+                memory.checkArchiveErasure(archive.memory);
+                await this.ctx.storage.put(Object.fromEntries(archive.state));
+                await this.ctx.storage.sync();
               } finally {memory.close();}
-              await this.ctx.storage.put(Object.fromEntries(archive.state));
-              await this.ctx.storage.sync();
             },
           });
         } catch {return json({error:"backup_or_restore_unavailable"},409);}
-      });
+      }));
     }
     if (
       url.pathname === "/api/control/sandbox/reconcile" &&
@@ -1635,7 +1772,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     }
     if (url.pathname === "/api/control/import" && request.method === "POST") {
       if (!principal.operator) return json({ error: "forbidden" }, 403);
-      return this.serialize(async () => {
+      return this.serialize(() => this.memoryRestore(async () => {
         let input: {
           id?: unknown;
           threads?: { thread: string; events: Event[] }[];
@@ -1674,6 +1811,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         try {
           const memory = openMemory(binding(`user-${owner}`));
           try {
+            if (input.memory !== undefined) memory.checkArchiveErasure(input.memory);
             const status = await host.importHistory(
               input.id,
               input.threads,
@@ -1684,6 +1822,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                       .update(JSON.stringify(input.memory))
                       .digest("hex"),
                     import: () => {
+                      memory.checkArchiveErasure(input.memory);
                       memory.importArchive(input.memory);
                     },
                   },
@@ -1706,7 +1845,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         } catch {
           return json({ error: "import_conflict_or_unsettled_history" }, 409);
         }
-      });
+      }));
     }
     if (url.pathname === "/api/control/export" && request.method === "GET") {
       if (!principal.operator) return json({ error: "forbidden" }, 403);
@@ -1983,6 +2122,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                 )
                 .slice(-50)
                 .map((e) => ({ turn: e.turn, result: e.result })),
+              preparing: preparingReplies(log),
               pending: log
                 .filter(
                   (e) =>
@@ -2114,6 +2254,8 @@ export default {
       // Owner control of retained experiments does not require a model secret.
       const experimentControl = /^\/api\/harness\/experiments\/[^/]+\/(cancel|status)$/.test(url.pathname);
       const config = configOf(env, !experimentControl && url.pathname !== "/api/harness/readiness");
+      const browserRoute=/^\/v1\/browser-events\/([A-Za-z0-9_-]{1,128})$/.exec(url.pathname);
+      if(browserRoute){const owner=browserRoute[1]!;if(!validOwner(config,owner)||url.search)return json({error:"browser_source_unavailable"},404);if(request.method!=="POST")return json({error:"receive_only"},405);if(!/^[a-f0-9]{64}$/.test(request.headers.get("x-browser-signature")??""))return json({error:"browser_producer_denied"},401);return env.AIKO_ACCOUNTS.getByName(accountObjectName(owner)).receiveBrowserEvents(owner,request);}
       if(url.pathname.startsWith("/v1/channel-ingress/")){
         if(request.method!=="POST")return json({error:"receive_only"},405);
         const route=/^\/v1\/channel-ingress\/([A-Za-z0-9_-]{1,160})$/.exec(url.pathname),token=request.headers.get("x-channel-receive-capability");
@@ -2276,7 +2418,7 @@ export default {
       const principal = authenticate(request, config);
       if (!principal) return json({ error: "unauthorized" }, 401);
       if (
-        !principal.scopes.includes(request.method === "GET" || /^\/(?:api|v1)\/databases\/query$/.test(url.pathname) ? "read" : "write")
+        !principal.scopes.includes(harnessLibraryReadRequest(request) || /^\/(?:api|v1)\/databases\/(?:query|field)$/.test(url.pathname) ? "read" : "write")
       )
         return json({ error: "forbidden" }, 403);
       if (url.pathname === "/api/control/messages") {

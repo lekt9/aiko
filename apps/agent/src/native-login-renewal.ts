@@ -57,7 +57,7 @@ async function driveLogin(
   for (let step = 0; step < 30; step++) {
     signal?.throwIfAborted();
     if (view.status === "connected") return view;
-    if (view.requiresOrigin || view.fields?.includes("code")) return view;
+    if (view.pageError || view.requiresOrigin || view.fields?.includes("code")) return view;
     // Completion can precede a form response after a redirect.
     try {
       view = await run("finish");
@@ -66,7 +66,7 @@ async function driveLogin(
       signal?.throwIfAborted();
     }
     view = await run("form");
-    if (view.requiresOrigin || view.fields?.includes("code")) return view;
+    if (view.pageError || view.requiresOrigin || view.fields?.includes("code")) return view;
     const fields = Object.fromEntries(
       Object.entries(credentials).filter(
         ([name]) => view.fields?.includes(name) && !submitted.has(name),

@@ -4,7 +4,7 @@ import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sandboxDigest, verifySandboxReceipt, type SandboxJob, type SandboxArtifact } from "../src/sandbox-job.ts";
-import { runSandboxJob, sandboxEnvironment } from "../src/sandbox-job-runner.ts";
+import { runSandboxJob, readSandboxReceipt, sandboxEnvironment } from "../src/sandbox-job-runner.ts";
 import { sandboxJobJournal } from "../src/sandbox-job-journal.ts";
 
 const environmentDigest = await sandboxEnvironment("fixture-runner-v1");
@@ -98,4 +98,16 @@ test("network origin/method/request budgets reject before transport and tight CP
   const before=performance.now();
   expect((await runSandboxJob(await job({kind:"code",code:"while(true){}"},{budget:{wallMs:10,requests:0,outputBytes:1000}}),binding)).status).toBe("failed");
   expect(performance.now()-before).toBeLessThan(500);
+}));
+
+test("receipt-only inspection cannot reserve or execute missing work and verifies exact retained identity", () => fixture(async binding => {
+  const input = await job({ kind: "code", code: "return input.n * 2;" });
+  expect((await readSandboxReceipt(input, binding)).status).toBe("unknown");
+  expect(await binding.journal.read("owner", input.operationId)).toBeUndefined();
+  const completed = await runSandboxJob(input, binding);
+  const readOnly = { ...binding, journal: { ...binding.journal, claim: async () => { throw Error("must not claim"); }, settle: async () => { throw Error("must not settle"); } } };
+  expect(await readSandboxReceipt(input, readOnly)).toEqual(completed);
+  await expect(readSandboxReceipt({ ...input, input: { n: 8 } }, readOnly)).rejects.toThrow("identity conflict");
+  await expect(readSandboxReceipt({ ...input, owner: "other" }, readOnly)).rejects.toThrow("scope");
+  await expect(readSandboxReceipt(input, readOnly, AbortSignal.abort())).rejects.toThrow();
 }));

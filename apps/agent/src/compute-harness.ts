@@ -171,6 +171,19 @@ export class CodegraffComputeHarness implements HarnessSandboxClient {
       throw Error("Compute runtime attestation mismatch");
     return this.config.environmentDigest;
   }
+  async harnessReceipt(job: SandboxJob, signal = AbortSignal.timeout(30000)): Promise<SandboxJobReceipt> {
+    signal.throwIfAborted();
+    if (job.owner !== this.owner || job.environmentDigest !== this.config.environmentDigest || job.artifact.kind !== "python" || job.artifact.runtimeLockDigest !== this.config.runtimeLockDigest) throw Error("Compute receipt scope/runtime denied");
+    const digest = await sandboxDigest(job), key = `compute-harness:${this.owner}:job:${(await sandboxDigest(job.operationId)).slice(7)}`;
+    const retained = await this.kv.get(key) as Retained | undefined;
+    if (retained && retained.digest !== digest) throw Error("Compute receipt identity conflict");
+    const unknown: SandboxJobReceipt = { operationId: job.operationId, jobDigest: digest, harnessDigest: job.harnessDigest,
+      environmentDigest: job.environmentDigest, requests: 0, browserStarts: 0, status: "unknown", reason: "no_retained_terminal_receipt" };
+    if (!retained) return unknown;
+    if (retained.receiptRef) return verifySandboxReceipt(job, await this.blobs.get(this.owner, retained.receiptRef) as SandboxJobReceipt);
+    try { return verifySandboxReceipt(job, await this.download(retained.machine, `${retained.path}.receipt.json`, job.budget.outputBytes + 16384, signal)); }
+    catch (error) { if (error instanceof Error && error.message === "codegraff_http_404") return unknown; throw error; }
+  }
   async harnessJob(
     value: SandboxJob,
     cancellation?: AbortSignal,
@@ -344,6 +357,17 @@ export function dispatchHarnessSandbox(
     } : {}),
     get pythonRuntimeLockDigest(){ return python.pythonRuntimeLockDigest!; },
     harnessEnvironment: async (signal) => (await environments(signal)).combined,
+    harnessReceipt: async (job, signal) => {
+      const pins = await environments(signal);
+      if (job.environmentDigest !== pins.combined) throw Error("Dispatcher runtime changed");
+      const isPython = job.artifact.kind === "python", client = isPython ? python : standard;
+      if (!isPython && await standard.harnessEnvironment(signal) !== pins.js) throw Error("JavaScript runtime pin changed");
+      const physical = { ...structuredClone(job), environmentDigest: isPython ? pins.py : pins.js };
+      if (!client.harnessReceipt) return { operationId: job.operationId, jobDigest: await sandboxDigest(job), harnessDigest: job.harnessDigest,
+        environmentDigest: job.environmentDigest, requests: 0, browserStarts: 0, status: "unknown", reason: "receipt_reader_unavailable" };
+      const receipt = await verifySandboxReceipt(physical, await client.harnessReceipt(physical, signal));
+      return { ...receipt, jobDigest: await sandboxDigest(job), environmentDigest: pins.combined };
+    },
     harnessJob: async (job, signal) => {
       const pins = await environments(signal);
       if (job.environmentDigest !== pins.combined)
@@ -496,6 +520,7 @@ export class ProvisionedComputeHarness implements HarnessSandboxClient {
   }
   async harnessEnvironment(signal=AbortSignal.timeout(300000)){await this.configuration(signal);return this.configured!.harnessEnvironment(signal);}
   async harnessJob(job:SandboxJob,signal=AbortSignal.timeout(300000)){await this.configuration(signal);return this.configured!.harnessJob(job,signal);}
+  async harnessReceipt(job:SandboxJob,signal=AbortSignal.timeout(30000)){await this.configuration(signal);return this.configured!.harnessReceipt(job,signal);}
 }
 
 /** Audited Codegraff Debian 13 amd64 baseline; image drift is a denial, not TOFU.

@@ -16,10 +16,17 @@ The optional Unlock vault service in `apps/server` uses Postgres/Supabase. It is
 
 ## Build from a fresh checkout
 
-Install Node 24, Bun 1.4 and pnpm 10.12.1. All application source dependencies are in this repository; `packages/browser-harness` replaces the former sibling `link:` dependency. Its upstream snapshot and file hashes are recorded in `provenance.json`.
+Install Node 24, Bun 1.4 and pnpm 10.12.1. Building requires the playground
+checkout beside Unlock as `../unbrowse-playground`; the browser library is a
+direct `link:` to its `runtime/`, not a local snapshot. See
+[shared browser setup and CI access](shared-browser-runtime.md). Hosted users
+still need no local checkout or browser.
 
 ```sh
-pnpm install --frozen-lockfile
+# If the sibling is absent, clone it once:
+git clone git@github.com:unbrowse-ai/playground.git ../unbrowse-playground
+(cd ../unbrowse-playground/runtime && bun install --frozen-lockfile --ignore-scripts)
+pnpm install --frozen-lockfile --ignore-scripts
 pnpm aiko:cloud:build
 pnpm aiko:cloud:verify
 ```
@@ -29,7 +36,7 @@ The build compiles protocol and SDK packages, bundles the remote browser runner,
 For the browser client regression tests, explicitly install its hash-verified binary first (the cloud build does not require it):
 
 ```sh
-bun packages/browser-harness/install-agent-browser.ts
+bun -e 'import { installPinnedAgentBrowser } from "@unbrowse/browser-harness/install-agent-browser"; await installPinnedAgentBrowser();'
 pnpm test:browser-client
 ```
 

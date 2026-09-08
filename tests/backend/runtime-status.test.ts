@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { database, enabled, fixture, cookie } from "./helpers.js";
+import { database, enabled, fixture, cookie, secret } from "./helpers.js";
 
 describe.runIf(enabled)(
   "principal-scoped runtime status and revocation",
@@ -26,6 +26,113 @@ describe.runIf(enabled)(
         },
       };
     }
+    it.each(["revoked", "generation", "signed_out", "failed", "unverified"])(
+      "requires owner recovery before syncing a %s session, even with its current revision",
+      async change => {
+        const f = await published();
+        const original = await f.runtime.retrieve(f.principal, f.connection.id);
+        if (change === "revoked") await f.runtime.revoke(f.principal, f.connection.id);
+        else if (change === "generation") await f.vault.setPassword(f.tenant, f.connection.id, secret, f.connection.version);
+        else if (change === "signed_out") await f.runtime.sync(f.principal, f.connection.id, { revision: original.revision, cookies: [] });
+        else await pg.db.query("UPDATE sessions SET status=$2,verified=$3 WHERE tenant=$1", [f.tenant, change === "failed" ? "failed" : "ready", change === "failed"]);
+        const status = await f.runtime.status(f.principal, f.connection.id);
+        const verify = vi.spyOn(f.runtime, "verify");
+        for (const cookies of [original.cookies, []]) {
+          await expect(f.runtime.sync(f.principal, f.connection.id, { revision: status.revision, cookies })).rejects.toMatchObject({ code: "REAUTH_REQUIRED" });
+        }
+        expect(verify).not.toHaveBeenCalled();
+        expect((await f.runtime.status(f.principal, f.connection.id)).revision).toBe(status.revision);
+        // Recovery remains a supported owner operation, followed by ordinary runtime sync.
+        const recovered = await f.runtime.importSession(f.tenant, f.connection.id, { profileId: f.profile.id, runtimeId: f.client.id, cookies: original.cookies });
+        const synced = await f.runtime.sync(f.principal, f.connection.id, { revision: recovered.revision, cookies: original.cookies });
+        expect((await f.runtime.retrieve(f.principal, f.connection.id)).revision).toBe(synced.revision);
+      },
+    );
+    it.each(["revoked", "generation", "failed", "unverified"])(
+      "fences a %s session change while cookie verification is in flight",
+      async change => {
+        const f = await published();
+        let release!: () => void, entered!: () => void;
+        const resumed = new Promise<void>(resolve => { release = resolve; });
+        const verifying = new Promise<void>(resolve => { entered = resolve; });
+        const originalVerify = f.runtime.verify.bind(f.runtime);
+        vi.spyOn(f.runtime, "verify").mockImplementationOnce(async (...args) => {
+          const checked = await originalVerify(...args);
+          entered();
+          await resumed;
+          return checked;
+        });
+        const pending = f.runtime.sync(f.principal, f.connection.id, { revision: 1, cookies: [cookie()] });
+        const check = expect(pending).rejects.toMatchObject({ code: change === "revoked" ? "CONFLICT" : "REAUTH_REQUIRED" });
+        await verifying;
+        try {
+          if (change === "revoked") await f.runtime.revoke(f.principal, f.connection.id);
+          else if (change === "generation") await f.vault.setPassword(f.tenant, f.connection.id, secret, f.connection.version);
+          else await pg.db.query("UPDATE sessions SET status=$2,verified=$3 WHERE tenant=$1", [f.tenant, change === "failed" ? "failed" : "ready", change === "failed"]);
+        } finally { release(); }
+        await check;
+        expect((await f.runtime.status(f.principal, f.connection.id)).verified).toBe(false);
+        await expect(f.runtime.retrieve(f.principal, f.connection.id)).rejects.toMatchObject({ code: "REAUTH_REQUIRED" });
+      },
+    );
+    it.each(["signed_out", "replacement", "expired"])(
+      "rejects publication after %s wins the post-verification race",
+      async change => {
+        const f = await published();
+        let release!: () => void, entered!: () => void;
+        const resumed = new Promise<void>(resolve => { release = resolve; });
+        const verifying = new Promise<void>(resolve => { entered = resolve; });
+        const originalVerify = f.runtime.verify.bind(f.runtime);
+        vi.spyOn(f.runtime, "verify").mockImplementationOnce(async (...args) => {
+          const checked = await originalVerify(...args);
+          entered();
+          await resumed;
+          return checked;
+        });
+        const pending = f.runtime.sync(f.principal, f.connection.id, { revision: 1, cookies: [cookie()] });
+        const check = expect(pending).rejects.toMatchObject({ code: change === "expired" ? "REAUTH_REQUIRED" : "CONFLICT" });
+        await verifying;
+        try {
+          if (change === "expired") f.advance();
+          else await f.runtime.sync(f.principal, f.connection.id, { revision: 1, cookies: change === "signed_out" ? [] : [cookie()] });
+        } finally { release(); }
+        await check;
+        expect(await f.runtime.status(f.principal, f.connection.id)).toMatchObject({
+          revision: change === "expired" ? 1 : 2,
+          verified: change === "replacement",
+        });
+        if (change === "replacement") expect((await f.runtime.retrieve(f.principal, f.connection.id)).revision).toBe(2);
+        else await expect(f.runtime.retrieve(f.principal, f.connection.id)).rejects.toMatchObject({ code: "REAUTH_REQUIRED" });
+      },
+    );
+    it("rechecks a tombstone before publishing an empty-cookie sign-out", async () => {
+      const f = await published();
+      const transaction = pg.db.transaction.bind(pg.db);
+      let release!: () => void, entered!: () => void, transactions = 0;
+      const resumed = new Promise<void>(resolve => { release = resolve; });
+      const snapshotRead = new Promise<void>(resolve => { entered = resolve; });
+      const spy = vi.spyOn(pg.db, "transaction").mockImplementation(async fn => {
+        if (++transactions === 2) { entered(); await resumed; }
+        return transaction(fn);
+      });
+      const pending = f.runtime.sync(f.principal, f.connection.id, { revision: 1, cookies: [] });
+      const check = expect(pending).rejects.toMatchObject({ code: "CONFLICT" });
+      await snapshotRead;
+      try { await f.runtime.revoke(f.principal, f.connection.id); }
+      finally { release(); }
+      try {
+        await check;
+        expect(await f.runtime.status(f.principal, f.connection.id)).toMatchObject({ revision: 2, verified: false, renewable: false });
+        expect((await f.runtime.stored(pg.db, f.principal, f.connection.id))?.status).toBe("revoked");
+      } finally { spy.mockRestore(); }
+    });
+    it("still verifies an expired ready jar from the current generation", async () => {
+      const f = await published();
+      f.advance();
+      expect((await f.runtime.status(f.principal, f.connection.id)).verified).toBe(false);
+      await f.runtime.sync(f.principal, f.connection.id, { revision: 1, cookies: [cookie()] });
+      expect((await f.runtime.status(f.principal, f.connection.id)).verified).toBe(true);
+    });
     it("returns exact metadata without decrypting, with false verification for expired/unverified sessions", async () => {
       const f = await published();
       const open = vi

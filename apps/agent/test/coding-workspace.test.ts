@@ -2,7 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { ProjectContext, projectContextEventKey } from "../src/project-instructions.ts";
 import { sandboxJobJournal } from "../src/sandbox-job-journal.ts";
 import { runCodingWorkspace, type CodingWorkspaceRuntime } from "../src/coding-workspace-runner.ts";
 import { parseCodingRepositories, validateCodingWorkspaceRequest, type CodingRepositoryGrant, type CodingWorkspaceCommand, type CodingWorkspaceRequest } from "../src/coding-workspace.ts";
@@ -50,7 +51,7 @@ async function fixture() {
   const runtime: CodingWorkspaceRuntime = { owner: "ownerA", stateRoot, repositories: [{ id: "fixture", root, actions: ["create", "status", "list", "read", "edit", "undo", "index", "query", "test", "reconcile", "merge", "close"], checks: { test: [process.execPath, "test", "verify.test.ts"] } }],
     environmentDigest: await sandboxDigest("coding-fixture"), journal: await sandboxJobJournal(db, join(stateRoot, "receipts.key")), wallMs: 10000 };
   let serial = 0;
-  const request = (command: Unscoped<CodingWorkspaceCommand>, turn = "turnA", operationId = `op${++serial}`): CodingWorkspaceRequest => ({ version: 1, owner: runtime.owner, thread: "user-ownerA", turn, operationId, command: { repository: "fixture", workspace: "feature", ...command } as CodingWorkspaceCommand });
+  const request = (command: Unscoped<CodingWorkspaceCommand>, turn = "turnA", operationId = `op${++serial}`): CodingWorkspaceRequest => JSON.parse(JSON.stringify({ version: 1, owner: runtime.owner, thread: "user-ownerA", turn, operationId, command: { repository: "fixture", workspace: "feature", ...command } }));
   const invoke = (command: any, turn?: string) => runCodingWorkspace(request(command, turn), runtime);
   const restart = async () => { db.close(); db = new Database(join(stateRoot, "receipts.sqlite")); runtime.journal = await sandboxJobJournal(db, join(stateRoot, "receipts.key")); };
   const workspace = async () => join(stateRoot, "worktrees", (await readdir(join(stateRoot, "worktrees")))[0]!);
@@ -273,6 +274,33 @@ test("scope, traversal and symlink checks deny filesystem access outside a regis
   expect((await f.invoke({ action: "read", path: "outside/receipts.key" })).reason).toContain("symlink");
   expect((await f.invoke({ action: "edit", changes: [{ path: "outside/receipts.key", expected: null, content: "bad" }] })).reason).toContain("symlink");
   const key = await readFile(join(f.stateRoot, "receipts.key")); expect(key.length).toBe(32);
+}, 30000);
+
+test("finite project context reads registered repositories and selected worktrees with existing read/list grants", async () => {
+  const f = await fixture();
+  const put = async (path: string, text: string) => { await mkdir(dirname(join(f.root, path)), { recursive: true }); await writeFile(join(f.root, path), text); };
+  await put("AGENTS.md", "ROOT PROJECT RULE"); await put("src/CLAUDE.md", "LOCAL PROJECT RULE");
+  await put(".agents/skills/review/SKILL.md", "---\nname: review\ndescription: Review this repository\n---\nEXPLICIT SKILL BODY");
+  await put(".codex/plugins/demo/.codex-plugin/plugin.json", JSON.stringify({ name: "demo" }));
+  await put(".codex/plugins/demo/.mcp.json", JSON.stringify({ mcpServers: { example: { command: "/bin/anything", env: { TOKEN: "NEVER EXPOSE MCP TOKEN" } } } }));
+  git(f.root, "add", "."); git(f.root, "commit", "-m", "Project guidance");
+  expect((await f.invoke({ action: "create", workspace: "documented" })).status).toBe("completed");
+  const readonly = { ...f.runtime, repositories: f.runtime.repositories.map(grant => ({ ...grant, actions: ["read", "list"] as CodingRepositoryGrant["actions"] })) };
+  const rootRequest = f.request({ action: "context", workspace: undefined, cwd: "src", kind: "collect" });
+  const first = await runCodingWorkspace(rootRequest, readonly);
+  expect(first.output).toMatchObject({ instructionBodies: [{ path: "AGENTS.md", body: "ROOT PROJECT RULE" }, { path: "src/CLAUDE.md", body: "LOCAL PROJECT RULE" }],
+    manifest: { skills: [{ name: "review", path: ".agents/skills/review/SKILL.md" }], plugins: [{ name: "demo" }] } });
+  expect(JSON.stringify(first.output)).not.toContain("EXPLICIT SKILL BODY"); expect(JSON.stringify(first.output)).not.toContain("NEVER EXPOSE MCP TOKEN");
+  await put("AGENTS.md", "FRESH ROOT RULE");
+  expect(await runCodingWorkspace(rootRequest, readonly)).toEqual(first);
+  expect((await runCodingWorkspace(f.request({ action: "context", workspace: undefined, kind: "collect" }), readonly)).output).toMatchObject({ instructionBodies: [{ body: "FRESH ROOT RULE" }] });
+  const worktree = { ...f.request({ action: "context", workspace: "documented", kind: "collect" }), thread: "same-owner-reader" };
+  expect((await runCodingWorkspace(worktree, readonly)).output).toMatchObject({ instructionBodies: [{ body: "ROOT PROJECT RULE" }] });
+  expect((await runCodingWorkspace(f.request({ action: "context", workspace: "documented", kind: "load", path: ".agents/skills/review/SKILL.md" }), readonly)).output).toMatchObject({ kind: "skill", body: expect.stringContaining("EXPLICIT SKILL BODY") });
+  expect((await runCodingWorkspace(f.request({ action: "context", workspace: undefined, kind: "load", path: "answer.ts" }), readonly)).reason).toContain("outside");
+  await expect(runCodingWorkspace(f.request({ action: "context", workspace: undefined, kind: "collect" }), { ...readonly, repositories: readonly.repositories.map(grant => ({ ...grant, actions: ["read"] })) })).rejects.toThrow("no owner grant");
+  await rm(join(f.root, "AGENTS.md")); await symlink(join(f.stateRoot, "receipts.key"), join(f.root, "AGENTS.md"));
+  expect((await runCodingWorkspace(f.request({ action: "context", workspace: undefined, kind: "collect" }), readonly)).reason).toContain("escapes");
 }, 30000);
 
 test("lost edit acknowledgement remains unknown on replay and persisted before-images still support explicit undo", async () => {

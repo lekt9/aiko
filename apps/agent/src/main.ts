@@ -30,6 +30,8 @@ try {
     maxRequestBodySize: 24_576,
     fetch: service.fetch,
   });
+  // Recovery may receive provider callbacks: attach ingress before this barrier.
+  await service.ready;
   await poller?.start();
   console.info(
     `Aiko by Unbrowse · ${config.mode} · http://127.0.0.1:${server.port}`,

@@ -4,6 +4,7 @@ import {
   defaultRegistryBinding,
   defaultReceivingAuthority,
 } from "../src/registry-defaults.ts";
+import { browserWatchHarnessDefinitions } from "../src/browser-watches.ts";
 import { builtinHarnessDefinitions } from "../src/harness-builtins.ts";
 import { harnessDigest } from "../src/harness-library.ts";
 import { registryReadiness } from "../src/registry-host.ts";
@@ -226,4 +227,29 @@ test("configured live Bun key selects a lazy default adapter; disabled codeMode 
     reason: "code_mode_disabled",
   });
   expect(await disabled.events()).toHaveLength(0);
+});
+
+
+test("watch mapper evaluation needs an enabled host bridge and fixed fixtures; registering it grants no browser source", async () => {
+  let active = true, calls = 0;
+  const options = {
+    owner:"123", thread:"user-123", kv:kv(), guard:()=>{},
+    policy:()=>({owner:"123",active,revision:"watch-fixture"}),
+    transport:{placement:"local" as const,codeTransport:runCodeSegment,sandbox:{
+      harnessEnvironment:async()=>harnessDigest("watch-runtime"),
+      harnessJob:async()=>{calls++;throw Error("unexpected dispatch");},
+    }},
+  };
+  const disabled=defaultRegistryBinding(options), enabled=defaultRegistryBinding({...options,browserWatches:true});
+  const definition=browserWatchHarnessDefinitions()[0]!, signal=AbortSignal.timeout(1000);
+  const context=await enabled.library!.context(signal);
+  expect(await disabled.library!.authorizeEvaluation!(definition.artifact,definition.contract,context,definition.verifier.cases[0]!,signal)).toBe(false);
+  expect(await enabled.library!.authorizeEvaluation!(definition.artifact,definition.contract,context,definition.verifier.cases[0]!,signal)).toBe(true);
+  expect(await enabled.library!.authorizeEvaluation!(definition.artifact,definition.contract,context,{...definition.verifier.cases[0]!,input:{forged:"fixture"}},signal)).toBe(false);
+  expect(enabled.logSources!.grants()).toEqual([]);
+  expect(enabled.logSources!.current()).toBe(true);
+  active=false;
+  expect(enabled.logSources!.current()).toBe(false);
+  await expect(enabled.library!.authorizeEvaluation!(definition.artifact,definition.contract,context,definition.verifier.cases[0]!,signal)).rejects.toThrow();
+  expect(calls).toBe(0);
 });

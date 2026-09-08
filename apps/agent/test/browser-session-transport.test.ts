@@ -10,6 +10,7 @@ import {
   type PrivateBrowserContext,
   openPrivateBrowserCdp,
   createOwnedCookieAdapter,
+  selectNativeSession,
 } from "../src/browser-driver.ts";
 import {
   Codegraff,
@@ -633,3 +634,39 @@ test("encrypted operation replay cannot reinstall a released session; capacity n
   );
   expect(() => fence.consume(id)).toThrow("Private operation rejected");
 });
+
+
+test("overlapping native app custody is rejected before choosing a cookie adapter",()=>{
+  const root={connectionId:"root",domain:"example.com",status:"connected" as const,revision:1,expiresAt:Date.now()+10000};
+  const nested={...root,connectionId:"nested",domain:"sub.example.com"};
+  for(const states of [[root,nested],[nested,root]]){
+    for(const host of ["example.com","sub.example.com","api.sub.example.com"])
+      expect(()=>selectNativeSession(states,host)).toThrow("overlapping connections");
+    expect(selectNativeSession(states,"notexample.com")).toBeUndefined();
+  }
+  expect(selectNativeSession([root,{...nested,status:"disconnected"}],"api.sub.example.com")?.connectionId).toBe("root");
+});
+
+
+(nativeChrome ? test : test.skip)("native encrypted custody starts a fresh browser before its first authenticated navigation",async()=>{
+  const {browserDriverFactory}=await import("../src/browser-driver.ts");
+  const {NativeLoginVault,nativeLoginCipher}=await import("../src/native-login-vault.ts");
+  const {Database}=await import("bun:sqlite");
+  const {mkdtemp,rm}=await import("node:fs/promises");
+  const directory=await mkdtemp("/tmp/unlock-native-restart-");
+  const db=new Database(`${directory}/request-evidence.sqlite`);
+  const state={connectionId:crypto.randomUUID(),domain:"example.com",status:"connected" as const,revision:2,expiresAt:Date.now()+60000,credentialsSaved:false};
+  const cipher=nativeLoginCipher(directory,db);
+  const vault=new NativeLoginVault(db,"alice",cipher);
+  await vault.verified(state,[{name:"fixture",value:"SYNTHETIC_RESTART",domain:".example.com",path:"/",expires:-1,secure:true,httpOnly:true,sameSite:"Lax",hostOnly:false}]);
+  db.exec("CREATE TABLE native_login(id TEXT PRIMARY KEY,state TEXT NOT NULL)");
+  db.query("INSERT INTO native_login VALUES(?,?)").run(state.connectionId,JSON.stringify(state));
+  const driver=await browserDriverFactory(nativeChrome!,{persistentDirectory:directory})({owner:"alice",domains:["*"],emit:async()=>{}});
+  try{
+    await driver.execute({action:"navigate",url:"https://example.com/"});
+    const row=db.query("SELECT envelope FROM native_vault WHERE id=?").get(state.connectionId) as {envelope:string};
+    const saved=await cipher.open<{jarRevision:number}>(`unlock:native-login:v1:alice:${state.connectionId}:example.com`,JSON.parse(row.envelope));
+    expect(saved.jarRevision).toBeGreaterThan(2);
+    expect(db.query("SELECT * FROM native_cookie_checkpoint").all()).toEqual([]);
+  }finally{await driver.close();vault.close();db.close();await rm(directory,{recursive:true,force:true});}
+},60000);

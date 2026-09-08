@@ -12,7 +12,7 @@ import {requestLoginOperation,loginOperationComponent,loginOperationState,loginO
 const cleanup:(()=>Promise<unknown>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
 const connectionId="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-async function fixture(){
+async function fixture(ttl=60000){
   const directory=await mkdtemp("/tmp/login-operation-");cleanup.push(()=>rm(directory,{recursive:true,force:true}));
   const privateDb=new Database(join(directory,"private.sqlite"));
   cleanup.push(async()=>{privateDb.close();});
@@ -21,7 +21,7 @@ async function fixture(){
   let authenticated=false,typed="",loseAck=false,failCleanup=false,allowed=true;
   let now=Date.now(),resumes=0;
   const inserted:string[]=[],actions:string[]=[];
-  const operation={owner:"123",thread:"user-123",operationId:"login-task",connectionId,domain:"fixture.example",attemptId:crypto.randomUUID(),expectedRevision:0,expiresAt:now+60000,continuationId:"resume-original-read",contractRef:"login-session-v1"};
+  const operation={owner:"123",thread:"user-123",operationId:"login-task",connectionId,domain:"fixture.service.net",attemptId:crypto.randomUUID(),expectedRevision:0,expiresAt:now+ttl,continuationId:"resume-original-read",contractRef:"login-session-v1"};
   // Controlled CDP fixture: incorrect OTP leaves a challenge; a correct OTP
   // supplies independent authenticated-UI and secure-cookie observations.
   const dependencies={read:()=>state,save:(value:NativeLoginState)=>{state=JSON.parse(JSON.stringify(value));metadata.save(state!);},verified:async()=>true,cdp:{close(){},async send(method:string,params:any){
@@ -34,11 +34,11 @@ async function fixture(){
     if(method==="Storage.getCookies")return {cookies:[]};
     if(method==="Runtime.evaluate"){
       const expression=params.expression;
-      if(expression==="location.hostname")return {result:{value:"fixture.example"}};
-      if(expression==="location.origin")return {result:{value:"https://fixture.example"}};
+      if(expression==="location.hostname")return {result:{value:"fixture.service.net"}};
+      if(expression==="location.origin")return {result:{value:"https://fixture.service.net"}};
       if(expression.includes("Object.keys(f)"))return {result:{value:authenticated?[]:["code"]}};
       if(expression.includes("Boolean(document"))return {result:{value:authenticated}};
-      if(expression.includes("f.requestSubmit")){authenticated=typed==="654321";if(loseAck)throw Error("lost submission reply");}
+      if(expression.includes("HTMLFormElement.prototype.requestSubmit.call")){authenticated=typed==="654321";if(loseAck)throw Error("lost submission reply");}
       return {result:{value:true}};
     }
     return {};
@@ -55,10 +55,54 @@ async function fixture(){
     projected:async()=>loginOperationState(await events(),"123","user-123").get(operation.operationId)!,
     drive:()=>host.wake("user-123"),restart:async()=>{await host.close();state=JSON.parse((privateDb.query("SELECT state FROM native_login WHERE id=?").get(connectionId) as {state:string}).state);host=await open();await host.wake("user-123");},
     advance:async(ms:number)=>{now+=ms;await commit(loginOperationWakeEvent("123",now));},
-    cleanupFailure:(value:boolean)=>{failCleanup=value;},lostAck:(value:boolean)=>{loseAck=value;},authorize:(value:boolean)=>{allowed=value;},
+    alarm:async()=>{const due=loginOperationNextWake(await events(),"123","user-123");if(due===undefined)throw Error("No native deadline");now=due;await commit({type:"AlarmFired",at:now});},
+    cleanupFailure:(value:boolean)=>{failCleanup=value;},lostAck:(value:boolean)=>{loseAck=value;},authorize:(value:boolean)=>{allowed=value;},approveExternally:()=>{authenticated=true;},
     submit:async(code:string,extra:Partial<NativeLoginInput>={})=>nativeLogin({connectionId,domain:operation.domain,action:"credentials",attemptId:operation.attemptId,challengeId:state!.challenge!.id,expectedRevision:state!.challenge!.revision,submissionId:crypto.randomUUID(),code,...extra},dependencies),
   };
 }
+
+test("native deadlines observe approval on another device across restart without any credential submission",async()=>{
+  const f=await fixture();await f.drive();
+  const waiting=await f.projected();
+  expect(waiting.status).toBe("awaiting_user");
+  expect(waiting.nextProbeAt).toBeLessThan(waiting.expiresAt);
+  await f.restart();
+  const attempts=f.actions.length;
+  await f.drive();expect(f.actions).toHaveLength(attempts);
+  f.approveExternally();
+  await f.advance(5001);await f.drive();
+  expect((await f.projected()).status).toBe("connected");
+  expect(f.resumes()).toBe(1);expect(f.inserted).toEqual([]);
+  expect(f.actions.filter(action=>action==="begin")).toHaveLength(1);
+  await f.restart();await f.advance(10000);await f.drive();
+  expect(f.resumes()).toBe(1);
+});
+
+test("native approval checks back off beyond eight probes and stop at cancellation or challenge expiry",async()=>{
+  for(const ending of ["approved","cancelled","expired"] as const){
+    const f=await fixture(600000);await f.drive();
+    const challenge=f.state().challenge!.id;
+    for(let i=0;i<9;i++){
+      const before=(await f.projected()).nextProbeAt!;
+      await f.alarm();await f.drive();
+      const after=await f.projected();
+      expect(after.status).toBe("awaiting_user");
+      expect(after.nextProbeAt).toBeGreaterThan(before);
+      expect(after.nextProbeAt!-before).toBeLessThanOrEqual(30000);
+      expect(f.state().challenge!.id).toBe(challenge);
+    }
+    expect((await f.projected()).probes).toBeGreaterThan(8);
+    if(ending==="cancelled")await f.commit(cancelLoginOperation(f.operation));
+    if(ending==="expired")await f.advance(600000);
+    f.approveExternally();
+    if(ending==="approved")await f.alarm();else await f.advance(1);
+    await f.drive();
+    expect((await f.projected()).status).toBe(ending==="approved"?"connected":ending);
+    expect(f.resumes()).toBe(ending==="approved"?1:0);
+    expect(f.inserted).toEqual([]);
+    expect(loginOperationNextWake(await f.events(),"123","user-123")).toBeUndefined();
+  }
+});
 
 test("native waiter survives restart, incorrect OTP rotates challenge, verified cleanup resumes once",async()=>{
   const f=await fixture();await f.drive();
@@ -75,6 +119,21 @@ test("native waiter survives restart, incorrect OTP rotates challenge, verified 
   const log=JSON.stringify(await f.events());
   for(const secret of ["654321","WRONG_PRIVATE_OTP","PRIVATE_COOKIE"])expect(log).not.toContain(secret);
   expect(f.inserted).toEqual(["WRONG_PRIVATE_OTP","654321"]);
+});
+
+test("a replacement verification challenge starts responsive checks without reusing effect identities",async()=>{
+  const f=await fixture(600000);await f.drive();
+  for(let i=0;i<9;i++){await f.alarm();await f.drive();}
+  const before=await f.projected();
+  const lastAlarm=(await f.events()).filter(e=>e.type==="AlarmFired").at(-1)!;
+  await f.submit("WRONG_PRIVATE_OTP");await f.relay();await f.drive();
+  const after=await f.projected();
+  expect(after.challengeId).not.toBe(before.challengeId);
+  expect(after.probes).toBeGreaterThan(before.probes);
+  expect(after.nextProbeAt).toBe(Number(lastAlarm.at)+5000);
+  f.approveExternally();await f.alarm();await f.drive();
+  expect((await f.projected()).status).toBe("connected");
+  expect(f.resumes()).toBe(1);expect(f.inserted).toEqual(["WRONG_PRIVATE_OTP"]);
 });
 
 test("lost OTP acknowledgement is inspected after restart and same submission never types twice",async()=>{
@@ -139,7 +198,7 @@ test("private metadata outbox survives lost delivery acknowledgement and never i
   const directory=await mkdtemp("/tmp/login-outbox-");cleanup.push(()=>rm(directory,{recursive:true,force:true}));
   let db=new Database(join(directory,"db.sqlite"));cleanup.push(async()=>{db.close();});
   const attemptId=crypto.randomUUID();
-  const state:NativeLoginState={connectionId,domain:"fixture.example",attemptId,status:"pending",revision:1,expiresAt:Date.now()+60000,loginReceipts:[{type:"AikoPrivateLoginObserved",id:`${attemptId}:1`,connectionId,attemptId,sequence:1,revision:1,expiresAt:Date.now()+60000,at:Date.now(),kind:"opening"}]};
+  const state:NativeLoginState={connectionId,domain:"fixture.service.net",attemptId,status:"pending",revision:1,expiresAt:Date.now()+60000,loginReceipts:[{type:"AikoPrivateLoginObserved",id:`${attemptId}:1`,connectionId,attemptId,sequence:1,revision:1,expiresAt:Date.now()+60000,at:Date.now(),kind:"opening"}]};
   let journal=nativeLoginMetadataJournal(db,"123");journal.save(state);
   const delivered=new Map<string,Event>();
   await expect(journal.flush(async e=>{delivered.set(String(e.id),e);throw Error("lost ack");})).rejects.toThrow("lost ack");

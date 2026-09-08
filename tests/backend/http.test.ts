@@ -379,6 +379,17 @@ describe.runIf(enabled)("real HTTP, owner OIDC, agent OAuth and SDK", () => {
       await (await fetch(path + "/status", { headers })).json(),
     ).toMatchObject({ verified: false });
     expect((await fetch(path + "/session", { headers })).status).toBe(409);
+    const revoked = await (await fetch(path + "/status", { headers })).json();
+    const sync = await fetch(path + "/session", {
+      method: "PUT", headers,
+      body: JSON.stringify({ revision: revoked.revision, cookies: [cookie()] }),
+    });
+    expect(sync.status).toBe(409);
+    expect(await sync.json()).toEqual({ error: { code: "REAUTH_REQUIRED" } });
+    // The OAuth client remains authorized; only explicit owner recovery restores its jar.
+    expect((await fetch(origin + "/v1/runtime/connections", { headers })).status).toBe(200);
+    await trusted.importSession(connection.id, { profileId: profile.id, runtimeId: client.id, cookies: [cookie()] });
+    expect((await fetch(path + "/session", { headers })).status).toBe(200);
   });
   it("rotates refresh tokens and keeps token IDs encrypted/hashed in PostgreSQL", async () => {
     const { client } = await ownerFixture(),

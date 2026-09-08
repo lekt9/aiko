@@ -21,6 +21,9 @@ export interface SandboxJob {
    * are sandbox-relative, never host paths; bytes are bound into the job digest. */
   assets?: Record<string, { data: string; digest: SandboxDigest; bytes: number }>;
   mode?: "build" | "run";
+  /** The private runner must request a fresh host decision at each physical HTTP
+   * boundary. This marker is part of the job digest and cannot be downgraded. */
+  dispatch?: { protocol: "host-request/v1" };
   authority: { origins: string[]; methods: string[] };
   budget: { wallMs: number; requests: number; outputBytes: number; memoryBytes?: number; processes?: number; scratchBytes?: number };
 }

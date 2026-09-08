@@ -3,7 +3,7 @@ import os, pathlib, datetime
 exec((pathlib.Path(os.environ['UNLOCK_ROOT'])/'scripts/browser_helpers.py').read_text())
 OUT = ROOT / 'artifacts/secretary-work/browser'
 OUT.mkdir(parents=True, exist_ok=True)
-new_tab('http://127.0.0.1:4129/')
+new_tab(os.environ.get('SECRETARY_PREVIEW_URL', 'http://127.0.0.1:4129')+'/')
 wait('document.body.innerText.includes("No decisions need you here.")')
 viewport(390, 844)
 no_overflow()

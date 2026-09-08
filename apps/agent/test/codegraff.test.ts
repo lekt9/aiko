@@ -1052,3 +1052,653 @@ for(const reason of ["private_sign_in_pending","private_sign_in_cleanup_failed",
   else {expect(String(error)).toContain("outcome_unknown");expect(String(error)).not.toContain(reason);}
  }finally{upload.mockRestore();exec.mockRestore();}
 });
+
+test('scoped VM interactions keep policy encrypted, preserve private gates and wait for confirmed cancellation',async()=>{
+ const {replayKeys,unwrapReplay,sealReplay}=await import('../src/codegraff.ts');
+ const f=fixture(),keys=replayKeys(),uploads:string[]=[],commands:string[]=[],seen:any[]=[];
+ const driver=await f.sandbox.browserFactory()({domains:['*'],emit:async()=>{}});
+ let mode:'private'|'cancel'='private',settled=false,cancelSignal:AbortSignal|undefined;
+ let caller=new AbortController();
+ const upload=spyOn(f.sandbox,'upload').mockImplementation(async(_id,_path,text)=>{uploads.push(text);});
+ const exec=spyOn(f.sandbox,'exec').mockImplementation(async(_id,command,signal)=>{
+  commands.push(command);
+  if(command.endsWith(' health'))return JSON.stringify({replayPublicKey:keys.publicKey});
+  if(command.endsWith(' drain'))return JSON.stringify({events:[]});
+  if(command.includes(' runner.js cancel ')){cancelSignal=signal;return JSON.stringify({settled,events:[]});}
+  const {key,value}=unwrapReplay(JSON.parse(uploads.at(-1)!),keys.privateKey);seen.push(value);
+  if(mode==='private')return JSON.stringify(sealReplay({error:'private_sign_in_pending'},key));
+  caller.abort();throw Error('execution cancelled');
+ });
+ try{
+  const policy={origin:'https://example.com',origins:['https://example.com']};
+  await expect(driver.executeScoped!({action:'click',selector:'#PRIVATE_TARGET'},policy)).rejects.toMatchObject({code:'private_sign_in_pending'});
+  mode='cancel';await expect(driver.executeScoped!({action:'click',selector:'#PRIVATE_TARGET'},policy,caller.signal)).rejects.toThrow('sandbox_browser_cancellation_unconfirmed');
+  expect(cancelSignal).toBeDefined();expect(cancelSignal!.aborted).toBe(false);
+  settled=true;caller=new AbortController();await expect(driver.executeScoped!({action:'click',selector:'#PRIVATE_TARGET'},policy,caller.signal)).rejects.toThrow('execution cancelled');
+  expect(seen).toMatchObject([{operation:'execute-scoped',policy},{operation:'execute-scoped',policy},{operation:'execute-scoped',policy}]);
+  expect(commands.filter(command=>command.includes(' runner.js request-replay '))).toHaveLength(3);
+  expect(commands.filter(command=>command.includes(' runner.js cancel '))).toHaveLength(2);
+  expect(commands.join()+uploads.join()).not.toMatch(/PRIVATE_TARGET|example.com/);
+ }finally{upload.mockRestore();exec.mockRestore();}
+});
+
+async function watchTransport(sandbox:CodegraffSandbox) {
+  const {replayKeys,unwrapReplay,sealReplay} = await import("../src/codegraff.ts");
+  const keys=replayKeys(),uploads:string[]=[],commands:string[]=[],requests:any[]=[];
+  const states=new Map<string,import("../src/browser-watch-runner.ts").BrowserWatchRunnerStatus>();
+  let failure:string|undefined, paused=false;
+  let reply:(output:any,request:any)=>unknown = output=>output;
+  const upload=spyOn(sandbox,"upload").mockImplementation(async(_id,_path,text)=>{uploads.push(text);});
+  const exec=spyOn(sandbox,"exec").mockImplementation(async(_id,command)=>{
+    commands.push(command);
+    if(command.endsWith(" health")||command.endsWith(" peek-health"))return JSON.stringify({replayPublicKey:keys.publicKey});
+    if(command.endsWith(" close"))return '{"closed":true}';
+    const {key,value}=unwrapReplay(JSON.parse(uploads.at(-1)!),keys.privateKey);
+    requests.push(value);
+    let output:unknown;
+    if(value.operation==="watch-context")output={owner:sandbox.options.owner,profile:"profile-fixture"};
+    else if(value.operation==="watch-configure"){
+      const g=value.lease.grant,revision=value.lease.lifecycleRevision??0,leaseRevision=value.lease.leaseRevision??0,prior=states.get(g.producer);
+      if(prior && (prior.generation!==g.generation || revision<(prior.lifecycleRevision??0) ||
+        revision===(prior.lifecycleRevision??0) && prior.state==="paused" && !value.lease.renewalFrom ||
+        revision>(prior.lifecycleRevision??0) && (prior.state!=="paused" || value.lease.resumeFrom?.lifecycleRevision!==prior.lifecycleRevision || value.lease.resumeFrom?.pausedThrough!==prior.pausedThrough)))
+        return JSON.stringify(sealReplay({error:"browser_replay_unavailable"},key));
+      const preservePause=prior?.state==="paused"&&revision===(prior.lifecycleRevision??0);
+      const status={producer:g.producer,generation:g.generation,lifecycleRevision:revision,leaseRevision,
+        state:preservePause?"paused" as const:"watching" as const,reason:preservePause?"paused":"recording",expiresAt:g.expiresAt,...(preservePause?{pausedThrough:prior.pausedThrough}:{})};
+      states.set(g.producer,status);output=status;
+    }else if(value.operation==="watch-pause"){
+      const prior=states.get(value.producer)!;
+      if(!prior || value.lifecycleRevision!==(prior.lifecycleRevision??0))
+        return JSON.stringify(sealReplay({error:"browser_replay_unavailable"},key));
+      output={...prior,state:"paused",reason:"paused",pausedThrough:prior.pausedThrough??prior.acknowledged??0};
+      if(!failure)states.set(value.producer,output as typeof prior);
+    }else if(value.operation==="watch-acknowledge-gap"){
+      const prior=states.get(value.producer);
+      if(!prior||prior.generation!==value.generation||!prior.coverageGap||prior.coverageGap.missed!==value.missed)
+        return JSON.stringify(sealReplay({error:"browser_replay_unavailable"},key));
+      output={...prior,coverageGap:{...prior.coverageGap,acknowledged:value.missed}};
+      states.set(value.producer,output as typeof prior);
+    }else if(value.operation==="watch-status")output=[...states.values()].map(s=>paused?{...s,state:"paused",reason:"connection_revoked",pausedThrough:s.acknowledged??0}:s);
+    else throw Error("Unexpected private operation");
+    if(failure===value.operation)throw Error("lost_reply");
+    return JSON.stringify(sealReplay({output:reply(output,value)},key));
+  });
+  return {uploads,commands,requests,states,reply:(transform:typeof reply)=>{reply=transform;},fail:(operation?:string)=>{failure=operation;},revoke:()=>{paused=true;},restore:()=>{upload.mockRestore();exec.mockRestore();}};
+}
+function watchLease(owner="acct_fixture"):import("../src/browser-watch-runner.ts").BrowserWatchLease {
+  return {grant:{owner,producer:"producer-fixture",epoch:"epoch-fixture",profile:"profile-fixture",generation:1,
+    connectionId:"connection-fixture",connectionRevision:"revision-1",origins:["https://private.example"],kinds:["push"],active:true,
+    registeredAt:Date.now(),expiresAt:Date.now()+60_000,secret:"PRIVATE_WATCH_SECRET_NOT_IN_HOST_STORE"},
+    ingestUrl:`https://trusted.example/v1/browser-events/${owner}`};
+}
+function renewedWatchLease(prior:import("../src/browser-watch-runner.ts").BrowserWatchLease){
+  return {...prior,grant:{...prior.grant,expiresAt:prior.grant.expiresAt+60000},leaseRevision:(prior.leaseRevision??0)+1,
+    renewalFrom:{leaseRevision:prior.leaseRevision??0,expiresAt:prior.grant.expiresAt}};
+}
+
+test("renewal writeahead survives lost acknowledgement and idle cleanup without admitting stale or changed configuration",async()=>{
+  const f=fixture();await f.sandbox.ensure();const remote=await watchTransport(f.sandbox),initial=watchLease(),renewed=renewedWatchLease(initial);
+  try{
+    await f.sandbox.watchConfigure(initial);remote.fail("watch-configure");
+    await expect(f.sandbox.watchConfigure(renewed)).rejects.toThrow("lost_reply");
+    expect(await f.state.get("codegraff:browser-watch-configurations")).toMatchObject([{leaseRevision:1,declaredExpiresAt:renewed.grant.expiresAt}]);
+    expect(JSON.stringify(await f.state.get("codegraff:browser-watch-configurations"))).not.toContain(initial.grant.secret);
+    // Idle records may be removed on confirmed pause or expiry. CAS receipts must survive.
+    await f.state.put("codegraff:browser-watch-leases",[]);
+    const rebuilt=new CodegraffSandbox(f.options),restored=await watchTransport(rebuilt);
+    restored.states.set(initial.grant.producer,remote.states.get(initial.grant.producer)!);
+    try{
+      await expect(rebuilt.watchConfigure(initial)).rejects.toThrow("lease stale");
+      await expect(rebuilt.watchConfigure({...renewed,grant:{...renewed.grant,expiresAt:renewed.grant.expiresAt+1}})).rejects.toThrow("lease conflict");
+      await expect(rebuilt.watchConfigure({...renewed,leaseRevision:3})).rejects.toThrow("lease stale");
+      expect(restored.requests).toHaveLength(0);
+      expect(await rebuilt.watchConfigure(renewed)).toMatchObject({leaseRevision:1,expiresAt:renewed.grant.expiresAt});
+      expect(await rebuilt.watchPause(initial.grant.producer,undefined,0)).toMatchObject({leaseRevision:1,state:"paused"});
+      expect(restored.requests.at(-1)).toMatchObject({operation:"watch-pause",lifecycleRevision:0});
+      expect(await f.state.get<unknown>("codegraff:browser-watch-leases")).toEqual([]);
+      expect(await f.state.get("codegraff:browser-watch-configurations")).toMatchObject([{leaseRevision:1}]);
+      const next=renewedWatchLease(renewed);
+      expect(await rebuilt.watchConfigure(next)).toMatchObject({leaseRevision:2,state:"paused",pausedThrough:0});
+      expect(await rebuilt.watchConfigure({...next,lifecycleRevision:1,resumeFrom:{lifecycleRevision:0,pausedThrough:0}})).toMatchObject({state:"watching",leaseRevision:2,lifecycleRevision:1});
+      expect(restored.uploads.join()+restored.commands.join()).not.toContain(initial.grant.secret);
+    }finally{restored.restore();}
+  }finally{remote.restore();}
+});
+
+test("renewal status requires exact revision and bounds lapse proof without leaking extra metadata",async()=>{
+  const f=fixture();await f.sandbox.ensure();const remote=await watchTransport(f.sandbox),initial=watchLease(),renewed=renewedWatchLease(initial);
+  try{
+    await f.sandbox.watchConfigure(initial);
+    remote.reply(output=>({...output,leaseRevision:0}));
+    await expect(f.sandbox.watchConfigure(renewed)).rejects.toThrow("configure unconfirmed");
+    remote.reply(output=>output);await f.sandbox.watchConfigure(renewed);
+    const original=remote.states.get(initial.grant.producer)!,lapse={from:1,to:2,leaseRevision:1};
+    remote.states.set(initial.grant.producer,{...original,observationFloor:2,coverageLapse:{...lapse,secret:"PRIVATE_LAPSE"} as typeof lapse});
+    expect((await f.sandbox.watchStatus())[0]!.coverageLapse).toEqual(lapse);
+    for(const patch of [{leaseRevision:-1},{leaseRevision:0.5},{observationFloor:-1},{observationFloor:3,coverageLapse:lapse},
+      {observationFloor:2,coverageLapse:{...lapse,leaseRevision:2}},{observationFloor:2,coverageLapse:{...lapse,from:3}}]){
+      remote.states.set(initial.grant.producer,{...original,...patch});
+      await expect(f.sandbox.watchStatus()).rejects.toThrow("renewal status invalid");
+    }
+  }finally{remote.restore();}
+});
+
+test("watch controls use encrypted operations and durable idle fences survive host reconstruction",async()=>{
+  const {Database}=await import("bun:sqlite");
+  const directory=mkdtempSync(join(tmpdir(),"watch-host-store-")),path=join(directory,"store.sqlite");
+  let db=new Database(path);
+  db.exec("CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT NOT NULL)");
+  const state:SandboxStore={get:async<T>(key:string)=>{const row=db.query("SELECT value FROM kv WHERE key=?").get(key) as {value:string}|null;return row?JSON.parse(row.value) as T:undefined;},
+    put:async(key,value)=>{db.query("INSERT OR REPLACE INTO kv VALUES(?,?)").run(key,JSON.stringify(value));}};
+  const f=fixture(state);await f.sandbox.ensure();
+  const transport=await watchTransport(f.sandbox),lease=watchLease();
+  try {
+    const driver=await f.sandbox.browserFactory()({domains:["*"],owner:lease.grant.owner,emit:async()=>{}});
+    expect(await driver.watchContext!()).toEqual({owner:lease.grant.owner,profile:lease.grant.profile});
+    expect(await driver.watchConfigure!(lease)).toMatchObject({state:"watching",generation:1});
+    expect(await driver.watchStatus!()).toHaveLength(1);
+    expect(await driver.hasActiveWatchLease!()).toBe(true);
+    await driver.close();
+    expect(f.calls.some(c=>c.path.endsWith("/stop"))).toBe(false);
+    expect(JSON.stringify(await state.get("codegraff:browser-watch-leases"))).not.toMatch(/PRIVATE_WATCH_SECRET|private.example|trusted.example/);
+    expect(transport.uploads.join()).not.toMatch(/PRIVATE_WATCH_SECRET|private.example|watch-configure/);
+    expect(transport.commands.join()).not.toMatch(/PRIVATE_WATCH_SECRET|private.example|watch-configure/);
+    db.close();db=new Database(path);
+    const reconstructed=new CodegraffSandbox(f.options),remote=await watchTransport(reconstructed);
+    remote.states.set(lease.grant.producer,transport.states.get(lease.grant.producer)!);
+    try {
+      expect(await reconstructed.stop()).toBe(false);
+      remote.fail("watch-status");
+      expect(await reconstructed.stop()).toBe(false);
+      remote.fail();remote.revoke();
+      expect(await reconstructed.stop()).toBe(true);
+      expect(f.calls.filter(c=>c.path.endsWith("/stop"))).toHaveLength(1);
+    }finally{remote.restore();}
+  }finally{transport.restore();db.close();rmSync(directory,{recursive:true,force:true});}
+});
+
+test("lost watch configure and pause replies hold only the retained deadline, confirmed pause releases it",async()=>{
+  const f=fixture();await f.sandbox.ensure();
+  const transport=await watchTransport(f.sandbox),lease=watchLease();
+  try {
+    transport.fail("watch-configure");
+    await expect(f.sandbox.watchConfigure(lease)).rejects.toThrow("lost_reply");
+    // The remote accepted before the response vanished; restarting cannot erase the fence.
+    const restarted=new CodegraffSandbox(f.options),remote=await watchTransport(restarted);
+    try {
+      remote.fail("watch-status");
+      expect(await restarted.stop()).toBe(false);
+      remote.fail(); // Empty status is not proof an uncertain configure did not happen.
+      expect(await restarted.stop()).toBe(false);
+      remote.states.set(lease.grant.producer,transport.states.get(lease.grant.producer)!);
+      remote.fail("watch-pause");
+      await expect(restarted.watchPause(lease.grant.producer)).rejects.toThrow("lost_reply");
+      expect(await restarted.hasActiveWatchLease()).toBe(true);
+      remote.fail();
+      expect(await restarted.watchPause(lease.grant.producer)).toMatchObject({state:"paused"});
+      expect(await restarted.hasActiveWatchLease()).toBe(false);
+      expect(await restarted.stop()).toBe(true);
+    }finally{remote.restore();}
+    await f.state.put("codegraff:browser-watch-leases",[{owner:lease.grant.owner,producer:lease.grant.producer,generation:1,expiresAt:Date.now()-1}]);
+    transport.fail("watch-status");
+    expect(await f.sandbox.hasActiveWatchLease()).toBe(false);
+    await expect(f.sandbox.watchConfigure({...lease,grant:{...lease.grant,owner:"another-owner"}})).rejects.toThrow("lease invalid");
+    await expect(f.sandbox.watchConfigure({...lease,grant:{...lease.grant,expiresAt:Date.now()+86_401_000}})).rejects.toThrow("lease invalid");
+  }finally{transport.restore();}
+});
+
+test("configure arriving during idle stop prevents physical VM stop and then installs its lease",async()=>{
+  const f=fixture();await f.sandbox.ensure();
+  const transport=await watchTransport(f.sandbox),lease=watchLease();
+  let entered!:()=>void,release!:()=>void;
+  const pending=new Promise<void>(resolve=>{entered=resolve;}),hold=new Promise<void>(resolve=>{release=resolve;});
+  const request=f.options.gateway.request.bind(f.options.gateway);
+  let intercept=true;
+  const gateway=spyOn(f.options.gateway,"request").mockImplementation(async(...args)=>{
+    if(intercept&&args[0]==="/v1/sandboxes/vm-fixture"){intercept=false;entered();await hold;}
+    return request(...args);
+  });
+  try {
+    const stopping=f.sandbox.stop();await pending;
+    const configuring=f.sandbox.watchConfigure(lease);release();
+    expect(await stopping).toBe(false);
+    expect(await configuring).toMatchObject({state:"watching"});
+    expect(f.calls.some(c=>c.path.endsWith("/stop"))).toBe(false);
+    expect(transport.commands.some(c=>c.endsWith(" close"))).toBe(false);
+  }finally{gateway.mockRestore();transport.restore();}
+});
+
+test("a conflicting shorter replacement cannot erase the previous watch deadline",async()=>{
+  const f=fixture();await f.sandbox.ensure();
+  const transport=await watchTransport(f.sandbox),lease=watchLease();
+  try {
+    await f.sandbox.watchConfigure(lease);
+    transport.fail("watch-configure");
+    const shorter={...lease,grant:{...lease.grant,expiresAt:lease.grant.expiresAt-30_000}};
+    await expect(f.sandbox.watchConfigure(shorter)).rejects.toThrow("lease conflict");
+    const retained=await f.state.get<any[]>("codegraff:browser-watch-leases");
+    expect(retained).toMatchObject([{generation:1,lifecycleRevision:0,expiresAt:lease.grant.expiresAt}]);
+    transport.fail("watch-status");
+    expect(await f.sandbox.hasActiveWatchLease()).toBe(true);
+    transport.fail();
+    transport.states.set(lease.grant.producer,{...transport.states.get(lease.grant.producer)!,state:"needs-attention",reason:"private-sign-in"});
+    expect(await f.sandbox.watchStatus()).toMatchObject([{state:"needs-attention",reason:"private-sign-in"}]);
+    expect(await f.sandbox.hasActiveWatchLease()).toBe(true);
+    const requests=transport.requests.length;
+    await expect(f.sandbox.watchConfigure({...lease,grant:{...lease.grant,generation:2}})).rejects.toThrow("source immutable");
+    expect(transport.requests).toHaveLength(requests);
+  }finally{transport.restore();}
+});
+
+test("durable watch maintenance refreshes external activity within provider idle window and stops at expiry",async()=>{
+  const start=Date.now();let now=start;
+  const clock=spyOn(Date,"now").mockImplementation(()=>now);
+  const f=fixture();await f.sandbox.ensure();
+  const first=await watchTransport(f.sandbox),lease=watchLease();lease.grant.expiresAt=start+3_600_000;
+  try {
+    await f.sandbox.watchConfigure(lease);
+    expect(await f.sandbox.watchMaintenanceDeadline()).toBe(start+600_000);
+    const restarted=new CodegraffSandbox(f.options),remote=await watchTransport(restarted);
+    remote.states.set(lease.grant.producer,first.states.get(lease.grant.producer)!);
+    try {
+      now=start+599_000;
+      expect(await restarted.maintainWatchLease()).toMatchObject({reason:"scheduled",nextAt:start+600_000});
+      expect(remote.requests).toHaveLength(0);
+      for(let minute=10;minute<=50;minute+=10){
+        now=start+minute*60_000;
+        const result=await restarted.maintainWatchLease();
+        expect(result).toMatchObject({state:"watching",reason:"ready",lastConfirmedAt:now,nextAt:now+600_000});
+      }
+      expect(remote.requests.filter(r=>r.operation==="watch-status")).toHaveLength(5);
+      expect(f.calls.some(c=>c.path.endsWith("/stop"))).toBe(false);
+      expect(f.calls.find(c=>c.path==="/v1/sandboxes")?.body.autoStopMinutes).toBe(30);
+      now=start+3_600_000;
+      expect(await restarted.maintainWatchLease()).toMatchObject({state:"paused",reason:"expired"});
+      expect(await restarted.watchMaintenanceDeadline()).toBeUndefined();
+      expect(remote.requests.filter(r=>r.operation==="watch-status")).toHaveLength(5);
+      expect(f.calls.filter(c=>c.path.endsWith("/stop"))).toHaveLength(0);
+      // The host retains browser-retire -> VM-stop ownership after maintenance expires.
+      expect(await restarted.stop()).toBe(true);
+      expect(f.calls.filter(c=>c.path.endsWith("/stop"))).toHaveLength(1);
+      expect(JSON.stringify(await f.state.get("codegraff:browser-watch-maintenance"))).not.toMatch(/PRIVATE_WATCH_SECRET|private.example/);
+    }finally{remote.restore();}
+  }finally{first.restore();clock.mockRestore();}
+});
+
+test("watch maintenance failure retains a bounded retry deadline and never claims successful readiness",async()=>{
+  const start=Date.now();let now=start;
+  const clock=spyOn(Date,"now").mockImplementation(()=>now);
+  const f=fixture();await f.sandbox.ensure();const transport=await watchTransport(f.sandbox),lease=watchLease();
+  lease.grant.expiresAt=start+1_800_000;
+  try {
+    await f.sandbox.watchConfigure(lease);now=start+600_000;
+    transport.fail("watch-status");
+    const result=await f.sandbox.maintainWatchLease();
+    expect(result).toMatchObject({state:"needs-attention",reason:"watch-unavailable",nextAt:now+60_000,lastAttemptAt:now});
+    expect(result.lastConfirmedAt).toBeUndefined();
+    const reconstructed=new CodegraffSandbox(f.options);
+    expect(await reconstructed.watchMaintenanceDeadline()).toBe(now+60_000);
+    transport.fail();now+=60_000;
+    expect(await f.sandbox.maintainWatchLease()).toMatchObject({state:"watching",lastConfirmedAt:now});
+    transport.revoke();now+=600_000;
+    expect(await f.sandbox.maintainWatchLease()).toMatchObject({state:"paused",reason:"paused"});
+    expect(await f.sandbox.watchMaintenanceDeadline()).toBeUndefined();
+    expect(f.calls.filter(c=>c.path.endsWith("/stop"))).toHaveLength(0);
+    expect(await f.sandbox.stop()).toBe(true);
+    expect(f.calls.filter(c=>c.path.endsWith("/stop"))).toHaveLength(1);
+  }finally{transport.restore();clock.mockRestore();}
+});
+
+test("watch maintenance resumes the same provider VM and reports the observed interruption",async()=>{
+  const start=Date.now();let now=start;
+  const clock=spyOn(Date,"now").mockImplementation(()=>now);
+  const f=fixture();await f.sandbox.ensure();const transport=await watchTransport(f.sandbox),lease=watchLease();
+  lease.grant.expiresAt=start+1_800_000;
+  try {
+    await f.sandbox.watchConfigure(lease);
+    await f.options.gateway.request("/v1/sandboxes/vm-fixture/stop",{});
+    now=start+600_000;
+    expect(await f.sandbox.maintainWatchLease()).toMatchObject({state:"needs-attention",reason:"browser-restarted",lastConfirmedAt:now,nextAt:now+600_000});
+    expect(f.calls.filter(c=>c.path==="/v1/sandboxes")).toHaveLength(1);
+    expect(f.calls.filter(c=>c.path.endsWith("/start"))).toHaveLength(1);
+    now+=600_000;
+    expect(await f.sandbox.maintainWatchLease()).toMatchObject({state:"watching",reason:"ready"});
+  }finally{transport.restore();clock.mockRestore();}
+});
+
+test("owner retirement pauses resident watches without waking capture, preserving uncertain pause until bounded retry",async()=>{
+  const f=fixture();await f.sandbox.ensure();const remote=await watchTransport(f.sandbox),lease=watchLease();
+  try {
+    await f.sandbox.watchConfigure(lease);
+    const before=remote.commands.length;
+    remote.fail("watch-pause");
+    const unknown=await f.sandbox.revokeWatchLeases();
+    expect(unknown).toMatchObject({state:"needs-attention",reason:"watch-unavailable"});
+    expect(unknown.nextAt).toBeLessThanOrEqual(lease.grant.expiresAt);
+    expect(await f.sandbox.hasActiveWatchLease()).toBe(true);
+    remote.fail();
+    const last=remote.commands.length;
+    expect(await f.sandbox.revokeWatchLeases()).toMatchObject({state:"paused"});
+    expect(await f.sandbox.watchMaintenanceDeadline()).toBeUndefined();
+    expect(remote.commands.slice(last).some(command=>command.endsWith(" peek-health"))).toBe(true);
+    expect(remote.commands.slice(last).some(command=>command.endsWith(" health"))).toBe(false);
+    expect(remote.requests.slice(-1)).toMatchObject([{operation:"watch-pause"}]);
+    expect(remote.commands.length).toBeGreaterThan(before);
+  }finally{remote.restore();}
+});
+
+test("owner retirement never starts a stopped VM or invents a successful remote revocation",async()=>{
+  const start=Date.now();let now=start;
+  const clock=spyOn(Date,"now").mockImplementation(()=>now);
+  const f=fixture();await f.sandbox.ensure();const remote=await watchTransport(f.sandbox),lease=watchLease();
+  try {
+    await f.sandbox.watchConfigure(lease);
+    await f.options.gateway.request("/v1/sandboxes/vm-fixture/stop",{});
+    const calls=remote.requests.length;
+    expect(await f.sandbox.revokeWatchLeases()).toMatchObject({state:"needs-attention",nextAt:lease.grant.expiresAt});
+    expect(remote.requests).toHaveLength(calls);
+    expect(f.calls.some(c=>c.path.endsWith("/start"))).toBe(false);
+    now=lease.grant.expiresAt;
+    expect(await f.sandbox.revokeWatchLeases()).toMatchObject({state:"paused"});
+    expect(await f.sandbox.watchMaintenanceDeadline()).toBeUndefined();
+    expect(remote.requests).toHaveLength(calls);
+  }finally{remote.restore();clock.mockRestore();}
+});
+
+test("coverage gap acknowledgement is encrypted, owner-bound and fenced by current generation/count without replay",async()=>{
+  const f=fixture();await f.sandbox.ensure();const remote=await watchTransport(f.sandbox),lease=watchLease();
+  try {
+    const driver=await f.sandbox.browserFactory()({domains:["*"],owner:lease.grant.owner,emit:async()=>{}});
+    await driver.watchConfigure!(lease);
+    const gap={generation:1,missed:3,countUncertain:false,acknowledged:0,firstAt:Date.now()-100,lastAt:Date.now(),reason:"observation-backlog" as const};
+    remote.states.set(lease.grant.producer,{...remote.states.get(lease.grant.producer)!,state:"needs-attention",reason:"observation-gap",excludedBefore:gap.firstAt,coverageGap:gap});
+    expect(await driver.watchStatus!()).toMatchObject([{excludedBefore:gap.firstAt,coverageGap:gap}]);
+    const storeBefore=JSON.stringify(await f.state.get("codegraff:browser-watch-leases"));
+    const commands=remote.commands.length,requests=remote.requests.length;
+    const status=await driver.watchAcknowledgeGap!(lease.grant.producer,1,3);
+    expect(status).toMatchObject({state:"needs-attention",coverageGap:{...gap,acknowledged:3}});
+    expect(remote.commands.slice(commands).some(command=>command.endsWith(" health"))).toBe(false);
+    expect(remote.commands.slice(commands).some(command=>command.endsWith(" peek-health"))).toBe(true);
+    expect(remote.requests.slice(requests)).toMatchObject([{operation:"watch-acknowledge-gap",producer:lease.grant.producer,generation:1,missed:3}]);
+    expect(remote.uploads.join()).not.toMatch(/watch-acknowledge-gap|observation-backlog/);
+    expect(remote.commands.join()).not.toMatch(/watch-acknowledge-gap|observation-backlog/);
+    expect(JSON.stringify(await f.state.get("codegraff:browser-watch-leases"))).toBe(storeBefore);
+    await expect(driver.watchAcknowledgeGap!(lease.grant.producer,2,3)).rejects.toThrow("generation stale");
+    await expect(driver.watchAcknowledgeGap!(lease.grant.producer,1,2)).rejects.toThrow("Transient browser replay unavailable");
+    await expect(f.sandbox.browserFactory()({domains:["*"],owner:"another-owner",emit:async()=>{}})).rejects.toThrow("owner mismatch");
+    const foreign=new CodegraffSandbox({...f.options,owner:"another-owner"});
+    await expect(foreign.watchAcknowledgeGap(lease.grant.producer,1,3)).rejects.toThrow("lease store invalid");
+    expect(remote.states.get(lease.grant.producer)!.coverageGap).toEqual({...gap,acknowledged:3});
+  }finally{remote.restore();}
+});
+
+test("coverage gap status rejects malformed counters and strips nonstructural fields",async()=>{
+  const f=fixture();await f.sandbox.ensure();const remote=await watchTransport(f.sandbox),lease=watchLease();
+  try {
+    await f.sandbox.watchConfigure(lease);
+    const original=remote.states.get(lease.grant.producer)!;
+    const gap={generation:1,missed:4,countUncertain:true,acknowledged:2,firstAt:1,lastAt:2,reason:"observation-unavailable" as const};
+    remote.states.set(lease.grant.producer,{...original,coverageGap:{...gap,privatePayload:"PRIVATE_LOSS_BODY"} as typeof gap});
+    const status=await f.sandbox.watchStatus();
+    expect(status[0]!.coverageGap).toEqual(gap);
+    expect(JSON.stringify(status)).not.toContain("PRIVATE_LOSS_BODY");
+    for(const invalid of [{...gap,missed:-1},{...gap,acknowledged:5},{...gap,generation:2},{...gap,lastAt:0},{...gap,countUncertain:"yes"},null,0,false]){
+      remote.states.set(lease.grant.producer,{...original,coverageGap:invalid as unknown as typeof gap});
+      await expect(f.sandbox.watchStatus()).rejects.toThrow("coverage gap invalid");
+    }
+  }finally{remote.restore();}
+});
+
+test("watch inspection and release never allocate or resume a missing VM",async()=>{
+  const absent=fixture();
+  await expect(absent.sandbox.watchStatus()).rejects.toThrow("runner unavailable");
+  await expect(absent.sandbox.watchPause("producer-fixture")).rejects.toThrow("runner unavailable");
+  expect(absent.calls).toHaveLength(0);
+  const f=fixture();await f.sandbox.ensure();const remote=await watchTransport(f.sandbox),lease=watchLease();
+  try {
+    await f.sandbox.watchConfigure(lease);
+    const commands=remote.commands.length;
+    expect(await f.sandbox.watchStatus()).toHaveLength(1);
+    expect(remote.commands.slice(commands).some(command=>command.endsWith(" peek-health"))).toBe(true);
+    expect(remote.commands.slice(commands).some(command=>command.endsWith(" health"))).toBe(false);
+    await f.options.gateway.request("/v1/sandboxes/vm-fixture/stop",{});
+    const calls=f.calls.length,requests=remote.requests.length;
+    const retained=await f.state.get("codegraff:browser-watch-leases");
+    const rebuilt=new CodegraffSandbox(f.options);
+    await expect(rebuilt.watchStatus()).rejects.toThrow("runner unavailable");
+    await expect(rebuilt.watchPause(lease.grant.producer)).rejects.toThrow("runner unavailable");
+    expect(await rebuilt.hasActiveWatchLease()).toBe(true);
+    expect(await f.state.get<unknown>("codegraff:browser-watch-leases")).toEqual(retained);
+    expect(remote.requests).toHaveLength(requests);
+    expect(f.calls.slice(calls).every(call=>call.path==="/v1/sandboxes/vm-fixture"&&call.body===undefined)).toBe(true);
+  }finally{remote.restore();}
+});
+
+test("lost gap acknowledgement reply remains uncertain without retries or erasing loss history",async()=>{
+  const f=fixture();await f.sandbox.ensure();const remote=await watchTransport(f.sandbox),lease=watchLease();
+  try {
+    await f.sandbox.watchConfigure(lease);
+    const gap={generation:1,missed:2,countUncertain:true,acknowledged:0,firstAt:1,lastAt:2,reason:"observation-unavailable" as const};
+    remote.states.set(lease.grant.producer,{...remote.states.get(lease.grant.producer)!,coverageGap:gap});
+    const before=remote.requests.length;remote.fail("watch-acknowledge-gap");
+    await expect(f.sandbox.watchAcknowledgeGap(lease.grant.producer,1,2)).rejects.toThrow("lost_reply");
+    expect(remote.requests.slice(before)).toHaveLength(1);
+    expect(remote.states.get(lease.grant.producer)!.coverageGap).toEqual({...gap,acknowledged:2});
+    remote.fail();
+    expect((await f.sandbox.watchStatus())[0]!.coverageGap).toEqual({...gap,acknowledged:2});
+    await expect(f.sandbox.watchAcknowledgeGap(lease.grant.producer,1,-1)).rejects.toThrow("acknowledgement invalid");
+    await f.options.gateway.request("/v1/sandboxes/vm-fixture/stop",{});
+    const stopped=remote.requests.length;
+    await expect(f.sandbox.watchAcknowledgeGap(lease.grant.producer,1,2)).rejects.toThrow("runner unavailable");
+    expect(remote.requests).toHaveLength(stopped);
+    expect(f.calls.some(call=>call.path.endsWith("/start"))).toBe(false);
+  }finally{remote.restore();}
+});
+
+test("encrypted resume writeahead survives reconstruction and rejects delayed old pause and configure",async()=>{
+  const f=fixture();await f.sandbox.ensure();
+  const remote=await watchTransport(f.sandbox),lease=watchLease();
+  try {
+    await f.sandbox.watchConfigure(lease);
+    remote.states.set(lease.grant.producer,{...remote.states.get(lease.grant.producer)!,acknowledged:4});
+    const paused=await f.sandbox.watchPause(lease.grant.producer);
+    expect(paused).toMatchObject({lifecycleRevision:0,pausedThrough:4,state:"paused"});
+    const resumed={...lease,lifecycleRevision:1,resumeFrom:{lifecycleRevision:0,pausedThrough:4}};
+    remote.fail("watch-configure");
+    await expect(f.sandbox.watchConfigure(resumed)).rejects.toThrow("lost_reply");
+    expect(await f.state.get("codegraff:browser-watch-leases")).toMatchObject([{lifecycleRevision:1,generation:1}]);
+    expect(remote.requests.slice(-1)).toMatchObject([{operation:"watch-configure",lease:{lifecycleRevision:1,resumeFrom:{lifecycleRevision:0,pausedThrough:4}}}]);
+    const rebuilt=new CodegraffSandbox(f.options),restored=await watchTransport(rebuilt);
+    restored.states.set(lease.grant.producer,remote.states.get(lease.grant.producer)!);
+    try {
+      const driver=await rebuilt.browserFactory()({domains:["*"],owner:lease.grant.owner,emit:async()=>{}});
+      await expect(driver.watchPause!(lease.grant.producer)).rejects.toThrow("lifecycle stale");
+      await expect(rebuilt.watchConfigure(lease)).rejects.toThrow("lifecycle stale");
+      expect(restored.requests).toHaveLength(0);
+      // An old paused status cannot release a newer retained incarnation.
+      restored.reply((output,request)=>request.operation==="watch-status" ? output.map((status:any)=>({...status,lifecycleRevision:0,state:"paused",pausedThrough:4})) : output);
+      expect(await rebuilt.hasActiveWatchLease()).toBe(true);
+      restored.reply(output=>output);
+      expect(await driver.watchPause!(lease.grant.producer,undefined,1)).toMatchObject({lifecycleRevision:1,state:"paused",pausedThrough:0});
+      expect(restored.requests.at(-1)).toMatchObject({operation:"watch-pause",lifecycleRevision:1});
+      expect(await rebuilt.hasActiveWatchLease()).toBe(false);
+      expect(restored.uploads.join()+restored.commands.join()).not.toMatch(/lifecycleRevision|resumeFrom|pausedThrough|PRIVATE_WATCH_SECRET/);
+    }finally{restored.restore();}
+  }finally{remote.restore();}
+});
+
+test("legacy and mismatched pause replies never attest a safe release, while owner revoke sends retained revision",async()=>{
+  const f=fixture();await f.sandbox.ensure();const remote=await watchTransport(f.sandbox),lease=watchLease();
+  try {
+    await f.sandbox.watchConfigure(lease);
+    remote.reply((output,request)=>{
+      const legacy=(status:any)=>{const {lifecycleRevision,pausedThrough,...rest}=status;return rest;};
+      return request.operation==="watch-status" ? output.map(legacy) : legacy(output);
+    });
+    await expect(f.sandbox.watchPause(lease.grant.producer)).rejects.toThrow("pause unconfirmed");
+    expect(await f.sandbox.watchStatus()).toMatchObject([{state:"paused"}]);
+    expect(await f.sandbox.hasActiveWatchLease()).toBe(true);
+    expect(await f.sandbox.revokeWatchLeases()).toMatchObject({state:"needs-attention"});
+    remote.reply(output=>output);
+    const proof=await f.sandbox.watchPause(lease.grant.producer);
+    await f.sandbox.watchConfigure({...lease,lifecycleRevision:1,resumeFrom:{lifecycleRevision:0,pausedThrough:proof.pausedThrough!}});
+    remote.reply((output,request)=>request.operation==="watch-pause" ? {...output,lifecycleRevision:0} : output);
+    expect(await f.sandbox.revokeWatchLeases()).toMatchObject({state:"needs-attention"});
+    expect(await f.state.get("codegraff:browser-watch-leases")).toMatchObject([{lifecycleRevision:1}]);
+    expect(remote.requests.at(-1)).toMatchObject({operation:"watch-pause",lifecycleRevision:1});
+    remote.reply(output=>output);
+    expect(await f.sandbox.revokeWatchLeases()).toMatchObject({state:"paused"});
+  }finally{remote.restore();}
+});
+
+test("private lifecycle metadata rejects unsafe counters and configure cannot confirm another incarnation",async()=>{
+  const f=fixture();await f.sandbox.ensure();const remote=await watchTransport(f.sandbox),lease=watchLease();
+  try {
+    await f.sandbox.watchConfigure(lease);
+    const original=remote.states.get(lease.grant.producer)!;
+    for(const invalid of [{lifecycleRevision:-1},{lifecycleRevision:0.5},{lifecycleRevision:Number.POSITIVE_INFINITY},
+      {state:"paused",lifecycleRevision:0,pausedThrough:-1},{state:"paused",lifecycleRevision:0,pausedThrough:1.5},
+      {state:"paused",lifecycleRevision:0,pausedThrough:Number.MAX_SAFE_INTEGER+1},
+      {state:"paused",lifecycleRevision:undefined,pausedThrough:0},{pausedThrough:0}]){
+      remote.states.set(lease.grant.producer,{...original,...invalid} as typeof original);
+      await expect(f.sandbox.watchStatus()).rejects.toThrow("lifecycle status invalid");
+    }
+    remote.states.set(lease.grant.producer,original);
+    remote.reply(output=>({...output,lifecycleRevision:1}));
+    await expect(f.sandbox.watchConfigure(lease)).rejects.toThrow("configure unconfirmed");
+    expect(await f.state.get("codegraff:browser-watch-leases")).toMatchObject([{lifecycleRevision:0}]);
+    const requests=remote.requests.length;
+    await expect(f.sandbox.watchConfigure({...lease,lifecycleRevision:-1})).rejects.toThrow("lifecycle invalid");
+    await expect(f.sandbox.watchConfigure({...lease,lifecycleRevision:1,resumeFrom:{lifecycleRevision:0,pausedThrough:-1}})).rejects.toThrow("lifecycle invalid");
+    await expect(f.sandbox.watchPause(lease.grant.producer,undefined,Number.POSITIVE_INFINITY)).rejects.toThrow("lifecycle invalid");
+    expect(remote.requests).toHaveLength(requests);
+  }finally{remote.restore();}
+});
+
+async function guardedTransport() {
+  const {replayKeys,unwrapReplay,sealReplay}=await import("../src/codegraff.ts");
+  const {sandboxDigest}=await import("../src/sandbox-job.ts");
+  const f=fixture(),keys=replayKeys(),uploads:string[]=[],commands:string[]=[],requests:any[]=[];
+  const artifact:any={kind:"network",actionId:"write",graph:{schemaVersion:2,executorAbi:"site-harness/1",siteId:"fixture",version:"1",
+    sourceCaptureDigest:await sandboxDigest("fixture"),allowedOrigins:["https://private.example"],actions:[{id:"write",inputs:[],steps:[{id:"send",dependsOn:[],
+      method:"POST",origin:"https://private.example",path:"/tasks",pathParameters:{},query:{},headers:{},expectedStatuses:[200]}]}]}};
+  const job:import("../src/sandbox-job.ts").SandboxJob={version:1,operationId:crypto.randomUUID(),owner:f.options.owner,contextRef:"context",authorityRef:"authority",
+    artifact,harnessDigest:await sandboxDigest(artifact),dependencyLock:{},dependencyLockDigest:await sandboxDigest({}),environmentDigest:await sandboxDigest("runtime"),input:{},
+    dispatch:{protocol:"host-request/v1"},authority:{origins:["https://private.example"],methods:["POST"]},budget:{wallMs:5000,requests:2,outputBytes:32768}};
+  const prepared={url:"https://private.example/tasks",method:"POST",address:"93.184.216.34",headers:{"content-type":"application/json"},body:'{"text":"PRIVATE_REQUEST_BODY"}'};
+  const challenge=async():Promise<import("../src/sandbox-dispatch.ts").SandboxDispatchChallenge>=>({status:"awaiting-dispatch",protocol:"host-request/v1",owner:job.owner,
+    operationId:job.operationId,jobDigest:await sandboxDigest(job),requestDigest:await sandboxDigest(prepared),stepId:"send",attempt:1,
+    nonce:crypto.randomUUID(),expiresAt:Date.now()+job.budget.wallMs-50,prepared:structuredClone(prepared)});
+  const receipt=async(status:"completed"|"failed"="completed"):Promise<import("../src/sandbox-dispatch.ts").SandboxDispatchReply>=>({status:"receipt",receipt:{operationId:job.operationId,
+    jobDigest:await sandboxDigest(job),harnessDigest:job.harnessDigest,environmentDigest:job.environmentDigest,status,requests:1,browserStarts:0,
+    ...(status==="completed"?{output:{ok:true},outputDigest:await sandboxDigest({ok:true})}:{reason:"sandbox_execution_failed"})}});
+  let respond:(request:any)=>Promise<unknown>=async request=>request.operation==="guarded-start"?challenge():receipt();
+  const ensure=spyOn(f.sandbox,"ensure").mockResolvedValue("vm-fixture");
+  const upload=spyOn(f.sandbox,"upload").mockImplementation(async(_id,_path,bytes)=>{uploads.push(bytes);});
+  const exec=spyOn(f.sandbox,"exec").mockImplementation(async(_id,command)=>{
+    commands.push(command);
+    if(command.endsWith(" health"))return JSON.stringify({replayPublicKey:keys.publicKey});
+    if(command.includes(" runner.js cancel "))return '{"settled":true}';
+    const {key,value}=unwrapReplay(JSON.parse(uploads.at(-1)!),keys.privateKey);requests.push(value);
+    return JSON.stringify(sealReplay({output:await respond(value)},key));
+  });
+  return {...f,job,challenge,receipt,uploads,commands,requests,respond:(next:typeof respond)=>{respond=next;},restore:()=>{ensure.mockRestore();upload.mockRestore();exec.mockRestore();}};
+}
+
+test("guarded sandbox waits for host authority while busy, encrypts prepared bytes, and isolates callback mutation",async()=>{
+  const f=await guardedTransport();let release!:()=>void,entered!:()=>void;
+  const gate=new Promise<void>(resolve=>{release=resolve;}),ready=new Promise<void>(resolve=>{entered=resolve;});
+  let expected:import("../src/sandbox-dispatch.ts").SandboxDispatchChallenge|undefined;
+  f.respond(async request=>{if(request.operation==="guarded-start")return expected=await f.challenge();return f.receipt();});
+  try {
+    const running=f.sandbox.harnessGuardedJob(f.job,async challenge=>{
+      expect(f.sandbox.busy).toBe(true);entered();await gate;
+      challenge.nonce="mutated";challenge.requestDigest="sha256:mutated";challenge.prepared.body="mutated";return true;
+    });
+    await ready;expect(await f.sandbox.stop()).toBe(false);
+    expect(f.requests.map(value=>value.operation)).toEqual(["guarded-start"]);
+    release();expect((await running).status).toBe("completed");expect(f.sandbox.busy).toBe(false);
+    expect(f.requests[1].input).toEqual({owner:f.job.owner,operationId:f.job.operationId,jobDigest:expected!.jobDigest,
+      requestDigest:expected!.requestDigest,nonce:expected!.nonce,allow:true});
+    expect(f.uploads.join()+f.commands.join()).not.toMatch(/PRIVATE_REQUEST_BODY|private.example|guarded-start|guarded-continue/);
+  } finally {release?.();f.restore();}
+});
+
+test("guarded retained receipts do not request host permission; refusal sends only a denial",async()=>{
+  const f=await guardedTransport();let callbacks=0;
+  try {
+    f.respond(async()=>f.receipt());
+    expect((await f.sandbox.harnessGuardedJob(f.job,()=>{callbacks++;return true;})).status).toBe("completed");
+    expect(callbacks).toBe(0);expect(f.requests).toHaveLength(1);
+    f.respond(async request=>request.operation==="guarded-start"?f.challenge():f.receipt("failed"));
+    expect((await f.sandbox.harnessGuardedJob(f.job,()=>{callbacks++;return false;})).status).toBe("failed");
+    expect(callbacks).toBe(1);expect(f.requests.filter(value=>value.operation==="guarded-continue").map(value=>value.input.allow)).toEqual([false]);
+  } finally {f.restore();}
+});
+
+test("guarded transport rejects malformed or expired challenges before calling host authority",async()=>{
+  const f=await guardedTransport();let callbacks=0;
+  const corruptions=[{owner:"other"},{operationId:"other"},{jobDigest:"sha256:bad"},{requestDigest:"sha256:bad"},{nonce:"bad"},{expiresAt:0},
+    {expiresAt:Number.MAX_SAFE_INTEGER},{stepId:"absent"},{attempt:0},{attempt:100},{prepared:null}];
+  try {
+    for(const change of corruptions){
+      f.respond(async()=>({...await f.challenge(),...change}));
+      await expect(f.sandbox.harnessGuardedJob(f.job,()=>{callbacks++;return true;})).rejects.toThrow("Sandbox dispatch");
+    }
+    expect(callbacks).toBe(0);expect(f.requests.every(value=>value.operation==="guarded-start")).toBe(true);expect(f.sandbox.busy).toBe(false);
+  } finally {f.restore();}
+});
+
+test("guarded continuation loss is not retried and receipt recovery never authorizes another send",async()=>{
+  const f=await guardedTransport();let callbacks=0;
+  try {
+    f.respond(async request=>{if(request.operation==="guarded-start")return f.challenge();throw Error("lost_after_continuation");});
+    await expect(f.sandbox.harnessGuardedJob(f.job,()=>{callbacks++;return true;})).rejects.toThrow("lost_after_continuation");
+    expect(f.requests.map(value=>value.operation)).toEqual(["guarded-start","guarded-continue"]);expect(callbacks).toBe(1);expect(f.sandbox.busy).toBe(false);
+    f.respond(async()=>{const result=await f.receipt();return result.status==="receipt"?result.receipt:undefined;});
+    expect((await f.sandbox.harnessReceipt(f.job)).status).toBe("completed");
+    expect(callbacks).toBe(1);expect(f.requests.at(-1).operation).toBe("harness-receipt");
+  } finally {f.restore();}
+});
+
+test("guarded callback cancellation sends no continuation and releases the whole-operation idle fence",async()=>{
+  const f=await guardedTransport(),controller=new AbortController();let entered!:()=>void;
+  const ready=new Promise<void>(resolve=>{entered=resolve;});
+  try {
+    const running=f.sandbox.harnessGuardedJob(f.job,()=>{entered();return new Promise<boolean>(()=>{});},controller.signal);
+    await ready;expect(f.sandbox.busy).toBe(true);controller.abort(Error("host_cancelled"));
+    await expect(running).rejects.toThrow("host_cancelled");expect(f.sandbox.busy).toBe(false);
+    expect(f.requests.map(value=>value.operation)).toEqual(["guarded-start"]);
+  } finally {f.restore();}
+});
+
+test("guarded multi-request jobs preserve one deadline and reject a reused nonce before a second authorization",async()=>{
+  const f=await guardedTransport();let callbacks=0;
+  try {
+    for(const mutation of ["nonce","deadline","valid"]){
+      let original:import("../src/sandbox-dispatch.ts").SandboxDispatchChallenge|undefined,continues=0;
+      f.respond(async request=>{
+        if(request.operation==="guarded-start")return original=await f.challenge();
+        if(++continues===2)return f.receipt();
+        return {...original!,nonce:mutation==="nonce"?original!.nonce:crypto.randomUUID(),expiresAt:original!.expiresAt+(mutation==="deadline"?1:0)};
+      });
+      const before=callbacks;
+      const run=f.sandbox.harnessGuardedJob(f.job,()=>{callbacks++;return true;});
+      if(mutation==="valid"){expect((await run).status).toBe("completed");expect(callbacks-before).toBe(2);}
+      else {await expect(run).rejects.toThrow("challenge mismatch");expect(callbacks-before).toBe(1);}
+    }
+  } finally {f.restore();}
+});
+
+test("guarded host decisions arriving after the private deadline never release a request",async()=>{
+  const f=await guardedTransport();let callbacks=0;
+  f.respond(async()=>({...await f.challenge(),expiresAt:Date.now()+250}));
+  try {
+    await expect(f.sandbox.harnessGuardedJob(f.job,async()=>{
+      callbacks++;await new Promise(resolve=>setTimeout(resolve,300));return true;
+    })).rejects.toThrow("expired");
+    expect(callbacks).toBe(1);expect(f.requests.map(value=>value.operation)).toEqual(["guarded-start"]);
+    expect(f.sandbox.busy).toBe(false);
+  } finally {f.restore();}
+});

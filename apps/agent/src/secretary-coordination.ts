@@ -7,6 +7,8 @@ import { actorMethod } from "tardie/core/method/method";
 import { EventLog } from "tardie/core/log";
 import type { Event } from "tardie/core/event";
 import { openMemory } from "./memory.ts";
+import { CONTRIBUTION_POLICY } from "./proactive-policy.ts";
+import { harnessDigest } from "./harness-library.ts";
 import {
   contactForWork,
   workAdmission,
@@ -21,7 +23,10 @@ import {
   workDigest,
   workEvent,
   workEventKey,
+  workEvaluationFailure,
+  workRecoveryAt,
   workNoticeCurrent,
+  readyWorkNotice,
   workState,
   workTerminal,
   type Commitment,
@@ -68,8 +73,8 @@ export const workWaitMethod = actorMethod({
               (e) =>
                 (e.type === "AlarmFired" &&
                   Number(e.at) >= Number((deadline.call as any).deadlineAt)) ||
-                e.type === "AikoWorkContactObserved" ||
-                e.type === "AikoWorkContactHandling",
+                (deadline.recoveryVersion !== 1 && (e.type === "AikoWorkContactObserved" ||
+                e.type === "AikoWorkContactHandling")),
             )
           ? { status: "completed" as const, output: "recheck" }
           : { status: "pending" as const };
@@ -216,6 +221,8 @@ async function dispatch(
     : "Message delivery is uncertain; reconcile it before any further send";
 }
 
+class WorkSourceUnavailable extends Error {}
+
 /** One bounded evaluation. Native effects and method deadlines own replay and scheduling. */
 export async function coordinateWork(
   binding: SecretaryWorkBinding,
@@ -228,9 +235,15 @@ export async function coordinateWork(
     original = state.commitments.get(id);
   if (!original) return;
   let w = structuredClone(original);
-  const contact = w.plan
-    ? contactForWork(await binding.readSecretary(), binding.owner, w)
-    : undefined;
+  // Only this initial read is retryable: no action has been dispatched by this
+  // evaluation. Exceptions after this boundary retain the manual recovery fence.
+  let source: readonly Event[] = [];
+  if (w.plan) {
+    try { source = await binding.readSecretary(); }
+    catch { signal.throwIfAborted(); throw new WorkSourceUnavailable(); }
+  }
+  signal.throwIfAborted();
+  const contact = w.plan ? contactForWork(source, binding.owner, w) : undefined;
   const request = state.receipts.get(executionId(w, "request"));
   if (w.plan && w.evidenceMessageId && w.status === "completed") {
     const evidence = contact?.messages.find(
@@ -426,7 +439,7 @@ function evaluationId(w: Commitment, rows: readonly Event[]) {
   return w.id + ":" + w.version + ":" + workDigest(signal ?? null).slice(0, 16);
 }
 
-export function secretaryCoordination(binding: SecretaryWorkBinding) {
+export function secretaryCoordination(binding: SecretaryWorkBinding, contributions = false) {
   if (
     binding.thread !== "user-" + binding.owner ||
     binding.memory.owner !== binding.owner
@@ -439,23 +452,26 @@ export function secretaryCoordination(binding: SecretaryWorkBinding) {
     step: (rows, e) => [...rows, e],
     output: (rows) => {
       const work = [...workState(rows, binding.owner).commitments.values()];
-      const failed = (w: Commitment) =>
-        rows.some(
-          (e) =>
-            e.type === "AikoWorkEvaluationFailed" &&
-            e.workId === w.id &&
-            e.workVersion === w.version,
-        );
+      const recoveryDue = (w: Commitment) => {
+        const at = workRecoveryAt(rows, w), failure = workEvaluationFailure(rows, w);
+        // Only a committed host alarm can release a retry; unrelated messages,
+        // projection replay and wall-clock passage do not create another attempt.
+        return at !== undefined && rows.slice(rows.indexOf(failure!) + 1).some(e => e.type === "AlarmFired" && Number(e.at) >= at);
+      };
+      const checkedId = (w: Commitment) => {
+        const failure = workEvaluationFailure(rows, w);
+        return failure ? `${failure.id}:retry:${failure.attempt}` : evaluationId(w, rows);
+      };
       const due = work.find(
         (w) =>
-          !failed(w) &&
+          (!workEvaluationFailure(rows, w) || recoveryDue(w)) &&
           !rows.some(
             (e) =>
-              e.type === "AikoWorkEvaluated" && e.id === evaluationId(w, rows),
+              e.type === "AikoWorkEvaluated" && e.id === checkedId(w),
           ),
       );
       if (due) {
-        const id = evaluationId(due, rows);
+        const id = checkedId(due);
         return {
           view: undefined,
           transitions: [
@@ -464,22 +480,35 @@ export function secretaryCoordination(binding: SecretaryWorkBinding) {
               input: { id, workId: due.id, workVersion: due.version },
               act: ({ id, workId, workVersion }, signal) =>
                 Effect.gen(function* () {
-                  const failure = yield* Effect.tryPromise(() =>
-                    coordinateWork(binding, workId, signal),
-                  ).pipe(
+                  const failure = yield* Effect.tryPromise({
+                    try: async () => {
+                      const current = workState(await binding.read(), binding.owner).commitments.get(workId);
+                      if (current?.version !== workVersion) return;
+                      const prior = workEvaluationFailure(rows, due);
+                      if (prior && (binding.now?.() ?? Date.now()) >= Number(prior.deadlineAt)) throw new WorkSourceUnavailable();
+                      await coordinateWork(binding, workId, signal);
+                    },
+                    catch: error => error,
+                  }).pipe(
                     Effect.map(() => undefined),
-                    Effect.catch(() =>
-                      Effect.succeed(
-                        workEvent("AikoWorkEvaluationFailed", {
+                    Effect.catch((error) => {
+                      const prior = workEvaluationFailure(rows, due);
+                      const attempt = prior?.recoveryVersion === 1 ? Number(prior.attempt) + 1 : 1;
+                      const at = binding.now?.() ?? Date.now();
+                      const deadlineAt = prior?.recoveryVersion === 1 ? Number(prior.deadlineAt) : Math.min(at + 120_000, due.dueAt ?? Infinity);
+                      const retryAt = at + 30_000 * attempt;
+                      const retry = error instanceof WorkSourceUnavailable && !signal.aborted && workActive(due) &&
+                        due.decision?.status !== "pending" && attempt <= 2 && retryAt < deadlineAt;
+                      return Effect.succeed(workEvent("AikoWorkEvaluationFailed", {
                           owner: binding.owner,
                           id,
                           workId,
                           workVersion,
-                          reason:
-                            "Aiko could not check this work. Review its evidence, then retry the check. Any uncertain send will remain held for review.",
-                        }),
-                      ),
-                    ),
+                          ...(error instanceof WorkSourceUnavailable ? { recoveryVersion: 1, cause: "source-unavailable", attempt, deadlineAt, ...(retry ? { retryAt } : {}) } : {}),
+                          reason: retry ? "Aiko could not check the latest evidence. It will check again shortly; your work is preserved."
+                            : "Aiko could not check this work. Review its evidence, then retry the check. Any uncertain send will remain held for review.",
+                        }, at));
+                    }),
                   );
                   if (failure)
                     return [
@@ -490,9 +519,13 @@ export function secretaryCoordination(binding: SecretaryWorkBinding) {
                       }),
                     ];
                   return [
+                    ...(id !== evaluationId(due, rows) ? [workEvent("AikoWorkEvaluated", { owner: binding.owner, id: evaluationId(due, rows) })] : []),
                     workEvent("AikoWorkEvaluated", {
                       owner: binding.owner,
                       id,
+                      workId,
+                      workVersion,
+                      status: "checked",
                     }),
                   ];
                 }),
@@ -500,15 +533,16 @@ export function secretaryCoordination(binding: SecretaryWorkBinding) {
           ],
         };
       }
-      const notice = work.find(
-        (w) =>
-          workNoticeCurrent(rows, binding.owner, {
-            workId: w.id,
-            version: w.version,
-          }) &&
+      const notice = work.map(w => {
+        const ref = contributions ? readyWorkNotice(rows, binding.owner, w) ?? { workId: w.id, version: w.version } : { workId: w.id, version: w.version };
+        const id = w.id + ":" + w.version + ("readyDependencies" in ref ? ":ready:" + workDigest(ref).slice(0, 16) : "");
+        return { w, ref, id };
+      }).find(
+        ({ ref, id }) =>
+          workNoticeCurrent(rows, binding.owner, ref) &&
           !rows.some(
             (e) =>
-              e.type === "AikoWorkNotice" && e.id === w.id + ":" + w.version,
+              e.type === "AikoWorkNotice" && e.id === id,
           ),
       );
       if (notice)
@@ -516,12 +550,10 @@ export function secretaryCoordination(binding: SecretaryWorkBinding) {
           view: undefined,
           transitions: [
             effect({
-              key: "aiko-work:notice:" + notice.id + ":" + notice.version,
+              key: "aiko-work:notice:" + notice.id,
               input: notice,
-              act: (w) =>
+              act: ({ w, ref, id }) =>
                 Effect.gen(function* () {
-                  const id = w.id + ":" + w.version,
-                    ref = { workId: w.id, version: w.version };
                   const log = yield* EventLog;
                   if (
                     !workNoticeCurrent(
@@ -534,7 +566,7 @@ export function secretaryCoordination(binding: SecretaryWorkBinding) {
                     return [
                       workEvent("AikoWorkNotice", { owner: binding.owner, id }),
                     ];
-                  const speech = workDecisionLanguage(
+                  const speech = "readyDependencies" in ref ? { text: `The prerequisites are ready. ${w.nextAction || "You can resume this work."}` } : workDecisionLanguage(
                     w,
                     [
                       ...workState(
@@ -566,6 +598,7 @@ export function secretaryCoordination(binding: SecretaryWorkBinding) {
                           version: w.version,
                           status: w.status,
                           text,
+                          ...( "readyDependencies" in ref ? { readyDependencies: ref.readyDependencies } : {}),
                         },
                       },
                       {
@@ -580,6 +613,7 @@ export function secretaryCoordination(binding: SecretaryWorkBinding) {
                   } finally {
                     memory.close();
                   }
+                  const at = binding.now?.() ?? Date.now();
                   return [
                     workEvent("AikoWorkNotice", { owner: binding.owner, id }),
                     workEvent("AikoProactiveDecision", {
@@ -589,7 +623,19 @@ export function secretaryCoordination(binding: SecretaryWorkBinding) {
                       text: text.slice(0, 1200),
                       supports,
                       work: ref,
-                    }),
+                      ...(contributions ? { policyVersion: CONTRIBUTION_POLICY,
+                      contribution: {
+                        version: 2,
+                        topic: harnessDigest(["aiko-work-contribution/v2", binding.owner, w.id]),
+                        trigger: id,
+                        triggerSupports: supports,
+                        createdAt: at,
+                        notBefore: at,
+                        expiresAt: Math.min(at + 86_400_000, w.dueAt ?? Number.MAX_SAFE_INTEGER,
+                          w.decision?.status === "pending" ? w.decision.expiresAt : Number.MAX_SAFE_INTEGER),
+                        action: "notify",
+                      } } : {}),
+                    }, at),
                   ];
                 }),
             }),
@@ -598,10 +644,10 @@ export function secretaryCoordination(binding: SecretaryWorkBinding) {
       return {
         view: undefined,
         transitions: work.flatMap((w) => {
-          if (failed(w)) return [];
-          const at = nextWake(w);
+          const failure = workEvaluationFailure(rows, w);
+          const at = failure ? workRecoveryAt(rows, w) : nextWake(w);
           if (at === undefined) return [];
-          const id = evaluationId(w, rows) + ":" + at;
+          const id = (failure ? `${failure.id}:recovery` : evaluationId(w, rows)) + ":" + at;
           if (rows.some((e) => e.type === "AikoWorkDeadline" && e.id === id))
             return [];
           return [
@@ -617,6 +663,7 @@ export function secretaryCoordination(binding: SecretaryWorkBinding) {
                     at: committedAt,
                   }),
                   owner: binding.owner,
+                  ...(failure ? { recoveryVersion: 1 } : {}),
                 },
               ],
             }),

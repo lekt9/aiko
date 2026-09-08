@@ -92,6 +92,8 @@ export function ownedObservedActions(events: readonly Event[]): ObservedActionPr
       validateNoSecrets(event.artifact);
       const artifact = validateSiteHarnessArtifact(event.artifact);
       if (artifactDigestOf(artifact) !== event.artifactDigest || artifact.sourceCaptureDigest !== event.importDigest) continue;
+      // observed_network_run executes one selected action; discovery must describe that exact contract.
+      if (artifact.actions.length !== 1 || artifact.actions[0]!.id !== event.actionId) continue;
       const graph = events.filter(e => e.captureId === checkpoint.captureId);
       const facts = events.filter(e => e.type === "NetworkFactObserved" && e.threadId === event.threadId && Number(e.sequence) < Number(checkpoint.sourceNetworkSequence));
       assertNetworkSnapshotBackedByLog(facts, event.threadId, graph, checkpoint.sourceRequestIds as string[], Number(checkpoint.sourceNetworkSequence));

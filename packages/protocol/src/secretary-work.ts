@@ -76,4 +76,6 @@ export interface WorkReceipt {
 export interface WorkNoticeRef {
   workId: string;
   version: number;
+  /** Exact checked prerequisite snapshots for a waiting-work readiness notice. */
+  readyDependencies?: { workId: string; version: number }[];
 }

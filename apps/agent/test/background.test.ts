@@ -80,6 +80,7 @@ async function fixture(
     ...overrides,
   };
   let service = await createService(config, options);
+  await service.ready;
   cleanup.push(() => service.close());
   const request = (path: string, body?: object, token = alice) =>
     service.fetch(
@@ -122,6 +123,7 @@ async function fixture(
       await service.close();
       await beforeOpen?.();
       service = await createService(config, options);
+      await service.ready;
       await service.host.drive();
     },
   };
@@ -512,6 +514,130 @@ function reflectionModel(
     }),
   };
 }
+
+test("v2 contribution carries retained trigger evidence through native reflection and sends once", async () => {
+  const model = reflectionModel(changed => ({ version: 2, reason: "A useful release change", contributions: [{
+    decision: "notify", text: "Your Aurorapanda release moved to Thursday.", reason: "The owner's release date changed",
+    supports: changed.map(c => c.observation).slice(0, 1), delayMs: 0,
+    relevance: 4, usefulness: 4, urgency: 2, novelty: 3, interruptionCost: 1,
+  }] }));
+  const f = await fixture({ mode: "live", cognitiveContributionOwners: ["123"], voiceKey: "thinkfeel-background-fixture" },
+    { model: model.layer, voiceFetch: positiveVoiceFetch });
+  await f.telegram(22001); await f.service.host.drive();
+  const before = f.deliveries.length;
+  await f.request("/v1/hooks", learning("v2-release", 2)); await f.service.host.drive();
+  const rows = await f.events("user-123"), decision = ofType(rows, "AikoProactiveDecision").at(-1)!;
+  expect(decision?.contribution).toMatchObject({ version: 2, action: "notify" });
+  expect((decision.contribution as { triggerSupports: string[] }).triggerSupports.every(id => (decision.supports as string[]).includes(id))).toBe(true);
+  expect(ofType(rows, "AikoProactiveAccepted").at(-1)?.contribution).toEqual(decision.contribution);
+  expect(f.deliveries).toHaveLength(before + 1);
+  expect(f.deliveries.at(-1)?.text).toContain("moved to Thursday");
+  const calls = model.calls;
+  await f.restart(); await f.request("/v1/hooks", learning("v2-release", 2)); await f.service.host.drive();
+  expect(model.calls).toBe(calls); expect(f.deliveries).toHaveLength(before + 1);
+});
+
+for (const invalid of ["foreign-citation", "out-of-context-citation", "score", "too-many", "shape", "weak"] as const)
+test(`v2 rejects ${invalid} without a second model decision or external notification`, async () => {
+  const model = reflectionModel(changed => {
+    const candidate = { decision: "notify", text: "A release changed.", reason: "A release update",
+      supports: changed.map(c => c.observation).slice(0, 1), delayMs: 0,
+      relevance: 4, usefulness: 4, urgency: 2, novelty: 3, interruptionCost: 1 };
+    if (invalid === "foreign-citation") candidate.supports = ["owner-456-private-fact"];
+    if (invalid === "out-of-context-citation") candidate.supports.push("not-supplied-to-this-call");
+    if (invalid === "score") candidate.urgency = 500;
+    if (invalid === "weak") { candidate.relevance = 0; candidate.usefulness = 0; }
+    if (invalid === "shape") return { version: 2, reason: "Malformed", contributions: "notify" };
+    return { version: 2, reason: "Consider a release update", contributions: invalid === "too-many" ? Array(4).fill(candidate) : [candidate] };
+  });
+  const f = await fixture({ cognitiveContributionOwners: ["123"] }, { model: model.layer });
+  await f.request("/v1/hooks", learning(`invalid-${invalid}`, 1)); await f.service.host.drive();
+  expect(model.calls).toBe(1);
+  expect(ofType(await f.events("user-123"), "AikoProactiveAccepted")).toHaveLength(0);
+  expect(f.deliveries).toHaveLength(0);
+  expect(ofType(await f.events(backgroundThread("123", "reflection")), "AikoDecisionRecorded").at(-1)?.decision).toBe("silent");
+  await f.restart(); await f.service.host.drive(); expect(model.calls).toBe(1);
+});
+
+test("v2 shadow records decisions without sending; promotion evaluates only new evidence", async () => {
+  const model = reflectionModel(changed => ({ version: 2, reason: "Relevant release update", contributions: [{
+    decision: "notify", text: "Your Aurorapanda release changed.", reason: "New release evidence",
+    supports: changed.map(c => c.observation).slice(0, 1), delayMs: 0,
+    relevance: 4, usefulness: 4, urgency: 2, novelty: 3, interruptionCost: 1,
+  }] }));
+  const f = await fixture({ cognitiveContributionShadowOwners: ["123"] }, { model: model.layer });
+  await f.telegram(22011); await f.service.host.drive();
+  const before = f.deliveries.length;
+  await f.request("/v1/hooks", learning("shadow-release", 1)); await f.service.host.drive();
+  expect(ofType(await f.events("user-123"), "AikoProactiveSuppressed").at(-1)?.reason).toBe("contribution-shadow");
+  expect(f.deliveries).toHaveLength(before);
+  const calls = model.calls;
+  f.config.cognitiveContributionOwners = ["123"];
+  f.config.cognitiveContributionShadowOwners = [];
+  await f.restart(); await f.service.host.drive();
+  expect(model.calls).toBe(calls); expect(f.deliveries).toHaveLength(before);
+  await f.request("/v1/hooks", learning("shadow-release-updated", 2)); await f.service.host.drive();
+  expect(ofType(await f.events("user-123"), "AikoProactiveAccepted")).toHaveLength(1);
+});
+
+test("v2 rollback retires a pending native wait across restart and reenabling", async () => {
+  const model = reflectionModel(changed => ({ version: 2, reason: "Useful later", contributions: [{
+    decision: "defer", text: "Your Aurorapanda release changed.", reason: "Wait for a suitable time",
+    supports: changed.map(c => c.observation).slice(0, 1), delayMs: 3_600_000,
+    relevance: 4, usefulness: 4, urgency: 2, novelty: 3, interruptionCost: 1,
+  }] }));
+  const f = await fixture({ cognitiveContributionOwners: ["123"] }, { model: model.layer });
+  await f.telegram(22012); await f.service.host.drive();
+  await f.request("/v1/hooks", learning("rollback-release", 1)); await f.service.host.drive();
+  const rows = await f.events("user-123"), wait = ofType(rows, "AikoProactiveDeferred").at(-1)!;
+  expect(wait?.contributionVersion).toBe(2);
+  const calls = model.calls, sent = f.deliveries.length;
+  f.config.cognitiveContributionOwners = [];
+  await f.restart(); await f.service.host.drive();
+  expect(ofType(await f.events("user-123"), "AikoProactiveSuppressed").at(-1)).toMatchObject({ id: wait.decisionId, reason: "contribution-disabled" });
+  f.config.cognitiveContributionOwners = ["123"];
+  await f.restart(); await f.service.host.drive();
+  expect(model.calls).toBe(calls); expect(f.deliveries).toHaveLength(sent);
+  expect(ofType(await f.events("user-123"), "AikoProactiveAccepted")).toHaveLength(0);
+});
+
+test("v2 retains a deferred contribution with older supplied evidence and suppresses it when that evidence is forgotten", async () => {
+  let relatedId = "";
+  const model = reflectionModel((changed, request) => {
+    if (changed.some(e => e.observation === relatedId)) return { version: 2, reason: "Initial context only", contributions: [] };
+    const message = request.trajectory.findLast(e => e.type === "MessageReceived" && e.id === request.identity.turn)!;
+    const context = JSON.parse(String(message.text));
+    expect(context.relatedEvidence.some((e: any) => e.observation === relatedId)).toBe(true);
+    return { version: 2, reason: "Useful after the owner's current work", contributions: [{
+      decision: "defer", text: "The release date changed; your approval is still needed.", reason: "New date affects an existing requirement",
+      supports: [changed[0]!.observation, relatedId], delayMs: 3_600_000,
+      relevance: 4, usefulness: 4, urgency: 1, novelty: 3, interruptionCost: 2,
+    }] };
+  });
+  const f = await fixture({ cognitiveContributionOwners: ["123"] }, { model: model.layer });
+  // Register the owner with ordinary memory operations before a hook arrives.
+  await f.telegram(22002); await f.service.host.drive();
+  const binding = { stateDir: accountDirectory(f.config.stateDir, "123"), owner: "123", thread: "user-123", redact: (s: string) => s, readPage: async () => [] };
+  let memory = openMemory(binding);
+  const saved = memory.remember({ subject: "release-approval", title: "Aurorapanda release schedule", type: "requirement", kind: "fact", payload: "Owner approval is required" },
+    { key: "old-requirement", producer: { kind: "agent", reference: "fixture:owner-requirement" } });
+  relatedId = saved.id; memory.close();
+  await f.request("/v1/hooks", learning("v2-context-baseline", 1)); await f.service.host.drive();
+  await f.request("/v1/hooks", learning("v2-with-context", 2)); await f.service.host.drive();
+  let rows = await f.events("user-123");
+  const decision = ofType(rows, "AikoProactiveDecision").at(-1)!;
+  expect(decision?.supports).toContain(relatedId);
+  expect(ofType(rows, "AikoProactiveDeferred").some(e => e.decisionId === decision.id)).toBe(true);
+  expect(ofType(rows, "AikoProactiveAccepted")).toHaveLength(0);
+  const calls = model.calls; await f.restart(); expect(model.calls).toBe(calls);
+  memory = openMemory(binding); memory.forget(saved.subject, saved.id, "forget-old-requirement"); memory.close();
+  // A legitimate preference change wakes the existing native wait immediately.
+  await setProactive(f, { cooldownMs: 1 }, "wake-forget"); await f.service.host.drive();
+  rows = await f.events("user-123");
+  expect(ofType(rows, "AikoProactiveSuppressed").some(e => e.id === decision.id)).toBe(true);
+  expect(ofType(rows, "AikoProactiveAccepted")).toHaveLength(0);
+  expect(model.calls).toBe(calls);
+});
 
 test("a user-saved note changes real memory while routine indexing stays silent before inference and after restart", async () => {
   const model = reflectionModel(changed => ({

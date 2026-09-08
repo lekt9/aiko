@@ -1,13 +1,30 @@
+import type { LoginAssistanceView } from "../../../../packages/protocol/src/login-assistance";
 /** Private panel metadata only; credential values are never stored in this model. */
 export interface NativeLoginPanelView {
+  assistance?:LoginAssistanceView;
   status:string;
   domain:string;
+  expiresAt?:number;
   fields?:string[];
+  /** Untrusted generated layout; the registry boundary validates it against fields. */
+  layout?:unknown;
   currentHost?:string;
   requiresOrigin?:string;
+  pageError?:"navigation_failed"|"navigation_uncertain";
   attemptId?:string;
   challenge?:{id:string;revision:number;expiresAt:number};
   submission?:{id:string;challengeId:string;revision:number;status:"dispatched"|"acknowledged"};
+}
+/** Older browser runners may mistake an opaque error document for a provider. */
+export function nativeLoginPageError(view:NativeLoginPanelView|undefined):string|undefined {
+  if(view?.requiresOrigin) {
+    try {
+      const url=new URL(view.requiresOrigin);
+      if(url.protocol!=="https:" || url.origin!==view.requiresOrigin || url.username || url.password || url.port || !url.hostname.includes(".") || url.hostname!==view.currentHost) throw Error();
+    } catch { return "The sign-in website could not be loaded. Reload sign-in to try again."; }
+  }
+  if(view?.pageError==="navigation_uncertain")return "The website stopped responding after your sign-in was sent. Check its status before submitting again.";
+  if(view?.pageError)return "The sign-in website could not be loaded. Reload sign-in to try again.";
 }
 const uuid=(value:unknown):value is string=>typeof value==="string"&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value);
 export class NativeLoginChallengeError extends Error {}

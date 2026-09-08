@@ -10,6 +10,8 @@ import { Self } from "tardie/core/runtime";
 import { envelopeOf } from "tardie/core/communication/envelope";
 import { linkOf } from "tardie/core/communication/link";
 import { childLineageOf, threadCreatedOf } from "tardie/core/thread";
+import { actorCall } from "tardie/core/method";
+import type { Event } from "tardie/core/event";
 import { createControlActor, telegramControl } from "../src/telegram-control.ts";
 import { createVoice } from "../src/voice.ts";
 import { threadBinding } from "../src/account-binding.ts";
@@ -23,6 +25,161 @@ import {
 } from "../src/cloudflare-host.ts";
 
 const databases: Database[] = [];
+
+test("Router delivery checks current authority in its transaction after alarm awaits and never acknowledges rejection", async () => {
+  const durable = storage(), self = { actor: "aiko", instance: "delivery-guard", thread: "user-123" };
+  let inside = false, allowed = true, revokeDuringArm = false, checks = 0;
+  const transaction = durable.transactionSync, getAlarm = durable.getAlarm;
+  durable.transactionSync = run => transaction(() => { inside = true; try { return run(); } finally { inside = false; } });
+  durable.getAlarm = async () => {
+    const at = await getAlarm();
+    if (revokeDuringArm) { allowed = false; revokeDuringArm = false; }
+    return at;
+  };
+  const definition = actor({ name: "aiko", methods: { message: agentMessageMethod }, components: [component({
+    name: "guarded-native-call", initial: () => [] as Event[], step: (events, event) => [...events, event],
+    keys: { prefixes: ["guarded-call:"], keyOf: e => ["StartGuardedCall", "DeliveryRejected"].includes(e.type) ? `guarded-call:${e.type}:${e.id}` : undefined },
+    output: events => ({ view: undefined, transitions: !events.some(e => e.type === "StartGuardedCall") || events.some(e => e.type === "DeliveryRejected") ? [] :
+      actorCall(events, { id: "guarded-message", target: { address: self, methods: { message: agentMessageMethod } }, method: "message", input: { text: "Do this once" } }).transitions.map(transition =>
+        transition.kind !== "effect" ? transition : { ...transition, act: (input, signal) => Effect.gen(function* () {
+          revokeDuringArm = true;
+          return yield* transition.act(input, signal).pipe(Effect.catchCause(() => Effect.succeed([{ type: "DeliveryRejected", id: "guarded-message", at: Date.now() }])));
+        }) }),
+    }),
+  })] });
+  const host = await createCloudflareAccountHost({ storage: durable, actorName: self.actor, actorInstance: self.instance,
+    ownsThread: thread => thread === self.thread, actorFor: () => definition, layersFor: () => Layer.empty,
+    canDeliver: (thread, events, read) => {
+      expect(inside).toBe(true); expect(thread).toBe(self.thread); checks++;
+      expect(read().some(e => e.type === "CallPlanned" && e.id === "guarded-message")).toBe(true);
+      expect(events).toMatchObject([{ type: "MessageReceived", id: "guarded-message", call: { invocation: { method: "message", id: "guarded-message", epoch: 0 } }, link: { source: self, target: self } }]);
+      return allowed;
+    },
+  });
+  try {
+    await host.commitRoot(host.self(self.thread), { type: "StartGuardedCall", id: "start", at: Date.now() });
+    await host.drive();
+    const events = await host.read(self.thread);
+    expect(checks).toBe(1); expect(allowed).toBe(false);
+    expect(events.some(e => e.type === "DeliveryRejected")).toBe(true);
+    expect(events.some(e => ["MessageReceived", "CallDispatched", "ResponseReceived"].includes(e.type))).toBe(false);
+    await host.recover(); expect(checks).toBe(1);
+  } finally { await host.close(); }
+});
+
+test("control append guards native metadata and same-SQL admission without scheduling", async () => {
+  const durable = storage();
+  durable.sql.exec("CREATE TABLE admissions(owner TEXT PRIMARY KEY)");
+  let inside = false, checks = 0, writes = 0;
+  const transaction = durable.transactionSync;
+  durable.transactionSync = run => transaction(() => {
+    inside = true;
+    try { return run(); } finally { inside = false; }
+  });
+  const open = () => createCloudflareAccountHost({
+    storage: durable, actorName: "authority", actorInstance: "registry", ownsThread: t => t === "owner-123",
+    actorFor: () => undefined, layersFor: () => Layer.empty,
+    keyOf: e => typeof e.id === "string" ? `authority:${e.id}` : undefined,
+    canAppend: (_thread, events, read) => {
+      expect(inside).toBe(true);
+      checks++;
+      const history = read().filter(e => e.type === "AuthorityChanged");
+      return events.every(e => {
+        if (e.type === "ThreadCreated") return true;
+        const prior = history.find(row => row.id === e.id);
+        return prior ? JSON.stringify(prior) === JSON.stringify(e) : e.type === "AuthorityChanged" && e.expected === history.length;
+      });
+    },
+  });
+  let host = await open();
+  const admitted = { type: "AuthorityChanged", id: "initialize", expected: 0, at: 1 };
+  const sidecar = () => { writes++; durable.sql.exec("INSERT INTO admissions VALUES(?)", "123"); return undefined; };
+  // Rejection on the first append also rejects the implicit native ThreadCreated.
+  expect(await host.appendControl("owner-123", [{ ...admitted, expected: 2 }], { sidecar })).toEqual({ appended: 0, head: 0 });
+  expect(await host.read("owner-123")).toEqual([]);
+  expect(writes).toBe(0);
+  expect(await host.appendControl("owner-123", [admitted], { sidecar })).toEqual({ appended: 2, head: 2 });
+  expect(writes).toBe(1);
+  expect(durable.sql.exec("SELECT owner FROM admissions").toArray()).toEqual([{ owner: "123" }]);
+  expect(await durable.getAlarm()).toBeNull();
+  expect(host.work()).toBe(0);
+  // Exact retry is acknowledged by retained payload, not by the zero append count.
+  expect(await host.appendControl("owner-123", [admitted], { sidecar })).toEqual({ appended: 0, head: 2 });
+  expect(await host.appendControl("owner-123", [{ ...admitted, expected: 1 }], { sidecar })).toEqual({ appended: 0, head: 2 });
+  expect(writes).toBe(1);
+  await host.close();
+  host = await open();
+  expect((await host.read("owner-123")).at(-1)).toEqual(admitted);
+  // Two requests from the same observed revision cannot both win admission.
+  let transitions = 0;
+  const results = await Promise.all(["prepare-a", "prepare-b"].map(id => host.appendControl("owner-123",
+    [{ type: "AuthorityChanged", id, expected: 1, at: 2 }], { sidecar: () => { transitions++; } })));
+  expect(results.map(result => result.appended)).toEqual([1, 0]);
+  expect(transitions).toBe(1);
+  expect(checks).toBe(6);
+  expect(await durable.getAlarm()).toBeNull();
+  expect(host.work()).toBe(0);
+  await host.close();
+});
+
+test("control append rolls back metadata and admission when its sidecar fails", async () => {
+  const durable = storage();
+  durable.sql.exec("CREATE TABLE admissions(owner TEXT PRIMARY KEY)");
+  const host = await createCloudflareAccountHost({ storage: durable, actorName: "authority", actorInstance: "registry",
+    ownsThread: t => t === "owner-123", actorFor: () => undefined, layersFor: () => Layer.empty, canAppend: () => true });
+  const event = { type: "AuthorityInitialized", at: 1 };
+  await expect(host.appendControl("owner-123", [event], { sidecar: () => {
+    durable.sql.exec("INSERT INTO admissions VALUES(?)", "123");
+    throw new Error("admission failed");
+  } })).rejects.toThrow("admission failed");
+  expect(await host.read("owner-123")).toEqual([]);
+  expect(durable.sql.exec("SELECT owner FROM admissions").toArray()).toEqual([]);
+  let invoked = false;
+  await expect(host.appendControl("owner-123", [event], { sidecar: (async () => {
+    invoked = true;
+    await Promise.resolve();
+    durable.sql.exec("INSERT INTO admissions VALUES(?)", "123");
+  }) as unknown as () => undefined })).rejects.toThrow("must be synchronous");
+  await Promise.resolve();
+  expect(invoked).toBe(false);
+  expect(await host.read("owner-123")).toEqual([]);
+  expect(durable.sql.exec("SELECT owner FROM admissions").toArray()).toEqual([]);
+  expect(await durable.getAlarm()).toBeNull();
+  await host.close();
+});
+
+test("control append survives lost acknowledgement with exact retained metadata", async () => {
+  const durable = storage();
+  const event = { type: "AuthorityPrepared", id: "erase-1", at: 1 };
+  const options = { storage: durable, actorName: "authority", actorInstance: "registry", ownsThread: (t: string) => t === "owner-123",
+    actorFor: () => undefined, layersFor: () => Layer.empty,
+    keyOf: (e: { type: string; [key: string]: unknown }) => typeof e.id === "string" ? e.id : undefined,
+    canAppend: () => true };
+  let host = await createCloudflareAccountHost(options), writes = 0;
+  durable.sync = async () => { throw new Error("acknowledgement lost"); };
+  await expect(host.appendControl("owner-123", [event], { sidecar: () => { writes++; } })).rejects.toThrow("acknowledgement lost");
+  await host.close();
+  durable.sync = async () => {};
+  host = await createCloudflareAccountHost(options);
+  expect((await host.read("owner-123")).at(-1)).toEqual(event);
+  expect(await host.appendControl("owner-123", [event], { sidecar: () => { writes++; } })).toEqual({ appended: 0, head: 2 });
+  expect(writes).toBe(1);
+  expect(await durable.getAlarm()).toBeNull();
+  await host.close();
+});
+
+test("control append requires an explicit synchronous guard and owned lineage", async () => {
+  const options = { storage: storage(), actorName: "authority", actorInstance: "registry", ownsThread: (t: string) => t === "owner-123",
+    actorFor: () => undefined, layersFor: () => Layer.empty };
+  let host = await createCloudflareAccountHost(options);
+  await expect(host.appendControl("owner-123", [{ type: "AuthorityInitialized", at: 1 }])).rejects.toThrow("requires a synchronous guard");
+  await host.close();
+  host = await createCloudflareAccountHost({ ...options, canAppend: () => true });
+  await expect(host.appendControl("foreign", [{ type: "AuthorityInitialized", at: 1 }])).rejects.toThrow();
+  await expect(host.appendControl("owner-123", [{ type: "AuthorityInitialized", at: NaN }])).rejects.toThrow("finite timestamp");
+  expect(await host.read("owner-123")).toEqual([]);
+  await host.close();
+});
 
 test("ingress replaces an expired recovery alarm using the native alarm policy", async () => {
   const durable = storage();
@@ -639,7 +796,7 @@ function workerForAttestation() {
                   path === "workers"
                     ? 'export class DurableObject { constructor() { throw new Error("Attestation must not construct a Durable Object"); } }'
                     : path === "trace"
-                      ? 'const fail=()=>{throw new Error("Attestation must not use browser traces");}; export const browserTraceKeys={keyOf:fail}; export const harKeys={keyOf:fail}; export const decodeBrowserTraceEvent=fail; export const browserRequestEvidenceIdOf=fail; export const assertNetworkSnapshotBackedByLog=fail; export const networkGraphCheckpointOf=fail; export const validatedHarCaptureFactsOf=fail;'
+                      ? 'const fail=()=>{throw new Error("Attestation must not use browser traces");}; export const browserTraceKeys={keyOf:fail}; export const harKeys={keyOf:fail}; export const browserToolActionOf=fail; export const browserToolCategoryOf=fail; export const BROWSER_TRACE_SCHEMA_VERSION="attestation-disabled"; export const BROWSER_TRACE_REDACTION_REVISION="attestation-disabled"; export const decodeBrowserTraceEvent=fail; export const browserRequestEvidenceIdOf=fail; export const assertNetworkSnapshotBackedByLog=fail; export const networkGraphCheckpointOf=fail; export const validatedHarCaptureFactsOf=fail;'
                       : 'export function createCloudflareCapabilities() { throw new Error("Attestation must not allocate a VM or call a provider"); }',
               }),
             );

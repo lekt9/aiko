@@ -8,7 +8,7 @@ import {
   type ChannelLogSourceGrant,
   type ChannelLogSourceKind,
 } from "../src/channel-log-source.ts";
-import { browserToolResultEventOf } from "../../../packages/browser-harness/src/browser-trace.ts";
+import { browserToolResultEventOf } from "@unbrowse/browser-harness/trace";
 import { harnessDigest } from "../src/harness-library.ts";
 import {
   loginObservationEvent,

@@ -30,6 +30,19 @@ test('connector routes reject invalid arguments and private domains without secr
  expect((await app.request('/api/connectors?owner=456')).status).toBe(400);
 });
 
+test("login import batches require write scope and stay in the authenticated account", async () => {
+ const app = await setup();
+ const rows = Array.from({ length: 500 }, (_, i) => ({ name: `App ${i}`, website: `site${i}.com`, username: `person${i}@example.com` }));
+ expect((await app.request("/api/connectors/imports/logins", reader, { rows })).status).toBe(403);
+ expect((await app.request("/api/connectors/imports/logins", "invalid-token", { rows })).status).toBe(401);
+ const imported = await app.request("/api/connectors/imports/logins", alice, { rows });
+ expect(imported.status).toBe(200);
+ expect((await imported.json()).imported).toBe(500);
+ expect((await (await app.request("/api/connectors/connections", bob)).json()).connections).toHaveLength(0);
+ expect((await (await app.request("/api/connectors/connections", alice)).json()).connections).toHaveLength(500);
+ expect(app.calls).toHaveLength(0);
+});
+
 test('router API executes the native account actor and returns separate task routes',async()=>{
  const app=await setup();
  const response=await app.request('/v1/connectors/route',alice,{tasks:[{id:'repos',query:'GitHub list repositories',domain:'github.com'}]});

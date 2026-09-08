@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { expect, onTestFinished, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -9,8 +9,6 @@ import { sandboxEnvironment } from "../src/sandbox-job-runner.ts";
 import { sandboxJobJournal } from "../src/sandbox-job-journal.ts";
 import { runCodeSegment } from "../src/code-sandbox-runner.ts";
 
-const cleanups: (() => Promise<unknown>)[] = [];
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 let workerModule: Promise<any> | undefined;
 export function productionWorker() {
   return workerModule ??= (async () => {
@@ -33,14 +31,15 @@ export function productionWorker() {
  * Router, experiment controller, verifier or checked result is replaced. */
 export function durableStorage(db: Database, afterCommit?: () => void) {
   db.exec("CREATE TABLE IF NOT EXISTS fixture_kv(key TEXT PRIMARY KEY, value BLOB NOT NULL)");
-  const get = async (key: string) => {
+  const getSync = (key: string) => {
     const row = db.query("SELECT value FROM fixture_kv WHERE key=?").get(key) as { value: Uint8Array } | null;
     return row ? deserialize(row.value) : undefined;
   };
+  const get = async (key: string) => getSync(key);
   const put = async (key: string, value: unknown) => { db.query("INSERT OR REPLACE INTO fixture_kv VALUES(?,?)").run(key, serialize(value)); };
   let transactionTail: Promise<unknown> = Promise.resolve();
   const storage: any = {
-    get, put,
+    get, put, kv: { get: getSync },
     delete: async (key: string) => { db.query("DELETE FROM fixture_kv WHERE key=?").run(key); },
     list: async ({ prefix = "" } = {}) => new Map((db.query("SELECT key,value FROM fixture_kv WHERE key LIKE ? ORDER BY key").all(prefix + "%") as { key: string; value: Uint8Array }[]).map(row => [row.key, deserialize(row.value)])),
     sql: { exec: (sql: string, ...args: any[]) => {
@@ -68,7 +67,17 @@ function sse(value: unknown, call = false) {
 const privateInput = "PRIVATE_WORKER_RUNTIME_INPUT_f936b";
 const program = `const policy=await tools.describe({name:"harness_experiment_start"});if(!policy.description.includes('"proposalTokens":1024'))throw Error("Host limits undiscoverable");const ready=await tools.call({name:"harness_acquire",arguments:{name:"json.project",operationId:"worker-acquire"}});if(ready.status!=="ready")throw Error("acquisition unavailable");const list=await tools.call({name:"harness_list",arguments:{}});const digest=list.candidates.find(c=>c.name==="json.project").harnessDigest;for(let i=0;i<3;i++){const witness=await tools.call({name:"harness_run",arguments:{digest,input:{value:{visible:String.fromCharCode(${[...privateInput].map(c=>c.charCodeAt(0)).join(",")}),omit:true},keys:["visible"]},operationId:"worker-ordinary-"+i}});if(witness.status!=="satisfied")throw Error("not checked");}await tools.call({name:"respond",arguments:{text:"Controlled Worker operations completed."}});return "done";`;
 
-export async function fixture(options: { program?: string; logSources?: import("../src/channel-log-source.ts").ChannelLogSourcePolicy } = {}) {
+export async function fixture(options: { program?: string; logSources?: import("../src/channel-log-source.ts").ChannelLogSourcePolicy; allowBootFailure?: boolean } = {}) {
+  const cleanups: (() => Promise<unknown>)[] = [];
+  // Imported fixtures must attach teardown to the invoking test. A module's
+  // afterEach does not cover tests in other files that call this factory.
+  onTestFinished(async () => {
+    const errors: unknown[] = [];
+    for (const cleanup of cleanups.splice(0).reverse()) {
+      try { await cleanup(); } catch (error) { errors.push(error); }
+    }
+    if (errors.length) throw new AggregateError(errors, "Worker fixture cleanup failed");
+  });
   const module = await productionWorker(), directory = await mkdtemp("/tmp/optimizer-worker-");
   cleanups.push(() => rm(directory, { recursive: true, force: true }));
   const originalFetch = globalThis.fetch;
@@ -94,7 +103,12 @@ export async function fixture(options: { program?: string; logSources?: import("
   };
   let storage = durableStorage(db, captureWork), account: any;
   const driving = new Set<Promise<unknown>>();
-  cleanups.push(async () => { const runtime = await account?.runtime; await runtime?.host.close(); await Promise.allSettled([...driving]); db.close(); });
+  cleanups.push(async () => {
+    let runtime;
+    try { runtime = await account?.runtime; }
+    catch (error) { if (!options.allowBootFailure) throw error; }
+    await runtime?.host.close(); await Promise.allSettled([...driving]); db.close();
+  });
   const environment = await sandboxEnvironment("worker-production-registry-fixture");
   const token = "worker-fixture-owner-token-1234567890123456789";
   const requests: any[] = [], jobs: any[] = [];
@@ -136,6 +150,7 @@ export async function fixture(options: { program?: string; logSources?: import("
   }), env);
   const events = () => db.query("SELECT event FROM aiko_thread_events WHERE thread='user-123' ORDER BY seq").all().map((row: any) => JSON.parse(row.event));
   return { env, request, requests, jobs, events,
+    raw: (request: Request) => module.default.fetch(request, env),
     nativeHost: async () => (await account.runtime).host,
     onJob: (hook: typeof onJob) => { onJob = hook; },
     file: join(directory, "account.sqlite"),

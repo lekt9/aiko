@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole } from "lucide-react";
+import { KeyRound, LoaderCircle, LockKeyhole } from "lucide-react";
+import { NativeLoginFields } from "./native-login-fields";
+import { NativeLoginAssistance } from "./native-login-assistance";
+import { nativeLoginRenderSpec } from "../lib/native-login-render";
 import { MiniAppScreen } from "./mini-app-screen";
+import { isGmailDomain } from "../../../../packages/protocol/src/google-connection";
 import {
   MiniAppAuthenticationError,
   type PasswordManager,
 } from "../lib/connectors";
 
-import { NativeLoginChallengeError, nativeOtpSubmission, type NativeLoginPanelView as View } from "../lib/native-login-input";
+import { NativeLoginChallengeError, nativeLoginPageError, nativeOtpSubmission, type NativeLoginPanelView as View } from "../lib/native-login-input";
 
 export function NativeLoginPanel({
   connectionId,
@@ -22,8 +26,14 @@ export function NativeLoginPanel({
   /** Staged from a password manager import; prefills the sign-in. */
   username?: string;
 }) {
-  const [view, setView] = useState<View>();
-  const [busy, setBusy] = useState(false);
+  const [view, setViewState] = useState<View>();
+  const [lastFields, setLastFields] = useState<string[]>([]);
+  function setView(next: View | undefined) {
+    if (next?.fields?.length && nativeLoginRenderSpec(next.fields)) setLastFields(next.fields);
+    setViewState(next);
+  }
+  const pageError = nativeLoginPageError(view);
+  const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -81,9 +91,62 @@ export function NativeLoginPanel({
   const form = useRef<HTMLFormElement>(null);
   const active = useRef(true);
   const controller = useRef<AbortController | undefined>(undefined);
+  const observer = useRef<AbortController | undefined>(undefined);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const [observeUntil] = useState(() => Date.now() + 30 * 60_000);
+  const [observing, setObserving] = useState(false);
+  // Task-bound logins are also observed by the native durable waiter. The open
+  // panel uses the existing verification action for standalone sign-ins too.
+  // Never poll credential actions or replace a code the owner is still typing.
+  useEffect(() => {
+    if (busy || view?.requiresOrigin ||
+        (!submitted && view?.status !== "pending") ||
+        ["connected", "disconnected"].includes(view?.status ?? "")) return;
+    const abort = new AbortController();
+    observer.current = abort;
+    const deadline = Math.min(observeUntil, view?.expiresAt ?? Infinity, view?.challenge?.expiresAt ?? Infinity);
+    let timer: ReturnType<typeof setTimeout>;
+    let checks = 0;
+    const poll = async () => {
+      if (abort.signal.aborted) return;
+      if (Date.now() >= deadline) { setObserving(false); return; }
+      try {
+        if (!controller.current && !cancelling.current) {
+          const next = await requestRef.current<View>("/native", { connectionId, action: "finish" }, abort.signal);
+          if (abort.signal.aborted || controller.current || cancelling.current) return;
+          if (next.status === "connected") {
+            abort.abort();
+            closeRef.current();
+            return;
+          }
+          if (next.status === "disconnected") { abort.abort(); setObserving(false); return; }
+          if (next.assistance) setView(next);
+        }
+      } catch (failure) {
+        if (!abort.signal.aborted && failure instanceof MiniAppAuthenticationError) {
+          setError(failure.message);
+          setObserving(false);
+          abort.abort();
+        }
+      } finally {
+        if (!abort.signal.aborted)
+          timer = setTimeout(poll, Math.min(30_000, 5_000 * 2 ** Math.min(checks++, 3)));
+      }
+    };
+    setObserving(Date.now() < deadline);
+    timer = setTimeout(poll, 5_000);
+    return () => {
+      abort.abort();
+      clearTimeout(timer);
+      if (observer.current === abort) observer.current = undefined;
+      setObserving(false);
+    };
+  }, [busy, connectionId, submitted, view?.status, view?.requiresOrigin, view?.expiresAt, view?.challenge?.expiresAt, observeUntil]);
   async function act(action: string, fields: object = {}) {
     if (cancelling.current) return;
     if (controller.current && !controller.current.signal.aborted) return;
+    observer.current?.abort();
     setBusy(true);
     setError("");
     setProgress([]);
@@ -106,10 +169,26 @@ export function NativeLoginPanel({
         if (abort.signal.aborted) cancelled();
       });
     try {
+      if (action === "assist" || action === "assist_consent") {
+        if (!view?.attemptId) throw Error("Inspect sign-in before continuing");
+        setSubmitted(true); sent = true; form.current?.reset();
+        const result = await request<View>("/native", { connectionId, action, attemptId: view.attemptId, ...fields }, abort.signal);
+        if (!active.current || abort.signal.aborted) return;
+        setView(result);
+        if (result.status === "connected") onClose();
+        return;
+      }
+      if (action === "reload") {
+        const next = await request<View>("/native", { connectionId, action: "navigate", url: `https://${view?.domain ?? domain}/` }, abort.signal);
+        if (!active.current || abort.signal.aborted) return;
+        setView(next);
+        if (nativeLoginPageError(next)) return;
+        action = "form";
+      }
       if (action === "credentials") {
         setPreparing(true);
-        // The UI is usable immediately. Check the destination only after Connect,
-        // and never send credentials until the private browser reports its fields.
+        // Recheck the destination before every submission. Metadata displayed
+        // earlier never authorizes sending credentials to a changed page.
         let ready: View | undefined;
         for (let attempt = 0; attempt < 6; attempt++) {
           if (attempt) await pause();
@@ -119,9 +198,10 @@ export function NativeLoginPanel({
             onClose();
             return;
           }
+          if (nativeLoginPageError(ready) || ready.requiresOrigin) { setView(ready); return; }
           if (ready.fields?.length) break;
         }
-        if (!ready?.fields?.length || ready.requiresOrigin) {
+        if (!ready?.fields?.length || !nativeLoginRenderSpec(ready.fields) || ready.requiresOrigin) {
           setView(ready);
           if (!ready?.requiresOrigin) setError(
             "Aiko couldn’t find supported sign-in fields. Your login has not been sent. Try again, or complete any verification on your phone and check sign-in status.",
@@ -172,7 +252,7 @@ export function NativeLoginPanel({
           onClose();
           return;
         }
-        if (result.requiresOrigin) {
+        if (nativeLoginPageError(result) || result.requiresOrigin) {
           return;
         }
         if (result.fields?.includes("code")) {
@@ -198,7 +278,7 @@ export function NativeLoginPanel({
         const next = await read("form");
         if (!active.current || abort.signal.aborted) return;
         setView(next);
-        if (next.requiresOrigin) {
+        if (nativeLoginPageError(next) || next.requiresOrigin) {
           return;
         }
         if (next.status === "connected") {
@@ -239,6 +319,9 @@ export function NativeLoginPanel({
   }
   useEffect(() => {
     active.current = true;
+    // Discover the current step before asking the owner for credentials. This
+    // endpoint generates composition from field metadata only, never values.
+    void act("form");
     const currentForm = form.current;
     return () => {
       active.current = false;
@@ -284,6 +367,7 @@ export function NativeLoginPanel({
   async function fillWithManager() {
     if (cancelling.current || !pickedEntry) return;
     if (controller.current && !controller.current.signal.aborted) return;
+    observer.current?.abort();
     setBusy(true);
     setError("");
     setManagerError("");
@@ -340,7 +424,7 @@ export function NativeLoginPanel({
         const formView = await read("form");
         if (!active.current || abort.signal.aborted) return;
         setView(formView);
-        if (formView.requiresOrigin) {
+        if (nativeLoginPageError(formView) || formView.requiresOrigin) {
           return;
         }
         if (formView.status === "connected") {
@@ -375,7 +459,8 @@ export function NativeLoginPanel({
     }
   }
   async function approveOrigin() {
-    if (busy || controller.current || cancelling.current || !view?.requiresOrigin) return;
+    if (busy || controller.current || cancelling.current || pageError || !view?.requiresOrigin) return;
+    observer.current?.abort();
     const abort = new AbortController();
     controller.current = abort;
     setBusy(true);
@@ -411,6 +496,7 @@ export function NativeLoginPanel({
   async function cancel() {
     if (cancelling.current) return;
     cancelling.current = true;
+    observer.current?.abort();
     controller.current?.abort();
     form.current?.reset();
     setShowPassword(false);
@@ -438,7 +524,10 @@ export function NativeLoginPanel({
       if (active.current) setBusy(false);
     }
   }
-  const fields = view?.fields?.length ? view.fields : ["username", "password"];
+  // Preserve the last observed DOM inputs (disabled) during a recoverable
+  // read failure. Never invent fields or keep old inputs after dispatch.
+  const fields = Array.isArray(view?.fields) && view.fields.length ? view.fields : submitted ? [] : lastFields;
+  const fieldsReady = !!view?.fields?.length && !!nativeLoginRenderSpec(view.fields) && !pageError;
   const website = view?.domain ?? domain ?? "your website";
   return (
     <MiniAppScreen title="Connect app" close={() => void cancel()}>
@@ -452,8 +541,8 @@ export function NativeLoginPanel({
             <KeyRound size={26} aria-hidden="true" />
           </span>
           <div>
-            <h3>{website}</h3>
-            <p>Enter your login</p>
+            <h3>{isGmailDomain(website) ? "Gmail" : website}</h3>
+            <p>{isGmailDomain(website) ? "Sign in with your Google account" : "Enter your login"}</p>
           </div>
         </div>
         {error && (
@@ -475,6 +564,11 @@ export function NativeLoginPanel({
                 : "Getting your login ready…"}
           </p>
         )}
+        {observing && !busy && (
+          <p className="credential-progress" role="status">
+            Waiting for verification. If you approve in the app, Aiko will check automatically.
+          </p>
+        )}
         {!!progress.length && (
           <details className="credential-setup" open>
             <summary>Connection progress</summary>
@@ -494,7 +588,10 @@ export function NativeLoginPanel({
             </ol>
           </details>
         )}
-        {!view?.requiresOrigin && (
+        <NativeLoginAssistance domain={website} view={view?.assistance} busy={busy} ready={!!view?.attemptId && !pageError} request={request}
+          start={(assistMethod, sourceConnectionId) => void act("assist", { assistMethod, sourceConnectionId, assistanceId: crypto.randomUUID() })}
+          approve={() => void act("assist_consent", { assistanceId: view?.assistance?.id })} />
+        {!view?.assistance && (!view?.requiresOrigin || pageError) && (
           <form
             ref={form}
             autoComplete="on"
@@ -512,93 +609,21 @@ export function NativeLoginPanel({
               void act("credentials", credentials);
             }}
           >
-            {!!fields.length && (
-              <div className="credential-fields">
-                {fields.includes("username") && (
-                  <div className="credential-field">
-                    <label htmlFor="website-username">Email or username</label>
-                    <input
-                      id="website-username"
-                      name="username"
-                      type="text"
-                      placeholder="you@example.com"
-                      autoComplete="username"
-                      autoCapitalize="none"
-                      spellCheck={false}
-                      maxLength={2048}
-                      required
-                      defaultValue={username ?? ""}
-                      disabled={busy}
-                    />
-                  </div>
-                )}
-                {fields.includes("password") && (
-                  <div className="credential-field">
-                    <label htmlFor="website-password">Password</label>
-                    <div className="credential-password">
-                      <input
-                        id="website-password"
-                        name="password"
-                        type={showPassword ? "text" : "password"}
-                        placeholder="Enter your password"
-                        autoComplete="current-password"
-                        maxLength={2048}
-                        required
-                        disabled={busy}
-                      />
-                      <button
-                        type="button"
-                        className="icon-button"
-                        aria-label={
-                          showPassword ? "Hide password" : "Show password"
-                        }
-                        aria-pressed={showPassword}
-                        disabled={busy}
-                        onClick={() => setShowPassword((value) => !value)}
-                      >
-                        {showPassword ? (
-                          <EyeOff size={20} aria-hidden="true" />
-                        ) : (
-                          <Eye size={20} aria-hidden="true" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                )}
-                {fields.includes("code") && (
-                  <div className="credential-field">
-                    <label htmlFor="website-code">Verification code</label>
-                    <input
-                      id="website-code"
-                      name="code"
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="Enter code"
-                      autoComplete="one-time-code"
-                      maxLength={2048}
-                      required
-                      disabled={busy}
-                    />
-                  </div>
-                )}
-              </div>
-            )}
-            {!!fields.length && (
-              <button
-                className="button primary credential-submit"
-                disabled={busy}
-                type="submit"
-              >
-                {busy
-                  ? "Connecting…"
-                  : fields.includes("code")
-                    ? "Verify and connect"
-                    : "Connect"}
-              </button>
-            )}
+            <NativeLoginFields
+              key={fields.includes("code")
+                ? `${connectionId}:${view?.attemptId}:${view?.challenge?.id}:${view?.challenge?.revision}:${view?.challenge?.expiresAt}`
+                : connectionId}
+              fields={fields}
+              layout={view?.layout}
+              busy={busy}
+              disabled={busy || !fieldsReady}
+              initialUsername={username}
+              showPassword={showPassword}
+              togglePassword={() => setShowPassword(value => !value)}
+            />
           </form>
         )}
-        {!!sortedEntries.length && !view?.requiresOrigin && (
+        {!!sortedEntries.length && !view?.requiresOrigin && !view?.assistance && (
           <details
             className="manager-fill"
             onToggle={(event) => {
@@ -667,10 +692,11 @@ export function NativeLoginPanel({
             </p>
           </details>
         )}
-        {view?.requiresOrigin && (
+        {pageError && <p className="credential-error" role="alert">{pageError}</p>}
+        {view?.requiresOrigin && !pageError && (
           <div className="native-login-provider" role="status">
             <p>
-              {website} uses {view.requiresOrigin} to sign in. Continue only if
+              {website} opened {view.currentHost} for sign-in. Continue only if
               you recognize this sign-in provider.
             </p>
             <button
@@ -685,6 +711,11 @@ export function NativeLoginPanel({
         )}
         {(view || error) && !busy && (
           <div className="connector-actions">
+            {pageError && !submitted && view?.pageError !== "navigation_uncertain" && (
+              <button type="button" className="button" onClick={() => void act("reload")}>
+                Reload sign-in
+              </button>
+            )}
             <button
               type="button"
               className="button"

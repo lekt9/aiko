@@ -43,6 +43,14 @@ export interface DatabaseDefinition {
 export interface TableDefinition { id: string; databaseId: string; name: string; columns: Column[]; mode: "stored" | "domain" }
 export interface RecordRevision<T> { id: string; revision: number; value: T; at: number; producer: string; deleted: boolean }
 export interface RowData { values: Record<string, Json>; overrides?: Record<string, Json>; entity?: { subject: string; mappingId?: string } }
+export interface EntityMapping {
+  id: string;
+  tableId: string;
+  rowId: string;
+  subject: string;
+  fields: { columnId: string; path: string; authority: "table" | "entity" | "external" }[];
+  baseline?: { rowRevision: number; observationId: string; evidenceId: string; operationId: string };
+}
 export interface Cell {
   state: "ready" | "missing" | "unavailable" | "error";
   freshness: "fresh" | "stale" | "unknown";
@@ -61,6 +69,8 @@ export type Filter =
   | { op: "and" | "or"; filters: Filter[] };
 export interface Query {
   tableId: string;
+  /** Local reads never dispatch sources; fresh evaluation has a separate native path. */
+  mode?: "cached";
   select?: string[];
   filter?: Filter;
   sort?: { field: string; direction: "asc" | "desc" }[];
@@ -80,7 +90,8 @@ export interface QueryDependency {
   rowId?: string;
   rowRevision?: number;
   columnId?: string;
-  source?: { kind: "request"; id: string; contractDigest: string; generation?: string } | { kind: "entity"; subject?: string; observationId?: string };
+  valueVersion?: number;
+  source?: { kind: "request"; id: string; contractDigest: string; generation?: string } | { kind: "entity"; subject?: string; observationId?: string; followHead?: boolean };
   retention?: Retention;
   lineage?: string[];
 }
@@ -100,8 +111,10 @@ export interface ViewDefinition {
   title: string;
   query: Query;
   layout: "table" | "list" | "board" | "calendar" | "chart";
+  titleField?: string;
   groupField?: string;
   dateField?: string;
+  valueField?: string;
 }
 export interface ArtifactDefinition {
   schemaVersion: 1;
@@ -118,6 +131,10 @@ export interface ArtifactDefinition {
   snapshot?: QueryResult;
 }
 export type Command =
+  | { kind: "mapping.define"; mapping: Omit<EntityMapping, "baseline">; expectedRevision: number; expectedRowRevision: number }
+  | { kind: "mapping.promote"; mappingId: string; expectedMappingRevision: number; expectedRowRevision: number; expectedObservationId: string | null; title: string; type: string; resolveConflict?: "publish-table" }
+  | { kind: "mapping.correct"; mappingId: string; expectedMappingRevision: number; expectedRowRevision: number; expectedObservationId: string; values: Record<string, Json> }
+  | { kind: "row.link_entity"; tableId: string; rowId: string; expectedRevision: number; subject: string | null }
   | { kind: "table.refresh"; tableId: string; rowIds?: string[]; columnIds?: string[]; mode?: "all" | "stale"; budget?: { maxRows?: number; maxCalls?: number; maxBytes?: number; timeoutMs?: number } }
   | { kind: "database.create"; database: DatabaseDefinition }
   | { kind: "table.define"; table: TableDefinition; expectedRevision: number }
@@ -125,7 +142,7 @@ export type Command =
   | { kind: "rows.delete"; tableId: string; rows: { id: string; expectedRevision: number }[] }
   | { kind: "view.save"; view: ViewDefinition; expectedRevision: number }
   | { kind: "artifact.create"; artifactId: string; viewId: string; viewRevision: number; title: string; dataMode: "live" | "snapshot" };
-export interface Receipt { operationId: string; revision: number; result: Json; at: number }
+export interface Receipt { operationId: string; revision: number; result: Json; at: number; outcome?: "committed" | "cancelled" | "conflict" | "rejected" | "unavailable" }
 export class DataError extends Error {
   constructor(readonly code: "invalid" | "conflict" | "missing" | "forbidden" | "limit" | "unavailable", message: string) { super(message); this.name = "DataError"; }
 }
