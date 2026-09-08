@@ -408,7 +408,8 @@ for(const loseAck of [false,true])test(`restored private queue rejoins guarded n
   const permit=(await f.events()).find(e=>e.type==="AikoBrowserWatchRestorePermitted")!;
   expect(permit.hostThrough).toBe(1);expect(permit.queueHead).toBe(2);
   expect(f.privateRunner!.status()[0]!.restore).toBeUndefined();
-  expect(f.privateRunner!.status()[0]!.deliveryEpoch).toBe(permit.deliveryEpoch);
+  expect(typeof permit.deliveryEpoch).toBe("string");
+  expect(permit.deliveryEpoch).toBe(f.privateRunner!.status()[0]!.deliveryEpoch);
   const updated=f.channels.watches!.producerGrants()[0]!;
   expect(updated).toMatchObject({producer:grant.producer,epoch:grant.epoch,generation:grant.generation,deliveryEpoch:permit.deliveryEpoch});
   await f.restartPrivate();await f.restart();

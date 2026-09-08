@@ -1888,7 +1888,7 @@ for(const restartFails of [false,true])test(`explicit VM restore reopens held ru
   const f=fixture();await f.sandbox.ensure();const keys=replayKeys(),commands:string[]=[],uploads:string[]=[],requests:any[]=[];
   const lease=watchLease(),proof=restoreProofFor(lease);let running=true,published=0,restoreHealth=0;
   const held={producer:proof.producer,generation:1,lifecycleRevision:0,leaseRevision:0,expiresAt:lease.grant.expiresAt,
-    state:'needs-attention',reason:'restore-authorization-required',restore:{challenge:proof.challenge,at:proof.at,queue:proof.queue}};
+    state:'needs-attention' as const,reason:'restore-authorization-required',restore:{challenge:proof.challenge,at:proof.at,queue:proof.queue}};
   const upload=spyOn(f.sandbox,'upload').mockImplementation(async(_id,_path,text)=>{uploads.push(text);});
   const exec=spyOn(f.sandbox,'exec').mockImplementation(async(id,command)=>{
     expect(id).toBe('vm-fixture');commands.push(command);
@@ -1909,7 +1909,7 @@ for(const restartFails of [false,true])test(`explicit VM restore reopens held ru
     expect(await f.sandbox.restore(async sink=>{
       expect(f.sandbox.busy).toBe(true);
       await sink.write('owner.json',0,new Uint8Array([1]));
-      await sink.commit({version:1,owner:lease.grant.owner,files:[]} as Parameters<typeof sink.commit>[0]);
+      await sink.commit({version:1,id:crypto.randomUUID(),at:Date.now(),owner:lease.grant.owner,files:[]});
       return {restored:true};
     },[])).toEqual({restored:true});
     expect(published).toBe(1);expect(restoreHealth).toBe(1);expect(f.sandbox.busy).toBe(false);

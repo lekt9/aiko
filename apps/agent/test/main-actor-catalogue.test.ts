@@ -117,12 +117,14 @@ for (const backend of ["bun", "account"] as const) {
     const events = await f.run();
     expect(events.filter(e => e.type === "ToolCalled").map(e => e.name)).toEqual(["fixture_work", "respond"]);
     expect(events.some(e => e.type === "TurnCompleted")).toBe(true);
-    expect(f.counts()).toEqual({ work: 1, sends: 1, models: 2 });
+    expect(f.sent).toEqual(["I’m looking into your request now.", "The fixture artifact is ready."]);
+    expect(f.counts()).toEqual({ work: 1, sends: 2, models: 2 });
     expect(f.prompts[0]).toContain("Aiko task discipline");
     expect(f.prompts[0]).toContain("acceptance criteria");
     expect(f.prompts[0]).not.toContain("/home/deck/work/agent-harness");
     expect(await f.restart()).toEqual(events);
-    expect(f.counts()).toEqual({ work: 1, sends: 1, models: 2 });
+    expect(f.sent).toEqual(["I’m looking into your request now.", "The fixture artifact is ready."]);
+    expect(f.counts()).toEqual({ work: 1, sends: 2, models: 2 });
   });
 
   test(`${backend}: final sends inside execute cannot bypass the response boundary; progress still works`, async () => {
