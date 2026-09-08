@@ -62,6 +62,7 @@ export async function webhookActionFixture() {
     lostAdmission = false;
   let permitHook: ((...args: Parameters<ReturnType<typeof browserWatchWebhookActions>["permit"]>) => Promise<void>) | undefined;
   let beforePermitCommit: (() => void) | undefined, losePermitAck = false, commitCapability = true;
+  let beforePermitAppend: (() => Promise<void>) | undefined;
   let delivery: ChannelDelivery = {
     status: "accepted_by_provider",
     evidence: "fixture-accepted",
@@ -243,6 +244,7 @@ export async function webhookActionFixture() {
         transact: async (fn, before) => {
           await before?.();
           const next = fn(await read());
+          if (next.events.some(e => e.type === "AikoBrowserWatchWebhookPermitted")) await beforePermitAppend?.();
           await append(next.events);
           return next.result;
         },
@@ -333,6 +335,7 @@ export async function webhookActionFixture() {
     intent,
     permitHook: (hook: NonNullable<typeof permitHook>) => { permitHook = hook; },
     beforePermitCommit: (hook: () => void) => { beforePermitCommit = hook; },
+    beforePermitAppend: (hook: () => Promise<void>) => { beforePermitAppend = hook; },
     losePermitAck: () => { losePermitAck = true; },
     removeCommitCapability: () => { commitCapability = false; adapter = make(); },
     read,

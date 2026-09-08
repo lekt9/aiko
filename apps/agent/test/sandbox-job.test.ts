@@ -7,6 +7,8 @@ import { sandboxDigest, verifySandboxReceipt, type SandboxJob, type SandboxArtif
 import { runSandboxJob, readSandboxReceipt, sandboxEnvironment } from "../src/sandbox-job-runner.ts";
 import { sandboxJobJournal } from "../src/sandbox-job-journal.ts";
 
+// These tests perform encrypted SQLite I/O and multiple bounded jobs. Keep the
+// fixture deadline separate from each job’s unchanged execution budget.
 const environmentDigest = await sandboxEnvironment("fixture-runner-v1");
 async function job(artifact:SandboxArtifact, extra:Partial<SandboxJob>={}):Promise<SandboxJob> {
   const dependencyLock = artifact.kind === "library" ? Object.fromEntries(Object.entries(artifact.modules).map(([k,v])=>[k,v.digest])) : {};
@@ -32,14 +34,14 @@ test("pinned library build executes bundled dependency in QuickJS and supports h
   const heldout=await runSandboxJob(await job(receipt.builtArtifact!,{input:{n:-3}}),binding);
   expect(heldout.output).toEqual({value:-6,ambient:["undefined","undefined","undefined"]});
   await expect(verifySandboxReceipt(first,{...receipt,output:{value:999}})).rejects.toThrow("integrity");
-}));
+}), 30_000);
 test("owner, artifact, environment, lock and operation conflicts fail closed",()=>fixture(async binding=>{
   const input=await job({kind:"code",code:"return input.n"});
   for(const change of [{owner:"other"},{environmentDigest:await sandboxDigest("other")},{artifact:{kind:"code",code:"return 999"}},{dependencyLock:{unresolved:await sandboxDigest("x")}}])
     await expect(runSandboxJob({...input,...change} as SandboxJob,binding)).rejects.toThrow();
   await runSandboxJob(input,binding);
   await expect(runSandboxJob({...input,input:{n:8}},binding)).rejects.toThrow("identity conflict");
-}));
+}), 30_000);
 test("unresolved imports, CPU exhaustion, output bounds and cancellation are terminal failures",()=>fixture(async binding=>{
   const source='import fs from "node:fs"; export default () => fs.readFileSync("/etc/passwd");';
   const artifact:SandboxArtifact={kind:"library",entry:"main",modules:{main:{source,digest:await sandboxDigest(source)}}};
@@ -47,7 +49,7 @@ test("unresolved imports, CPU exhaustion, output bounds and cancellation are ter
   expect((await runSandboxJob(await job({kind:"code",code:"while(true){}"}),binding)).status).toBe("failed");
   expect((await runSandboxJob(await job({kind:"code",code:'return "x".repeat(50000)'}),binding)).status).toBe("failed");
   expect((await runSandboxJob(await job({kind:"code",code:"return 1"}),binding,AbortSignal.abort())).status).toBe("failed");
-}));
+}), 30_000);
 test("durable receipt survives reopen; interrupted dispatch never reruns; private output is encrypted",()=>fixture(async(binding,db,directory)=>{
   const input=await job({kind:"code",code:'return "PRIVATE_FIXTURE_VALUE"'});
   const receipt=await runSandboxJob(input,binding);
@@ -61,7 +63,7 @@ test("durable receipt survives reopen; interrupted dispatch never reruns; privat
     const row=db.query("SELECT receipt FROM sandbox_jobs WHERE id=?").get(input.operationId) as any;
     expect(row.receipt).not.toContain("PRIVATE_FIXTURE_VALUE");
   } finally {reopened.close();}
-}));
+}), 30_000);
 test("vendored network DAG fetches fresh fixture data with no browser and does not duplicate uncertain writes",()=>fixture(async binding=>{
   let requests=0;
   const server=Bun.serve({port:0,hostname:"127.0.0.1",fetch:()=>Response.json({sequence:++requests})});
@@ -85,7 +87,7 @@ test("vendored network DAG fetches fresh fixture data with no browser and does n
     expect((await runSandboxJob(write,lost)).status).toBe("unknown");
     expect(writes).toBe(1);
   } finally {await server.stop(true);}
-}));
+}), 30_000);
 test("network origin/method/request budgets reject before transport and tight CPU budget interrupts",()=>fixture(async binding=>{
   const origin="https://fixture.example";
   const graph:any={schemaVersion:2,executorAbi:"site-harness/1",siteId:"fixture",version:"1",sourceCaptureDigest:await sandboxDigest("capture"),allowedOrigins:[origin],actions:[{id:"read",inputs:[],steps:[{id:"fetch",dependsOn:[],method:"GET",origin,path:"/items",pathParameters:{},query:{},headers:{},expectedStatuses:[200]}]}]};
@@ -95,10 +97,23 @@ test("network origin/method/request budgets reject before transport and tight CP
     expect((await runSandboxJob(await job({kind:"network",graph,actionId:"read"},{input:{},authority}),local)).status).toBe("failed");
   expect((await runSandboxJob(await job({kind:"network",graph,actionId:"read"},{input:{},authority:{origins:[origin],methods:["GET"]},budget:{wallMs:1000,requests:0,outputBytes:1000}}),local)).status).toBe("failed");
   expect(calls).toBe(0);
-  const before=performance.now();
-  expect((await runSandboxJob(await job({kind:"code",code:"while(true){}"},{budget:{wallMs:10,requests:0,outputBytes:1000}}),binding)).status).toBe("failed");
-  expect(performance.now()-before).toBeLessThan(500);
-}));
+  // The execution budget starts after the durable claim and ends before receipt
+  // persistence. Disk fsync latency is not QuickJS execution time.
+  let executionStarted = 0, executionElapsed = Infinity;
+  const timed = { ...binding, journal: { ...binding.journal,
+    claim: async (...args: Parameters<typeof binding.journal.claim>) => {
+      const claimed = await binding.journal.claim(...args);
+      executionStarted = performance.now();
+      return claimed;
+    },
+    settle: async (...args: Parameters<typeof binding.journal.settle>) => {
+      executionElapsed = performance.now() - executionStarted;
+      return binding.journal.settle(...args);
+    },
+  } };
+  expect((await runSandboxJob(await job({kind:"code",code:"while(true){}"},{budget:{wallMs:10,requests:0,outputBytes:1000}}),timed)).status).toBe("failed");
+  expect(executionElapsed).toBeLessThan(500);
+}), 30_000);
 
 test("receipt-only inspection cannot reserve or execute missing work and verifies exact retained identity", () => fixture(async binding => {
   const input = await job({ kind: "code", code: "return input.n * 2;" });
@@ -110,4 +125,4 @@ test("receipt-only inspection cannot reserve or execute missing work and verifie
   await expect(readSandboxReceipt({ ...input, input: { n: 8 } }, readOnly)).rejects.toThrow("identity conflict");
   await expect(readSandboxReceipt({ ...input, owner: "other" }, readOnly)).rejects.toThrow("scope");
   await expect(readSandboxReceipt(input, readOnly, AbortSignal.abort())).rejects.toThrow();
-}));
+}), 30_000);

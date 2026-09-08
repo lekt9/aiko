@@ -50,7 +50,7 @@ import {loginObservationEvent,type NativeLoginObservation} from "./native-login-
 import {connectorLoginEventKey} from "./connector-login.ts";
 import {hostedLoginOperation,guardLoginOperationInput,loginOperationApi} from "./login-operation-host.ts";
 import {loginOperationEventKey} from "./login-operation.ts";
-import { createHostedChannels, channelApi, browserWatchActorAdmissionRequired, browserWatchDispatchAdmissionRequired, type ChannelAdapterBindings, type HostedChannels, type BrowserWatchHostPolicy } from "./channel-host.ts";
+import { createHostedChannels, channelApi, browserWatchDispatchAdmissionRequired, type ChannelAdapterBindings, type HostedChannels, type BrowserWatchHostPolicy } from "./channel-host.ts";
 import { channelEventKey } from "./channel-bindings.ts";
 import { agentKeys } from "tardie/log/events";
 import {

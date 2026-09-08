@@ -78,6 +78,7 @@ async function fixture(options: { guarded?: boolean } = {}) {
   const calls: WebhookRequest[] = [];
   const sandbox = options.guarded ? await setupWebhookSandbox(owner) : undefined;
   let connectionCurrent = true;
+  let beforePermitCommit: () => void = () => {};
   let beforeRequest: () => Promise<void> = async () => {};
   let host!: Awaited<ReturnType<typeof createCloudflareAccountHost>>,
     channels!: ReturnType<typeof createHostedChannels>;
@@ -270,7 +271,9 @@ async function fixture(options: { guarded?: boolean } = {}) {
           ? {
               nativeActions: {
                 webhook: {
-                  commitCurrent: () => connectionCurrent,
+                  commitCurrent: (intent) => connectionCurrent && intent.event.owner === owner &&
+                    intent.event.connectionId === config.connectionId && intent.event.connectionRevision === config.connectionRevision &&
+                    Date.now() < policy.expiresAt,
                   resolve: async (destination) =>
                     destination === "saved-hook"
                       ? {
@@ -320,14 +323,16 @@ async function fixture(options: { guarded?: boolean } = {}) {
         channelWiringEventKey(e) ??
         harnessLibraryEventKey(e) ??
         channelEventKey(e),
-      canAppend: (_t, batch, read) =>
-        channels.dispatchAdmissionAllowed(batch, read) &&
+      canAppend: (_t, batch, read) => {
+        if (batch.some(event => event.type === "AikoBrowserWatchWebhookPermitted")) beforePermitCommit();
+        return channels.dispatchAdmissionAllowed(batch, read) &&
         browserWatchAppendAllowed(batch, read) &&
         browserEventAppendAllowed(batch, read) &&
         channelLogSourceAppendAllowed(batch, read) &&
         channelWiringAppendAllowed(batch, read) &&
         harnessLibraryAppendAllowed(batch, read) &&
-        channelAppendAllowed(batch, read),
+        channelAppendAllowed(batch, read);
+      },
     });
     await channels.refresh();
     return webhook;
@@ -357,6 +362,7 @@ async function fixture(options: { guarded?: boolean } = {}) {
     calls,
     sandbox,
     revokeConnection: () => { connectionCurrent = false; },
+    beforePermitCommit: (callback: () => void) => { beforePermitCommit = callback; },
     get channels() {
       return channels;
     },
@@ -624,10 +630,24 @@ test("native permit with lost encrypted continuation acknowledgement stays uncer
   const before=await f.events(),permit=before.find(e=>e.type==="AikoBrowserWatchWebhookPermitted")!;
   expect(permit).toBeDefined();
   const deliveryId=JSON.parse(privateRunner.received[0]!.body).deliveryId;
+  expect(privateRunner.jobs[0]!.operationId).toBe(`webhook:${deliveryId}`);
+  const operationCount=privateRunner.operations.length;
   expect(await f.channels.watches!.inspect()).toMatchObject([{lastTaskStatus:"unknown"}]);
   await f.restart();await privateRunner.restart();await f.drive();
   expect(privateRunner.sockets).toBe(1);
   expect((await f.events()).filter(e=>e.type==="AikoBrowserWatchWebhookPermitted")).toEqual([permit]);
   expect(JSON.parse(privateRunner.received[0]!.body).deliveryId).toBe(deliveryId);
   expect(privateRunner.operations.filter(value=>value.operation==="guarded-continue")).toHaveLength(1);
+  expect(privateRunner.operations.slice(operationCount).every(value=>value.operation==="harness-receipt")).toBe(true);
+  expect(await f.channels.watches!.inspect()).toMatchObject([{lastTaskStatus:"unknown"}]);
+},20000);
+
+test("synchronous connection revocation at actual native permit append denies the prepared private socket",async()=>{
+  const f=await fixture({guarded:true}),privateRunner=f.sandbox!;await f.setup();let commits=0;
+  f.beforePermitCommit(()=>{commits++;f.revokeConnection();});
+  await f.ingest();await f.drive();
+  expect(commits).toBe(1);expect(privateRunner.dns).toBe(1);expect(privateRunner.sockets).toBe(0);
+  expect((await f.events()).some(event=>event.type==="AikoBrowserWatchWebhookPermitted")).toBe(false);
+  expect(privateRunner.operations.filter(value=>value.operation==="guarded-continue"&&value.input.allow)).toHaveLength(0);
+  await f.restart();await privateRunner.restart();await f.drive();expect(privateRunner.sockets).toBe(0);
 },20000);

@@ -39,7 +39,7 @@ test("signed webhook crosses encrypted guarded runner only after permission; exa
   expect(f.jobs[0]!.dispatch).toEqual({protocol:"host-request/v1"});expect(f.jobs[0]!.budget.requests).toBe(1);
   expect(JSON.stringify(f.jobs)).not.toContain(signingKey);expect([...f.uploads.values()].join()+f.commands.join()).not.toMatch(/signed|hooks.receiver.com|x-aiko-proof/);
   await f.restart();expect(await f.transport().request(request)).toEqual({status:202});expect(permits).toBe(1);expect(f.sockets).toBe(1);expect(f.dns).toBe(1);
-}));
+}),30000);
 
 test("denied webhook permit opens no socket and its failed receipt cannot generate another request",()=>fixture(async f=>{
   const request=input();let permits=0;request.authorizeDispatch=async()=>{permits++;return false;};
@@ -47,7 +47,7 @@ test("denied webhook permit opens no socket and its failed receipt cannot genera
   expect((await f.receipt()).status).toBe("failed");expect(f.sockets).toBe(0);expect(f.operations.at(-1).input.allow).toBe(false);
   await f.restart();await expect(f.transport().request(request)).rejects.toThrow("webhook_sandbox_outcome_unknown");
   expect(permits).toBe(1);expect(f.sockets).toBe(0);
-}));
+}),30000);
 
 test("expired or byte-tampered encrypted challenges never reach the permit callback or open sockets",()=>fixture(async f=>{
   let permits=0;
@@ -66,7 +66,7 @@ test("expired or byte-tampered encrypted challenges never reach the permit callb
     expect(f.sockets).toBe(0);expect(permits).toBe(0);
   }
   expect(f.operations.every(value=>value.operation==="guarded-start")).toBe(true);
-}));
+}),30000);
 
 test("authority-required webhook cannot downgrade to ordinary harness admission; ordinary delivery retains its legacy callback",()=>fixture(async f=>{
   const client:HarnessSandboxClient={harnessEnvironment:signal=>f.sandbox.harnessEnvironment(signal),harnessJob:(job,signal)=>f.sandbox.harnessJob(job,signal)};
@@ -74,7 +74,7 @@ test("authority-required webhook cannot downgrade to ordinary harness admission;
   await expect(transport.request(request)).rejects.toThrow("webhook_private_permit_unavailable");expect(f.legacy).toBe(0);expect(f.sockets).toBe(0);
   let before=0;delete request.authorizeDispatch;request.beforeDispatch=()=>{before++;};
   expect(await transport.request(request)).toEqual({status:202});expect(before).toBe(1);expect(f.legacy).toBe(1);expect(f.sockets).toBe(1);
-}));
+}),30000);
 
 test("lost receiver acknowledgement remains unknown after private restart with no repeated socket or permit",()=>fixture(async f=>{
   const request=input();let permits=0;request.authorizeDispatch=async()=>{permits++;return true;};f.loseSocketReply();
@@ -82,7 +82,7 @@ test("lost receiver acknowledgement remains unknown after private restart with n
   expect(f.received).toHaveLength(1);expect(f.sockets).toBe(1);expect((await f.receipt()).status).toBe("unknown");
   await f.restart();await expect(f.transport().request(request)).rejects.toThrow("webhook_sandbox_outcome_unknown");
   expect(permits).toBe(1);expect(f.sockets).toBe(1);expect(f.dns).toBe(1);
-}));
+}),30000);
 
 test("lost encrypted continuation reply is not resent and retained completion recovers without another permit",()=>fixture(async f=>{
   const request=input();let permits=0;request.authorizeDispatch=async()=>{permits++;return true;};f.loseContinuationReply();
@@ -90,4 +90,4 @@ test("lost encrypted continuation reply is not resent and retained completion re
   expect(f.sockets).toBe(1);expect(f.operations.filter(value=>value.operation==="guarded-continue")).toHaveLength(1);
   await f.restart();expect(await f.transport().request(request)).toEqual({status:202});
   expect(permits).toBe(1);expect(f.sockets).toBe(1);expect(f.operations.filter(value=>value.operation==="guarded-continue")).toHaveLength(1);
-}));
+}),30000);

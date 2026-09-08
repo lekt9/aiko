@@ -14,7 +14,7 @@ await mkdir(directory, { recursive: true, mode: 0o700 });
 const focused = [
   "browser-events", "browser-events-host", "browser-watch-authority",
   "browser-watch-driver", "browser-watch-runner", "browser-watch-assembly", "browser-watch-connector-authority", "browser-watch-policy", "browser-watch-config", "browser-watch-config-host",
-  "browser-watches", "browser-watch-actions", "browser-watch-actor-actions", "browser-watch-webhook-actions", "browser-watch-webhook-assembly",
+  "browser-watches", "browser-watch-actions", "browser-watch-actor-actions", "browser-watch-webhook-actions", "browser-watch-webhook-permit", "browser-watch-webhook-assembly",
   "webhook-adapter", "harness-revisions", "harness-library-api", "harness-recovery", "channel-wiring", "channel-log-source-host", "browser-watch-source-renewal",
   "sandbox-job", "sandbox-dispatch", "webhook-sandbox-dispatch", "harness-observed-network", "harness-library", "observed-network", "browser-learning",
 ].map(name => `apps/agent/test/${name}.test.ts`);

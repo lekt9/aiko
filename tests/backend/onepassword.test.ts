@@ -34,7 +34,7 @@ const connectFetch = (value = KEY, calls: string[] = []) =>
     return new Response("{}", { status: 404 });
   }) as typeof fetch;
 
-const wrapper = (overrides: Record<string, unknown> = {}, fetch?: typeof fetch) =>
+const wrapper = (overrides: Record<string, unknown> = {}, fetchAdapter?: typeof fetch) =>
   new OnePasswordKeyWrapper(
     {
       origin: ORIGIN,
@@ -42,7 +42,7 @@ const wrapper = (overrides: Record<string, unknown> = {}, fetch?: typeof fetch) 
       secretRef: SECRET_REF,
       ...overrides,
     },
-    fetch ?? connectFetch(),
+    fetchAdapter ?? connectFetch(),
   );
 
 describe("1Password key wrapper", () => {

@@ -92,7 +92,7 @@ export function browserWatchWebhookPermitAppendAllowed(batch: readonly Event[], 
     const claim = own.find(p => p.type === "AikoBrowserWatchStarted" && p.id === e.watchOperationId);
     const prepared = own.find(p => p.type === "AikoChannelOutputPrepared" && p.id === e.watchOperationId);
     const channel = channelBindings(own, e.owner).get(String(e.channel));
-    if (!claim || !prepared || !channel || e.watchId !== claim.watchId || e.generation !== claim.generation || e.source !== claim.source ||
+    if (!claim || !prepared || !channel || typeof channel.destination !== "string" || e.watchId !== claim.watchId || e.generation !== claim.generation || e.source !== claim.source ||
       channel.generation !== e.channelGeneration || prepared.channel !== channel.id || prepared.generation !== channel.generation ||
       e.bindingDigest !== channelDigest(channel) || e.destinationDigest !== channelDigest(channel.destination) ||
       !exact(prepared.binding, channel)) return false;
@@ -516,7 +516,7 @@ export function browserWatchWebhookActions(
     }
   }
   const admissions = new Map<string, { intent: BrowserWatchDispatch; operation: "execute" | "reconcile";
-    policyCurrent: () => boolean; signal: AbortSignal; admitted: boolean }>();
+    policyCurrent: () => boolean; signal: AbortSignal; admitted: boolean; denied: boolean }>();
   /** Invoked by the owning host inside its physical append transaction. A
    * cached intent supplies identity only; current authority is read right here. */
   function admissionAllowed(batch: readonly Event[], read: () => readonly Event[]) {
@@ -527,15 +527,19 @@ export function browserWatchWebhookActions(
         const prior = read().find(e => e.type === event.type && e.owner === owner && e.id === event.id);
         if (prior) { if (!exact(prior, event)) return false; continue; }
         const cached = admissions.get(channelDigest(event));
-        if (event.owner !== owner || !cached || cached.signal.aborted || Number(event.expiresAt) <= now() ||
-          binding.commitCurrent?.(structuredClone(cached.intent), cached.operation) !== true || cached.policyCurrent() !== true) return false;
+        if (event.owner !== owner || !cached) return false;
+        if (cached.signal.aborted || Number(event.expiresAt) <= now() ||
+          binding.commitCurrent?.(structuredClone(cached.intent), cached.operation) !== true || cached.policyCurrent() !== true) {
+          cached.denied = true; return false;
+        }
         cached.admitted = true;
       }
       return true;
     } catch { return false; }
   }
-  async function permit(channel: ChannelBinding, operation: ChannelAdapterOperation, input: unknown, key: string,
-    raw: ChannelDispatchPermitIdentity, signal: AbortSignal, policyCurrent?: () => boolean): Promise<ChannelDispatchPermitResult> {
+  async function permitNow(channel: ChannelBinding, operation: ChannelAdapterOperation, input: unknown, key: string,
+    raw: ChannelDispatchPermitIdentity, signal: AbortSignal, policyCurrent: (() => boolean) | undefined,
+    committing: () => void): Promise<ChannelDispatchPermitResult> {
     const denied: ChannelDispatchPermitResult = { status: "denied" };
     if ((operation !== "send" && operation !== "reconcile") || !binding.commitCurrent || !policyCurrent) return denied;
     let event: Event | undefined, commitAttempted = false;
@@ -556,10 +560,11 @@ export function browserWatchWebhookActions(
         channel: channel.id, channelGeneration: channel.generation, bindingDigest: channelDigest(channel), destinationDigest: channelDigest(channel.destination),
         operation, nativeRequestId: ready.nativeRequestId };
       const fact = event;
-      const cached = { intent: structuredClone(intent), operation: mode as "execute" | "reconcile", policyCurrent, signal, admitted: false };
+      const cached = { intent: structuredClone(intent), operation: mode as "execute" | "reconcile", policyCurrent, signal, admitted: false, denied: false };
       admissions.set(channelDigest(fact), cached);
       if (binding.commitCurrent(structuredClone(intent), mode) !== true || !policyCurrent()) return denied;
       commitAttempted = true;
+      committing();
       const committed = await journal.transact(rows => {
         const prior = rows.find(e => e.type === fact.type && e.owner === owner && e.id === fact.id);
         if (prior) {
@@ -573,11 +578,41 @@ export function browserWatchWebhookActions(
       });
       if (committed === "conflict" || committed === "denied") return denied;
       const retained = (await journal.read()).find(e => e.type === fact.type && e.owner === owner && e.id === fact.id);
+      if (!retained && cached.denied) return denied;
       if (!retained || !exact({ ...retained, at: fact.at }, fact) || committed === "appended" && !cached.admitted)
         return { status: "unknown" };
       return { status: "permitted" };
     } catch { return { status: commitAttempted ? "unknown" : "denied" }; }
     finally { if (event) admissions.delete(channelDigest(event)); }
+  }
+  const permitOperations = new Map<string, Promise<ChannelDispatchPermitResult>>();
+  async function permit(channel: ChannelBinding, operation: ChannelAdapterOperation, input: unknown, key: string,
+    raw: ChannelDispatchPermitIdentity, signal: AbortSignal, policyCurrent?: () => boolean): Promise<ChannelDispatchPermitResult> {
+    if (signal.aborted || !raw || !Number.isSafeInteger(raw.expiresAt) || raw.expiresAt <= now() || raw.expiresAt > now() + 30_000)
+      return { status: "denied" };
+    // Serialize checks for one existing native operation, rather than sharing a
+    // caller's signal or authority result. Snapshot inputs before waiting.
+    let args: [ChannelBinding, unknown, ChannelDispatchPermitIdentity];
+    try { args = structuredClone([channel, input, raw]); } catch { return { status: "denied" }; }
+    const deadline = new AbortController(), currentSignal = AbortSignal.any([signal, deadline.signal]);
+    let commitAttempted = false;
+    let interrupt!: (value: ChannelDispatchPermitResult) => void;
+    const interrupted = new Promise<ChannelDispatchPermitResult>(resolve => { interrupt = resolve; });
+    const abort = () => interrupt({ status: commitAttempted ? "unknown" : "denied" });
+    currentSignal.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(() => deadline.abort(), Math.max(1, raw.expiresAt - now()));
+    const prior = permitOperations.get(key);
+    const next = (prior ?? Promise.resolve()).then(() => currentSignal.aborted
+      ? { status: "denied" as const }
+      : permitNow(args[0], operation, args[1], key, args[2], currentSignal, policyCurrent, () => { commitAttempted = true; }))
+      .catch(() => ({ status: commitAttempted ? "unknown" as const : "denied" as const }));
+    permitOperations.set(key, next);
+    // A timeout ends this RPC, but an uncooperative outstanding commit must keep
+    // its slot until it actually settles. Otherwise a second caller could replace
+    // its admission cache while the first transaction is still alive.
+    void next.then(() => { if (permitOperations.get(key) === next) permitOperations.delete(key); });
+    try { return await Promise.race([next, interrupted]); }
+    finally { clearTimeout(timer); currentSignal.removeEventListener("abort", abort); }
   }
   return { execute, reconcile, authorizeDispatch, permit, admissionAllowed };
 }
