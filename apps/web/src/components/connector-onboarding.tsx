@@ -346,7 +346,7 @@ export function ConnectorOnboarding() {
     setNativeInline(result.nativeInline === true);
     return result.connections;
   }
-  async function openApp(app: DrawerApp) {
+  async function openApp(app: DrawerApp, reconnectId?: string) {
     if (opening.current || pending || !signedIn) return;
     opening.current = true;
     setOpeningApp(app);
@@ -355,6 +355,13 @@ export function ConnectorOnboarding() {
     setAuthorization(undefined);
     setNotice("");
     try {
+      if (reconnectId) {
+        const cleanup = await request<{ status: string; relayDisconnectStatus?: string }>(
+          "/disconnect", { connectionId: reconnectId },
+        );
+        if (cleanup.status !== "disconnected" || cleanup.relayDisconnectStatus !== "confirmed")
+          throw new Error("The previous sign-in could not be closed yet. Try reconnecting again to finish cleanup.");
+      }
       // Password-manager flow: every app opens a private login session for its
       // website where the owner signs in with their own credentials. No OAuth
       // handoff, no catalog round-trip before the login screen appears.
@@ -368,6 +375,7 @@ export function ConnectorOnboarding() {
         setNativeInline(response.nativeInline ?? nativeInline);
         setNativeDomain(app.domain);
         setNativeConnection(response.id);
+        setSelectedConnection(undefined);
         const list = await refresh();
         setNativeUsername(
           list?.find((item) => item.id === response.id)?.importedUsername,
@@ -967,6 +975,23 @@ export function ConnectorOnboarding() {
                   again.
                 </p>
               )}
+            </div>
+          )}
+          {selected.status === "failed" && selected.provider === "browser" && nativeInline && (
+            <div className="connector-actions">
+              <p className="aiko-fineprint">
+                Start a new sign-in to reconnect this app. Aiko will close the previous sign-in first.
+              </p>
+              <button
+                className="button primary"
+                disabled={pending}
+                onClick={() => void openApp({
+                  name: connectionName(selected),
+                  domain: selected.connectorId.replace(/^browser:/, ""),
+                }, selected.id)}
+              >
+                {pending ? "Reconnecting…" : "Reconnect app"}
+              </button>
             </div>
           )}
           <button

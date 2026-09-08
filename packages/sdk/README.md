@@ -210,3 +210,13 @@ Revocation blocks future vault authorization/retrieval/sync. It cannot revoke co
 See `docs/backend-implementation.html` and `docs/backend-verification.html` in the workspace. Tests use real PostgreSQL/HTTP, controlled identity providers, synthetic credentials and isolated Chromium. No live provider account was accessed.
 
 The shipped configurable recipe handles approved fixed-origin JSON/form authentication APIs. Provider-specific browser SSO, passkeys, MFA and device-bound sessions need reviewed implementations; they are not fabricated by the generic adapter. Production owner IdP, database/TLS, key management, authorized source accounts, provider recipes and independent security/operations review are required. The existing vault UI has not been migrated to this service.
+
+Native app custody can opt into `VaultBinding.includeSubdomains` when its trusted
+account binding authorizes the entire app domain. The CDP adapter then exports
+and replaces descendant cookies as well, including cookies created on a new
+subdomain during an action. The default remains exact `domains` matching.
+Custom browser adapters must implement the corresponding optional scope argument
+before enabling this option. Native custody supplies its own encrypted store to
+`createVaultBridge` through the `retrieve`/`sync` interface; it does not require a
+second vault service. See [the native custody guide](../../docs/connector-engine.md)
+for its durable checkpoint and recovery rules.

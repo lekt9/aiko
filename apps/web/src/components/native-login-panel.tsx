@@ -6,7 +6,7 @@ import {
   type PasswordManager,
 } from "../lib/connectors";
 
-import { NativeLoginChallengeError, nativeOtpSubmission, type NativeLoginPanelView as View } from "../lib/native-login-input";
+import { NativeLoginChallengeError, nativeLoginPageError, nativeOtpSubmission, type NativeLoginPanelView as View } from "../lib/native-login-input";
 
 export function NativeLoginPanel({
   connectionId,
@@ -23,6 +23,7 @@ export function NativeLoginPanel({
   username?: string;
 }) {
   const [view, setView] = useState<View>();
+  const pageError = nativeLoginPageError(view);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -81,9 +82,61 @@ export function NativeLoginPanel({
   const form = useRef<HTMLFormElement>(null);
   const active = useRef(true);
   const controller = useRef<AbortController | undefined>(undefined);
+  const observer = useRef<AbortController | undefined>(undefined);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const [observeUntil] = useState(() => Date.now() + 30 * 60_000);
+  const [observing, setObserving] = useState(false);
+  // Task-bound logins are also observed by the native durable waiter. The open
+  // panel uses the existing verification action for standalone sign-ins too.
+  // Never poll credential actions or replace a code the owner is still typing.
+  useEffect(() => {
+    if (busy || view?.requiresOrigin ||
+        (!submitted && view?.status !== "pending") ||
+        ["connected", "disconnected"].includes(view?.status ?? "")) return;
+    const abort = new AbortController();
+    observer.current = abort;
+    const deadline = Math.min(observeUntil, view?.expiresAt ?? Infinity, view?.challenge?.expiresAt ?? Infinity);
+    let timer: ReturnType<typeof setTimeout>;
+    let checks = 0;
+    const poll = async () => {
+      if (abort.signal.aborted) return;
+      if (Date.now() >= deadline) { setObserving(false); return; }
+      try {
+        if (!controller.current && !cancelling.current) {
+          const next = await requestRef.current<View>("/native", { connectionId, action: "finish" }, abort.signal);
+          if (abort.signal.aborted || controller.current || cancelling.current) return;
+          if (next.status === "connected") {
+            abort.abort();
+            closeRef.current();
+            return;
+          }
+          if (next.status === "disconnected") { abort.abort(); setObserving(false); return; }
+        }
+      } catch (failure) {
+        if (!abort.signal.aborted && failure instanceof MiniAppAuthenticationError) {
+          setError(failure.message);
+          setObserving(false);
+          abort.abort();
+        }
+      } finally {
+        if (!abort.signal.aborted)
+          timer = setTimeout(poll, Math.min(30_000, 5_000 * 2 ** Math.min(checks++, 3)));
+      }
+    };
+    setObserving(Date.now() < deadline);
+    timer = setTimeout(poll, 5_000);
+    return () => {
+      abort.abort();
+      clearTimeout(timer);
+      if (observer.current === abort) observer.current = undefined;
+      setObserving(false);
+    };
+  }, [busy, connectionId, submitted, view?.status, view?.requiresOrigin, view?.expiresAt, view?.challenge?.expiresAt, observeUntil]);
   async function act(action: string, fields: object = {}) {
     if (cancelling.current) return;
     if (controller.current && !controller.current.signal.aborted) return;
+    observer.current?.abort();
     setBusy(true);
     setError("");
     setProgress([]);
@@ -106,6 +159,13 @@ export function NativeLoginPanel({
         if (abort.signal.aborted) cancelled();
       });
     try {
+      if (action === "reload") {
+        const next = await request<View>("/native", { connectionId, action: "navigate", url: `https://${view?.domain ?? domain}/` }, abort.signal);
+        if (!active.current || abort.signal.aborted) return;
+        setView(next);
+        if (nativeLoginPageError(next)) return;
+        action = "form";
+      }
       if (action === "credentials") {
         setPreparing(true);
         // The UI is usable immediately. Check the destination only after Connect,
@@ -119,6 +179,7 @@ export function NativeLoginPanel({
             onClose();
             return;
           }
+          if (nativeLoginPageError(ready) || ready.requiresOrigin) { setView(ready); return; }
           if (ready.fields?.length) break;
         }
         if (!ready?.fields?.length || ready.requiresOrigin) {
@@ -172,7 +233,7 @@ export function NativeLoginPanel({
           onClose();
           return;
         }
-        if (result.requiresOrigin) {
+        if (nativeLoginPageError(result) || result.requiresOrigin) {
           return;
         }
         if (result.fields?.includes("code")) {
@@ -198,7 +259,7 @@ export function NativeLoginPanel({
         const next = await read("form");
         if (!active.current || abort.signal.aborted) return;
         setView(next);
-        if (next.requiresOrigin) {
+        if (nativeLoginPageError(next) || next.requiresOrigin) {
           return;
         }
         if (next.status === "connected") {
@@ -284,6 +345,7 @@ export function NativeLoginPanel({
   async function fillWithManager() {
     if (cancelling.current || !pickedEntry) return;
     if (controller.current && !controller.current.signal.aborted) return;
+    observer.current?.abort();
     setBusy(true);
     setError("");
     setManagerError("");
@@ -340,7 +402,7 @@ export function NativeLoginPanel({
         const formView = await read("form");
         if (!active.current || abort.signal.aborted) return;
         setView(formView);
-        if (formView.requiresOrigin) {
+        if (nativeLoginPageError(formView) || formView.requiresOrigin) {
           return;
         }
         if (formView.status === "connected") {
@@ -375,7 +437,8 @@ export function NativeLoginPanel({
     }
   }
   async function approveOrigin() {
-    if (busy || controller.current || cancelling.current || !view?.requiresOrigin) return;
+    if (busy || controller.current || cancelling.current || pageError || !view?.requiresOrigin) return;
+    observer.current?.abort();
     const abort = new AbortController();
     controller.current = abort;
     setBusy(true);
@@ -411,6 +474,7 @@ export function NativeLoginPanel({
   async function cancel() {
     if (cancelling.current) return;
     cancelling.current = true;
+    observer.current?.abort();
     controller.current?.abort();
     form.current?.reset();
     setShowPassword(false);
@@ -475,6 +539,11 @@ export function NativeLoginPanel({
                 : "Getting your login ready…"}
           </p>
         )}
+        {observing && !busy && (
+          <p className="credential-progress" role="status">
+            Waiting for verification. If you approve in the app, Aiko will check automatically.
+          </p>
+        )}
         {!!progress.length && (
           <details className="credential-setup" open>
             <summary>Connection progress</summary>
@@ -494,7 +563,7 @@ export function NativeLoginPanel({
             </ol>
           </details>
         )}
-        {!view?.requiresOrigin && (
+        {(!view?.requiresOrigin || pageError) && (
           <form
             ref={form}
             autoComplete="on"
@@ -667,10 +736,11 @@ export function NativeLoginPanel({
             </p>
           </details>
         )}
-        {view?.requiresOrigin && (
+        {pageError && <p className="credential-error" role="alert">{pageError}</p>}
+        {view?.requiresOrigin && !pageError && (
           <div className="native-login-provider" role="status">
             <p>
-              {website} uses {view.requiresOrigin} to sign in. Continue only if
+              {website} opened {view.currentHost} for sign-in. Continue only if
               you recognize this sign-in provider.
             </p>
             <button
@@ -685,6 +755,11 @@ export function NativeLoginPanel({
         )}
         {(view || error) && !busy && (
           <div className="connector-actions">
+            {pageError && !submitted && view?.pageError !== "navigation_uncertain" && (
+              <button type="button" className="button" onClick={() => void act("reload")}>
+                Reload sign-in
+              </button>
+            )}
             <button
               type="button"
               className="button"

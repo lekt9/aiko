@@ -1,15 +1,19 @@
 import {nativeLoginObservation,loginUuid,type NativeLoginAttemptState} from "./native-login-observation.ts";
 /** Private browser control. Only the authenticated owner API can call this, never an actor tool. */
 import { publicTarget } from "./browser-proxy.ts";
+import { nativeLoginFields, nativeLoginLink } from "./native-login-page.ts";
 export type NativeLoginInput = { attemptId?: string; challengeId?: string; submissionId?: string; expectedRevision?: number; connectionId: string; domain: string; action: "login" | "renew" | "begin" | "status" | "form" | "credentials" | "view" | "click" | "type" | "key" | "scroll" | "finish" | "disconnect" | "navigate" | "allow_origin"; url?: string; credentialReference?: { managerId: string; reference: string }; username?: string; password?: string; code?: string; x?: number; y?: number; text?: string; key?: string; delta?: number };
-export type NativeLoginState = NativeLoginAttemptState & { connectionId: string; domain: string; targetId?: string; preserveTargetIds?: string[]; approvedOrigins?: string[]; status: "pending" | "connected" | "disconnected"; expiresAt: number; revision: number; credentialsSaved?: boolean; expired?: boolean; verifiedSession?: { expiresAt: number; revision: number; credentialsSaved?: boolean } };
-export type NativeLoginView = Pick<NativeLoginAttemptState,"attemptId"|"challenge"|"submission"|"loginReceipts"> & { status: NativeLoginState["status"]; domain: string; currentHost?: string; requiresOrigin?: string; fields?: string[]; screenshot?: string; width?: number; height?: number; expiresAt: number; revision: number; credentialsSaved?: boolean };
+export type NativeLoginState = NativeLoginAttemptState & { connectionId: string; domain: string; targetId?: string; preserveTargetIds?: string[]; approvedOrigins?: string[]; navigationRecovered?: boolean; inputDispatched?: boolean; discoveredLoginUrls?: string[]; status: "pending" | "connected" | "disconnected"; expiresAt: number; revision: number; credentialsSaved?: boolean; expired?: boolean; verifiedSession?: { expiresAt: number; revision: number; credentialsSaved?: boolean } };
+export type NativeLoginView = Pick<NativeLoginAttemptState,"attemptId"|"challenge"|"submission"|"loginReceipts"> & { status: NativeLoginState["status"]; domain: string; currentHost?: string; requiresOrigin?: string; pageError?: "navigation_failed" | "navigation_uncertain"; fields?: string[]; screenshot?: string; width?: number; height?: number; expiresAt: number; revision: number; credentialsSaved?: boolean };
 export type PrivateCdp = {send(method:string,params:object,sessionId?:string):Promise<any>;close():void};
 /** Expired private pages must be cleaned, not merely ignored: they still hold login state. */
 export async function prepareNativeLogin(input: NativeLoginInput, states: NativeLoginState[], run: (input: NativeLoginInput, reason?: "expired") => Promise<NativeLoginView | void>, now = Date.now()) {
   // Explicit cancellation must reach revocation even if verified-page cleanup
   // failed earlier. Cleanup of unrelated expired forms can wait for inspection.
   if (input.action === "disconnect") return;
+  if (input.action !== "status" && states.some(state => state.status === "connected" && state.connectionId !== input.connectionId &&
+      (state.domain === input.domain || state.domain.endsWith(`.${input.domain}`) || input.domain.endsWith(`.${state.domain}`))))
+    throw Error("This app overlaps an existing connection. Disconnect that connection before signing in again");
   if (input.action !== "status" && states.some(state => state.status === "pending" && state.connectionId !== input.connectionId && (state.verifiedSession?.expiresAt ?? state.expiresAt) > now))
     throw Error("Finish the existing private sign-in first");
   let recovered: NativeLoginView | undefined;
@@ -42,7 +46,6 @@ export function validateNativeInput(input: NativeLoginInput) {
   if (input.action === "key" && !["Enter","Tab","Backspace","Escape"].includes(input.key ?? "")) throw Error("Invalid sign-in key");
   if (input.action === "scroll" && (!Number.isFinite(input.delta) || Math.abs(input.delta!) > 640)) throw Error("Invalid sign-in scroll");
 }
-const loginPaths: Record<string,string> = {"linkedin.com":"/login", "instagram.com":"/accounts/login/", "facebook.com":"/login", "x.com":"/i/flow/login", "github.com":"/login", "notion.so":"/login", "slack.com":"/signin", "spotify.com":"/login"};
 export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMissingTarget?:boolean; cdp:PrivateCdp; read():NativeLoginState|undefined; save(state:NativeLoginState):void; credentials?(state:NativeLoginState,input:NativeLoginInput):void; verified?(state:NativeLoginState,cookies:unknown[]):Promise<boolean>}):Promise<NativeLoginView> {
   validateNativeInput(input);
   if(["login","renew"].includes(input.action)) throw Error("Use the private vault renewal operation");
@@ -87,7 +90,7 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMi
     const {targetId}=await cdp.send("Target.createTarget",{url:"about:blank"}); state.targetId=targetId; dependencies.save(state);
     const {sessionId}=await cdp.send("Target.attachToTarget",{targetId,flatten:true});
     await cdp.send("Emulation.setDeviceMetricsOverride",{width:390,height:640,deviceScaleFactor:1,mobile:true},sessionId);
-    await cdp.send("Page.navigate",{url:`https://${input.domain}${loginPaths[input.domain] ?? "/"}`},sessionId);
+    await cdp.send("Page.navigate",{url:`https://${input.domain}/`},sessionId);
   }
   if (!state && input.action === "status") return {status:"pending",domain:input.domain,expiresAt:Date.now()+600000,revision:1};
   if (!state && ["view","form"].includes(input.action)) return nativeLogin({...input,action:"begin"},dependencies);
@@ -146,7 +149,7 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMi
     // Chromium target IDs do not survive a browser/VM restart. Only an explicit
     // form/view read may recreate the page; credential and interaction requests
     // must fail rather than run against a different document.
-    if (["form","view"].includes(input.action) && dependencies.reopenMissingTarget !== false) {
+    if (["form","view"].includes(input.action) && !state.inputDispatched && dependencies.reopenMissingTarget !== false) {
       const targets=await cdp.send("Target.getTargets",{});
       if (Array.isArray(targets.targetInfos) && !targets.targetInfos.some((target:any)=>target.targetId===state!.targetId)) {
         await closeLoginTargets();
@@ -157,12 +160,17 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMi
     }
     throw error;
   }
-  const evaluate=async(expression:string)=>(await cdp.send("Runtime.evaluate",{expression,returnByValue:true},sessionId)).result?.value;
+  const evaluate=async(expression:string)=>{
+    const response=await cdp.send("Runtime.evaluate",{expression,returnByValue:true},sessionId);
+    if(response.exceptionDetails)throw Error("The sign-in page changed during inspection. Check its status to continue.");
+    return response.result?.value;
+  };
   if(input.action==="navigate") {
     const url=publicTarget(input.url!);
+    delete state.navigationRecovered;delete state.discoveredLoginUrls;
     state.approvedOrigins=[...new Set([...(state.approvedOrigins??[]),url.origin])];dependencies.save(state);
-    await cdp.send("Page.navigate",{url:url.href},sessionId);
-    return {...summary(),fields:[]};
+    const navigation=await cdp.send("Page.navigate",{url:url.href},sessionId);
+    return {...summary(),fields:[],...(navigation.errorText ? {pageError:"navigation_failed" as const} : {})};
   }
   // Never type into a redirected third-party origin, even if it resembles this app.
   const hostname=await evaluate("location.hostname");
@@ -171,6 +179,25 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMi
   if (!hostname && ["begin", "form", "view"].includes(input.action)) return {...summary(), fields: []};
   const sameApp=hostname === state.domain || hostname === `www.${state.domain}` || String(hostname).endsWith(`.${state.domain}`);
   const currentOrigin=String(await evaluate("location.origin"));
+  // Opaque/internal documents (including Chromium network-error pages) are not
+  // identity providers. Validate the actual origin before displaying or trusting it.
+  let pageOrigin: URL | undefined;
+  try { pageOrigin=publicTarget(currentOrigin); } catch {}
+  if(pageOrigin?.protocol === "https:" && pageOrigin.hostname!==hostname) {
+    if(["begin","form","view"].includes(input.action))return {...summary(),fields:[]};
+    throw Error("Sign-in page changed; inspect its address again");
+  }
+  if(!pageOrigin || pageOrigin.protocol!=="https:") {
+    if(!["form","view","begin"].includes(input.action))throw Error("The sign-in website could not be loaded. Check its status before continuing.");
+    // Retry only a fresh GET, once per attempt. Never reload a document after
+    // input was dispatched: the website may already have processed that input.
+    if(!state.inputDispatched && !state.navigationRecovered) {
+      state.navigationRecovered=true;dependencies.save(state);
+      const navigation=await cdp.send("Page.navigate",{url:`https://${state.domain}/`},sessionId);
+      return {...summary(),fields:[],...(navigation.errorText ? {pageError:"navigation_failed" as const} : {})};
+    }
+    return {...summary(),fields:[],pageError:state.inputDispatched ? "navigation_uncertain" : "navigation_failed"};
+  }
   if(input.action==="allow_origin") {
     if(currentOrigin!==input.url)throw Error("Sign-in page changed; inspect its address again");
     state.approvedOrigins=[...new Set([...(state.approvedOrigins??[]),currentOrigin])];dependencies.save(state);
@@ -180,14 +207,7 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMi
     throw Error("Sign-in left the selected app");
   }
   // A fixed field vocabulary, never arbitrary site HTML or credential values, reaches the Mini App.
-  const fieldsExpression = `(() => {
-    const visible = e => e instanceof HTMLInputElement && !e.disabled && !e.readOnly && !!e.getClientRects().length;
-    const find = selector => [...document.querySelectorAll(selector)].filter(visible);
-    const password = find('input[type="password"]');
-    const username = find('input[autocomplete="username"],input[type="email"],input[type="tel"],input[name="username"],input[name="login"],input[name="loginfmt"],input[name="identifier"],input[name="session_key"],input[name="email"],input[id="username"]');
-    const code = find('input[autocomplete="one-time-code"],input[name="otp"],input[name="verificationCode"],input[name="pin"]');
-    return {username,password,code};
-  })()`;
+  const fieldsExpression = nativeLoginFields;
   if (input.action === "credentials") {
     // Reject ambiguous forms and foreign submit destinations before inserting any secret.
     const names = (["username","password","code"] as const).filter(name => !!input[name]);
@@ -195,20 +215,21 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMi
       return location.protocol === 'https:' && names.every(n => f[n].length === 1 &&
         (!f[n][0].form || new URL(f[n][0].form.action || location.href).origin === location.origin));})()`);
     if (!safe) throw Error("This sign-in step needs a supported, unambiguous form");
+    state.inputDispatched=true;dependencies.save(state);
     if(input.code && state.attemptId) {
       state.submission={id:input.submissionId!,challengeId:state.challenge!.id,revision:state.challenge!.revision,status:"dispatched"};
       nativeLoginObservation(state,"submission_dispatched"); dependencies.save(state);
     }
     for (const name of names) {
       const focused = await evaluate(`(() => {const f=${fieldsExpression};const e=f[${JSON.stringify(name)}][0];
-        if(location.hostname !== ${JSON.stringify(hostname)} || location.protocol !== 'https:' || !e || (e.form && new URL(e.form.action || location.href).origin !== location.origin)) return false;
+        if(location.origin !== ${JSON.stringify(currentOrigin)} || location.protocol !== 'https:' || !e || (e.form && new URL(e.form.action || location.href).origin !== location.origin)) return false;
         e.focus();e.select();return document.activeElement === e;})()`);
       if (!focused) throw Error("Sign-in page changed; try again");
       await cdp.send("Input.insertText",{text:input[name]},sessionId);
     }
     // Submit the selected login form, not an arbitrary button elsewhere on the page.
     const submitted = await evaluate(`(() => {const e=document.activeElement; const f=e?.form;
-      if(location.hostname !== ${JSON.stringify(hostname)} || location.protocol !== 'https:' || (f && new URL(f.action || location.href).origin !== location.origin)) return false;
+      if(location.origin !== ${JSON.stringify(currentOrigin)} || location.protocol !== 'https:' || (f && new URL(f.action || location.href).origin !== location.origin)) return false;
       if(f) {f.requestSubmit();return true;} return 'enter';})()`);
     if (!submitted) throw Error("Sign-in page changed; inspect it before continuing");
     if(submitted==="enter")for(const type of ["keyDown","keyUp"])await cdp.send("Input.dispatchKeyEvent",{type,key:"Enter",code:"Enter",windowsVirtualKeyCode:13},sessionId);
@@ -218,6 +239,18 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMi
   }
   if (input.action === "form" || input.action === "begin") {
     const fields = await evaluate(`(() => {const f=${fieldsExpression};return Object.keys(f).filter(n => f[n].length === 1);})()`);
+    if(Array.isArray(fields) && !fields.length && !state.inputDispatched && (state.discoveredLoginUrls?.length ?? 0)<3) {
+      const link=await evaluate(nativeLoginLink);
+      let destination: URL | undefined;
+      try { if(typeof link === "string")destination=publicTarget(link); } catch {}
+      if(destination?.protocol === "https:" && destination.href.length<=2048 &&
+        (destination.hostname===state.domain || destination.hostname.endsWith(`.${state.domain}`)) &&
+        !state.discoveredLoginUrls?.includes(destination.href)) {
+        state.discoveredLoginUrls=[...(state.discoveredLoginUrls??[]),destination.href];dependencies.save(state);
+        const navigation=await cdp.send("Page.navigate",{url:destination.href},sessionId);
+        return {...summary(),fields:[],...(navigation.errorText ? {pageError:"navigation_failed" as const} : {})};
+      }
+    }
     if(Array.isArray(fields) && fields.includes("code") && (!state.challenge || state.submission)) {
       if((state.challenge?.revision??0)>=16)throw Error("Login challenge retry limit reached; start a fresh attempt");
       state.attemptId ??= crypto.randomUUID();
@@ -226,6 +259,7 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMi
     }
     return {...summary(),currentHost:String(hostname),fields:Array.isArray(fields) ? fields.filter(n => ["username","password","code"].includes(n)) : []};
   }
+  if(["type","click","key"].includes(input.action)) {state.inputDispatched=true;dependencies.save(state);}
   if(input.action === "type") {
     const editable=await evaluate("['INPUT','TEXTAREA'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable === true");
     if(!editable) throw Error("Choose a login field first");

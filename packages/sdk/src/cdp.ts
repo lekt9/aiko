@@ -42,6 +42,17 @@ export const cdpCookieParameters = (c: VaultCookie) => {
   };
 };
 
+function scopedDomain(
+  domain: string,
+  domains: string[],
+  includeSubdomains: boolean,
+) {
+  const host = domain.replace(/^\./, "");
+  return domains.some(
+    (d) => host === d || (includeSubdomains && host.endsWith(`.${d}`)),
+  );
+}
+
 export async function createCdpCookieAdapter(
   cdp: PrivateCdp,
   binding: { browserContextId: string; targetId: string },
@@ -72,12 +83,12 @@ export async function createCdpCookieAdapter(
     return result.cookies as Record<string, any>[];
   };
   return {
-    async exportCookies(domains) {
+    async exportCookies(domains, includeSubdomains = false) {
       try {
         return cookieJar.parse(
           (await read())
             .filter((c) =>
-              domains.includes(String(c.domain).replace(/^\./, "")),
+              scopedDomain(String(c.domain), domains, includeSubdomains),
             )
             .map(decodeCdpCookie),
         );
@@ -85,20 +96,20 @@ export async function createCdpCookieAdapter(
         throw fault();
       }
     },
-    async replaceCookies(cookies, domains) {
+    async replaceCookies(cookies, domains, includeSubdomains = false) {
       try {
         const input = cookieJar.parse(cookies);
         if (
           input.some(
             (c) =>
-              !domains.includes(c.domain.replace(/^\./, "")) ||
+              !scopedDomain(c.domain, domains, includeSubdomains) ||
               c.hostOnly !== !c.domain.startsWith("."),
           )
         )
           throw fault();
         // CDP has no atomic replace-jar operation: the bridge must suspend ordinary browser actions.
         const scoped = (await read()).filter((c) =>
-          domains.includes(String(c.domain).replace(/^\./, "")),
+          scopedDomain(String(c.domain), domains, includeSubdomains),
         );
         for (const c of scoped) {
           if (c.partitionKeyOpaque) throw fault();

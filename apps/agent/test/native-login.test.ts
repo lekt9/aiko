@@ -25,7 +25,7 @@ test("form reads reopen a missing private target after restart without replaying
    expect(popup).toBe(false);
    expect(state.preserveTargetIds).toEqual(["other-page"]);
    expect(state.approvedOrigins).toBeUndefined();
-   expect(calls.find(c=>c.method==="Page.navigate")?.params.url).toBe("https://linkedin.com/login");
+   expect(calls.find(c=>c.method==="Page.navigate")?.params.url).toBe("https://linkedin.com/");
   }
   expect(calls.some(c=>c.method.startsWith("Input."))).toBe(false);
  }
@@ -88,7 +88,7 @@ test("an uncommitted navigation returns loading metadata without typing or scree
 });
 test("private login checks domain before typing and requires independent signed-in evidence",async()=>{
  let state:NativeLoginState|undefined;let hostname="linkedin.com",authenticated=false;const calls:any[]=[];
- const deps={read:()=>state,save:(s:NativeLoginState)=>{state={...s}},cdp:{close(){},async send(method:string,params:any){calls.push({method,params});if(method === "Target.createTarget")return {targetId:"private"};if(method === "Target.attachToTarget")return {sessionId:"session"};if(method === "Runtime.evaluate")return {result:{value:params.expression === "location.hostname"?hostname:params.expression.includes("Boolean(document")?authenticated:true}};if(method === "Network.getCookies")return {cookies:[{httpOnly:true,secure:true,value:"secret-cookie"}]};if(method === "Storage.getCookies")return {cookies:[]};if(method === "Page.captureScreenshot")return {data:"image"};return {};}}};
+ const deps={read:()=>state,save:(s:NativeLoginState)=>{state={...s}},cdp:{close(){},async send(method:string,params:any){calls.push({method,params});if(method === "Target.createTarget")return {targetId:"private"};if(method === "Target.attachToTarget")return {sessionId:"session"};if(method === "Runtime.evaluate")return {result:{value:params.expression === "location.hostname"?hostname:params.expression === "location.origin"?`https://${hostname}`:params.expression.includes("Boolean(document")?authenticated:true}};if(method === "Network.getCookies")return {cookies:[{httpOnly:true,secure:true,value:"secret-cookie"}]};if(method === "Storage.getCookies")return {cookies:[]};if(method === "Page.captureScreenshot")return {data:"image"};return {};}}};
  await nativeLogin({connectionId:id,domain:"linkedin.com",action:"begin"},deps);expect(state?.status).toBe("pending");
  hostname="phishing.example";await expect(nativeLogin({connectionId:id,domain:"linkedin.com",action:"type",text:"private-password"},deps)).rejects.toThrow();expect(calls.some(c=>c.method === "Input.insertText")).toBe(false);
  hostname="linkedin.com";await expect(nativeLogin({connectionId:id,domain:"linkedin.com",action:"finish"},deps)).rejects.toThrow();expect(state?.status).toBe("pending");
@@ -121,7 +121,7 @@ test("native form returns field names only and submits credentials privately wit
  const deps={read:()=>state,save:(s:NativeLoginState)=>{state=s},cdp:{close(){},async send(method:string,params:any){
   calls.push({method,params});
   if(method === "Target.attachToTarget")return {sessionId:"session"};
-  if(method === "Runtime.evaluate")return {result:{value:params.expression === "location.hostname" ? "linkedin.com" : params.expression.includes("Object.keys(f)") ? ["username","password"] : safe}};
+  if(method === "Runtime.evaluate")return {result:{value:params.expression === "location.hostname" ? "linkedin.com" : params.expression === "location.origin" ? "https://linkedin.com" : params.expression.includes("Object.keys(f)") ? ["username","password"] : safe}};
   return {};
  }}};
  const view=await nativeLogin({connectionId:id,domain:"linkedin.com",action:"form"},deps);
@@ -190,4 +190,73 @@ test("bound attempt missing-page recovery preserves receipt order and invalidate
  const view=await nativeLogin({connectionId:id,domain:"service.net",attemptId,action:"form"},deps);
  expect(view.attemptId).toBe(attemptId);expect(view.challenge!.id).not.toBe(challengeId);expect(view.loginReceipts!.map(e=>e.sequence)).toEqual([3,4]);
  await expect(nativeLogin({connectionId:id,domain:"service.net",attemptId,action:"credentials",challengeId,expectedRevision:1,submissionId:crypto.randomUUID(),code:"PRIVATE_OLD_CODE"},deps)).rejects.toThrow("Stale");expect(inputs).toBe(0);
+});
+
+for (const origin of ["null", "chrome-error://chromewebdata", "http://service.net", "https://127.0.0.1", "https://host.internal"]) {
+ test(`non-public sign-in document ${origin} is never offered as an identity provider`, async () => {
+  let state:NativeLoginState={connectionId:id,domain:"service.net",targetId:"private",status:"pending",revision:1,expiresAt:Date.now()+60000};
+  const calls:string[]=[];
+  const deps={read:()=>state,save:(next:NativeLoginState)=>{state=structuredClone(next)},cdp:{close(){},async send(method:string,p:any){
+   calls.push(method);
+   if(method==="Target.attachToTarget")return {sessionId:"s"};
+   if(method==="Runtime.evaluate")return {result:{value:p.expression==="location.hostname"?(origin==="null"?"chromewebdata":new URL(origin).hostname):origin}};
+   return {};
+  }}};
+  const read=()=>nativeLogin({connectionId:id,domain:state.domain,action:"form"},deps);
+  expect(await read()).toMatchObject({status:"pending",fields:[]});
+  // Recovery is checkpointed, so a second read (including after restart) cannot loop.
+  const failed=await read();
+  expect(failed.pageError).toBe("navigation_failed");
+  expect(failed.requiresOrigin).toBeUndefined();expect(failed.currentHost).toBeUndefined();
+  expect(calls.filter(m=>m==="Page.navigate")).toHaveLength(1);
+  await expect(nativeLogin({connectionId:id,domain:state.domain,action:"credentials",password:"PRIVATE_VALUE"},deps)).rejects.toThrow("could not be loaded");
+  expect(calls).not.toContain("Input.insertText");expect(calls).not.toContain("Page.captureScreenshot");
+ });
+}
+
+test("an error document after credential dispatch remains uncertain without navigation or retyping",async()=>{
+ let state:NativeLoginState={connectionId:id,domain:"service.net",targetId:"private",status:"pending",revision:1,expiresAt:Date.now()+60000};
+ let broken=false;const calls:string[]=[];
+ const deps={read:()=>state,save:(next:NativeLoginState)=>{state=structuredClone(next)},cdp:{close(){},async send(method:string,p:any){
+  calls.push(method);
+  if(method==="Target.attachToTarget")return {sessionId:"s"};
+  if(method==="Input.insertText"){broken=true;throw Error("Lost acknowledgement");}
+  if(method==="Runtime.evaluate")return {result:{value:p.expression==="location.hostname"?(broken?"chromewebdata":"service.net"):p.expression==="location.origin"?(broken?"null":"https://service.net"):true}};
+  return {};
+ }}};
+ await expect(nativeLogin({connectionId:id,domain:state.domain,action:"credentials",password:"PRIVATE_VALUE"},deps)).rejects.toThrow("Lost acknowledgement");
+ expect(state.inputDispatched).toBe(true);
+ const view=await nativeLogin({connectionId:id,domain:state.domain,action:"form"},deps);
+ expect(view.pageError).toBe("navigation_uncertain");expect(view.requiresOrigin).toBeUndefined();
+ expect(calls.filter(m=>m==="Input.insertText")).toHaveLength(1);expect(calls).not.toContain("Page.navigate");
+ expect(JSON.stringify({state,view})).not.toContain("PRIVATE_VALUE");
+});
+
+test("page discovery follows observed same-app HTTPS links once and rejects foreign destinations",async()=>{
+ for(const link of ["https://service.net/member/access","https://accounts.service.net/start","https://phishing.net/login","javascript:alert(1)","https://127.0.0.1/login"]) {
+  let state:NativeLoginState={connectionId:id,domain:"service.net",targetId:"private",status:"pending",revision:1,expiresAt:Date.now()+60000};
+  const urls:string[]=[];
+  const deps={read:()=>state,save:(next:NativeLoginState)=>{state=structuredClone(next)},cdp:{close(){},async send(method:string,p:any){
+   if(method==="Target.attachToTarget")return {sessionId:"s"};
+   if(method==="Page.navigate")urls.push(p.url);
+   if(method==="Runtime.evaluate")return {result:{value:p.expression==="location.hostname"?"service.net":p.expression==="location.origin"?"https://service.net":p.expression.includes("Object.keys(f)")?[]:link}};
+   return {};
+  }}};
+  await nativeLogin({connectionId:id,domain:state.domain,action:"form"},deps);
+  await nativeLogin({connectionId:id,domain:state.domain,action:"form"},deps);
+  expect(urls).toEqual(link.includes("service.net")?[link]:[]);
+ }
+});
+
+
+test("native sign-in cannot establish overlapping app jars, but status and disconnect remain accessible",async()=>{
+  const existing:NativeLoginState={connectionId:"existing",domain:"service.net",status:"connected",revision:2,expiresAt:Date.now()+60000};
+  for(const [domain,state] of [["sub.service.net",existing],["service.net",{...existing,domain:"sub.service.net"}]] as const){
+    const input={connectionId:"new",domain,action:"begin" as const};
+    let calls=0;
+    await expect(prepareNativeLogin(input,[state],async()=>{calls++;})).rejects.toThrow("overlaps an existing connection");
+    await prepareNativeLogin({...input,action:"status"},[state],async()=>{calls++;});
+    await prepareNativeLogin({...input,action:"disconnect"},[state],async()=>{calls++;});
+    expect(calls).toBe(0);
+  }
 });

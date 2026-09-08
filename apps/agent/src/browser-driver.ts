@@ -131,7 +131,10 @@ export function browserDriverFactory(
       if (!persistent) await rm(directory, {recursive:true,force:true});
       throw error;
     }
-    const restoredNativeSessions = new Set<string>();
+    const nativeBridges = new Map<string, {
+      bridge: Awaited<ReturnType<NativeLoginVault["bridge"]>>;
+      close: () => void;
+    }>();
     let nativeBusy = false;
     let privateGeneration = 0;
     const privateLogin = () => nativeBusy || nativeLocked();
@@ -357,10 +360,52 @@ export function browserDriverFactory(
       started = true;
       if (opened) await policy(true);
     }
+    const withNativeSession = async <T>(url: string | undefined, action: () => Promise<T>): Promise<T> => {
+      if (!url) return action();
+      const hostname = publicTarget(url).hostname;
+      const state = selectNativeSession(nativeStates(),hostname);
+      if (!state) return action();
+      await startBrowser();
+      const generation = privateGeneration;
+      const key = `${state.connectionId}:${state.revision}:${hostname}:${generation}`;
+      let entry = nativeBridges.get(key);
+      if (!entry) {
+        for (const [oldKey,old] of nativeBridges) if (oldKey.startsWith(`${state.connectionId}:`)) {
+          old.close();nativeBridges.delete(oldKey);
+        }
+        const connection = await openPrivateBrowserCdp(replayEndpoint!,lifetime.signal);
+        try {
+          const cdp = {send: async (method:string,params:Record<string,unknown>,sessionId?:string) => {
+            lifetime.signal.throwIfAborted();
+            if (privateLogin() || generation !== privateGeneration) throw Error("Private browser authority changed");
+            return connection.send(method,params,sessionId);
+          }};
+          if (!await nativeVault.restore(state,cdp)) throw Error("Reconnect this app to restore its session");
+          const cookies = await nativeVault.session(state);
+          const domains = [...new Set([state.domain,hostname,...(cookies ?? []).map(c => c.domain.replace(/^\./,""))])];
+          const targets = await cdp.send("Target.getTargets",{});
+          const page = targets.targetInfos?.find((t:any) => t.type === "page" && typeof t.browserContextId === "string");
+          if (!page) throw Error("Private browser context unavailable");
+          const adapter = await createOwnedCookieAdapter(cdp,{browserContextId:page.browserContextId,targetId:page.targetId},lifetime.signal);
+          const bridge = await nativeVault.bridge(state,adapter,identity,domains,() => nativeStates().find(s => s.connectionId === state.connectionId));
+          entry = {bridge,close:() => connection.close()};
+          nativeBridges.set(key,entry);
+        } catch (error) {connection.close();throw error;}
+      } else if (!entry.bridge.status().ready) {
+        // A later requested action may recover the latest committed jar. The
+        // action whose checkpoint failed is never retried here.
+        await entry.bridge.recover();
+      }
+      // The SDK preserves successful action results when checkpointing fails,
+      // then fences subsequent actions until the host recovers current custody.
+      return entry.bridge.run(action,() => {console.warn("native_session_checkpoint_pending");});
+    };
     const close = async () => {
       if (closed) return;
       closed = true;
       try {
+        for (const entry of nativeBridges.values()) entry.close();
+        nativeBridges.clear();
         await sessions.close();
         cookieConnection?.close();
         await policy(false);
@@ -399,7 +444,7 @@ export function browserDriverFactory(
         if (!["GET","HEAD"].includes(request.method) || request.body !== undefined || request.redirect !== "manual" || Object.keys(request.headers).length)
           throw Error("Only observed read requests can restore a browser session");
         const target = publicTarget(request.url);
-        const state = nativeStates().find(s => s.status === "connected" && (target.hostname === s.domain || target.hostname.endsWith(`.${s.domain}`)));
+        const state = selectNativeSession(nativeStates(),target.hostname);
         let renewedForRead = false;
         if (!opened || !replayEndpoint || targetOrigin !== target.origin) {
           if (!state) throw Error("Reconnect this app before restoring its request session");
@@ -410,13 +455,13 @@ export function browserDriverFactory(
           }
           await driver.execute({action:"navigate",url:target.origin},lifetime.signal);
         }
-        const read = () => sessions.run(request.url, () =>
+        const read = () => sessions.run(request.url, () => withNativeSession(request.url, () =>
           replayBrowserRequest(
             replayEndpoint!,
             targetOrigin!,
             request,
             lifetime.signal,
-          ),
+          )),
         );
         const result = await read();
         if (result.classification !== "browser_session_required" || renewedForRead) return result;
@@ -641,6 +686,13 @@ export function browserDriverFactory(
           action.action === "navigate" ? action.url : targetOrigin,
           async () => {
             await preparePublicBrowser(signal);
+            if (action.action === "navigate") {
+              const expired = selectNativeSession(nativeStates(),publicTarget(action.url).hostname);
+              if (expired && expired.expiresAt <= Date.now()) {
+                const renewal = await driver.nativeAuth!({connectionId:expired.connectionId,domain:expired.domain,action:"renew"},signal);
+                if (renewal.status !== "connected") throw Error("Private sign-in requires owner input");
+              }
+            }
             await startBrowser();
             await flush();
             const active = AbortSignal.any([
@@ -648,16 +700,10 @@ export function browserDriverFactory(
               ...(signal ? [signal] : []),
             ]);
             if (action.action === "navigate") {
-              const destination = publicTarget(action.url);
-              const state = nativeStates().find(s => s.status === "connected" && (destination.hostname === s.domain || destination.hostname.endsWith(`.${s.domain}`)));
-              if (state && !restoredNativeSessions.has(`${state.connectionId}:${state.revision}`)) {
-                const cdp = await openPrivateBrowserCdp(replayEndpoint!, active);
-                try { await nativeVault.restore(state,cdp); } finally { cdp.close(); }
-                restoredNativeSessions.add(`${state.connectionId}:${state.revision}`);
-              }
               learning.beginNavigation();
               targetOrigin = publicTarget(action.url).origin;
             }
+            return withNativeSession(targetOrigin,async () => {
             const capture = async () => {
               await network.flush();
               await flush();
@@ -710,6 +756,7 @@ export function browserDriverFactory(
               await flush();
               throw error;
             }
+            });
           },
         ),
     };
@@ -888,6 +935,16 @@ export async function openPrivateBrowserCdp(
       signal?.removeEventListener("abort", abort);
     },
   };
+}
+
+/** Overlapping native jars share browser cookie scope and cannot have separate custody. */
+export function selectNativeSession(states: import("./native-login.ts").NativeLoginState[], hostname: string) {
+  const connected = states.filter(s => s.status === "connected");
+  const selected = connected.find(s => hostname === s.domain || hostname.endsWith(`.${s.domain}`));
+  if (selected && connected.some(s => s.connectionId !== selected.connectionId &&
+      (s.domain === selected.domain || s.domain.endsWith(`.${selected.domain}`) || selected.domain.endsWith(`.${s.domain}`))))
+    throw Error("This app has overlapping connections. Disconnect the duplicate before continuing");
+  return selected;
 }
 
 /** Chromium reports an opaque default context ID on targets but requires Storage calls

@@ -7,6 +7,7 @@ import {
   NativeLoginVault,
   nativeLoginCipher,
 } from "../src/native-login-vault.ts";
+import { createCdpCookieAdapter } from "../../../packages/sdk/src/cdp.ts";
 import { renewNativeLogin, submitNativeLogin } from "../src/native-login-renewal.ts";
 
 const id = "12345678-1234-1234-1234-123456789abc";
@@ -520,3 +521,417 @@ test("password manager fills persist the reference and session without copying t
   expect(view.status).toBe("disconnected");expect(pauses).toBe(0);
   expect(f.db.query("SELECT * FROM native_vault").all()).toEqual([]);
  });
+
+async function rotatingFixture(useCdp = false) {
+  const f = await fixture();
+  f.vault.stage(f.state, {
+    connectionId: id,
+    domain: "service.net",
+    action: "credentials",
+    username: "saved-user",
+    password: "saved-password",
+  });
+  f.dependencies.save({ ...f.state, status: "connected", revision: 2 });
+  const initial: import("@unlock/protocol").VaultCookie[] = [
+    cookie,
+    { ...cookie, name: "csrf", httpOnly: false },
+    { ...cookie, name: "removed" },
+  ];
+  await f.vault.verified(f.state, initial);
+  let jar = structuredClone(initial);
+  let failExport = false;
+  const browser = {
+    async replaceCookies(cookies: typeof jar) {
+      jar = structuredClone(cookies);
+    },
+    async exportCookies() {
+      if (failExport) throw Error("Export unavailable");
+      return structuredClone(jar);
+    },
+  };
+  const adapter = useCdp
+    ? await createCdpCookieAdapter(
+        {
+          async send(method, params): Promise<any> {
+            if (method === "Target.getTargetInfo")
+              return { targetInfo: { browserContextId: "owned" } };
+            if (method === "Target.attachToTarget")
+              return { sessionId: "session" };
+            if (method === "Storage.getCookies") return { cookies: jar };
+            if (method === "Network.deleteCookies")
+              jar = jar.filter(
+                (c) =>
+                  !(
+                    c.name === params.name &&
+                    c.domain === params.domain &&
+                    c.path === params.path
+                  ),
+              );
+            if (method === "Storage.setCookies")
+              jar.push(
+                ...(params.cookies as any[]).map((c) => ({
+                  ...c,
+                  domain: c.domain ?? new URL(c.url).hostname,
+                  expires: c.expires ?? -1,
+                })),
+              );
+            return {};
+          },
+        },
+        { browserContextId: "owned", targetId: "page" },
+      )
+    : browser;
+  const bridge = await f.vault.bridge(
+    f.state,
+    adapter,
+    "runtime",
+    ["service.net"],
+    f.dependencies.read,
+  );
+  return {
+    f,
+    browser,
+    bridge,
+    get jar() {
+      return jar;
+    },
+    set jar(value) {
+      jar = value;
+    },
+    failExport() {
+      failExport = true;
+    },
+  };
+}
+
+test("SDK checkpoints rotation and deletions to account ciphertext for a fresh browser, retaining renewal credentials", async () => {
+  const r = await rotatingFixture();
+  const authRevision = r.f.state.revision;
+  expect(
+    await r.bridge.run(async () => {
+      r.jar = [
+        { ...cookie, value: "rotated-session" },
+        { ...cookie, name: "csrf", value: "rotated-csrf", httpOnly: false },
+        {
+          ...cookie,
+          name: "partitioned",
+          value: "partition-value",
+          partitionKey: {
+            topLevelSite: "https://service.net",
+            hasCrossSiteAncestor: true,
+          },
+        },
+      ];
+      return "action-complete";
+    }),
+  ).toBe("action-complete");
+  expect(r.f.state.revision).toBe(authRevision);
+  const reopened = new Database(r.f.path);
+  try {
+    const vault = new NativeLoginVault(reopened, "123", r.f.cipher);
+    let restored: any[] = [];
+    await vault.restore(r.f.state, {
+      async send(method, params): Promise<any> {
+        if (method === "Storage.getCookies") return { cookies: [] };
+        if (method === "Storage.setCookies") restored = (params as {cookies: any[]}).cookies;
+        return {};
+      },
+    });
+    expect(restored.map((c) => [c.name, c.value])).toEqual([
+      ["session", "rotated-session"],
+      ["csrf", "rotated-csrf"],
+      ["partitioned", "partition-value"],
+    ]);
+    expect(restored[2].partitionKey).toEqual({
+      topLevelSite: "https://service.net",
+      hasCrossSiteAncestor: true,
+    });
+    expect(await vault.renew(r.f.state, async (c) => c)).toEqual({
+      username: "saved-user",
+      password: "saved-password",
+    });
+    const foreign = new NativeLoginVault(
+      reopened,
+      "different-owner",
+      r.f.cipher,
+    );
+    await expect(foreign.session(r.f.state)).rejects.toThrow();
+    const plaintext = JSON.stringify(
+      reopened.query("SELECT * FROM native_vault").all(),
+    );
+    for (const secret of ["rotated-session", "rotated-csrf", "saved-password"])
+      expect(plaintext).not.toContain(secret);
+  } finally {
+    reopened.close();
+  }
+});
+
+test("failed post-action export preserves result and durably blocks old-jar restoration and replay after restart", async () => {
+  const r = await rotatingFixture();
+  let actions = 0,
+    failures = 0;
+  expect(
+    await r.bridge.run(
+      async () => {
+        actions++;
+        r.jar = [{ ...cookie, value: "uncheckpointed" }];
+        r.failExport();
+        return "sent-once";
+      },
+      () => failures++,
+    ),
+  ).toBe("sent-once");
+  expect(failures).toBe(1);
+  expect(r.bridge.status().ready).toBe(false);
+  await expect(
+    r.bridge.run(async () => {
+      actions++;
+    }),
+  ).rejects.toThrow();
+  const reopened = new Database(r.f.path);
+  try {
+    const vault = new NativeLoginVault(reopened, "123", r.f.cipher);
+    await expect(vault.session(r.f.state)).rejects.toThrow(
+      "uncertain cookie save",
+    );
+    let browserCalls = 0;
+    await expect(
+      vault.restore(r.f.state, {
+        async send() {
+          browserCalls++;
+          return {};
+        },
+      }),
+    ).rejects.toThrow("uncertain cookie save");
+    expect(browserCalls).toBe(0);
+    await expect(
+      vault.sync(r.f.state, 2, [cookie], r.f.dependencies.read),
+    ).rejects.toThrow("uncertain cookie save");
+    await expect(vault.verified(r.f.state, [cookie])).rejects.toThrow(
+      "uncertain cookie save",
+    );
+    const fresh = { ...r.f.state, revision: r.f.state.revision + 2 };
+    r.f.dependencies.save(fresh);
+    await vault.verified(fresh, [{ ...cookie, value: "newly-verified" }]);
+    expect((await vault.session(fresh))?.[0].value).toBe("newly-verified");
+    await expect(r.bridge.recover()).rejects.toThrow();
+    expect(
+      reopened.query("SELECT * FROM native_cookie_checkpoint").all(),
+    ).toEqual([]);
+  } finally {
+    reopened.close();
+  }
+  expect(actions).toBe(1);
+});
+
+test("in-flight browser action fences another process before it can restore stale cookies", async () => {
+  const r = await rotatingFixture();
+  let release!: () => void, entered!: () => void;
+  const started = new Promise<void>((resolve) => (entered = resolve));
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const running = r.bridge.run(async () => {
+    entered();
+    await gate;
+    r.jar = [{ ...cookie, value: "finished" }];
+  });
+  await started;
+  const reopened = new Database(r.f.path);
+  try {
+    const vault = new NativeLoginVault(reopened, "123", r.f.cipher);
+    await expect(vault.session(r.f.state)).rejects.toThrow(
+      "uncertain cookie save",
+    );
+  } finally {
+    reopened.close();
+    release();
+  }
+  await running;
+  expect((await r.f.vault.session(r.f.state))?.[0].value).toBe("finished");
+});
+
+test("cookie CAS rejects stale writers, foreign scopes and revoked generations", async () => {
+  const r = await rotatingFixture();
+  const results = await Promise.allSettled([
+    r.f.vault.sync(
+      r.f.state,
+      2,
+      [{ ...cookie, value: "writer-a" }],
+      r.f.dependencies.read,
+    ),
+    r.f.vault.sync(
+      r.f.state,
+      2,
+      [{ ...cookie, value: "writer-b" }],
+      r.f.dependencies.read,
+    ),
+  ]);
+  expect(results.filter((x) => x.status === "fulfilled")).toHaveLength(1);
+  expect(results.filter((x) => x.status === "rejected")).toHaveLength(1);
+  for (const invalid of [
+    { ...cookie, domain: ".foreign.net" },
+    { ...cookie, secure: false },
+    {
+      ...cookie,
+      partitionKey: {
+        topLevelSite: "https://foreign.net",
+        hasCrossSiteAncestor: true,
+      },
+    },
+  ])
+    await expect(
+      r.f.vault.sync(r.f.state, 3, [invalid], r.f.dependencies.read),
+    ).rejects.toThrow("scope mismatch");
+  const state = r.f.state;
+  r.f.dependencies.save({
+    ...state,
+    status: "disconnected",
+    revision: state.revision + 1,
+  });
+  await expect(
+    r.f.vault.sync(state, 3, [cookie], r.f.dependencies.read),
+  ).rejects.toThrow("session changed");
+  r.f.vault.remove(id);
+  await expect(
+    r.f.vault.session({ ...state, credentialsSaved: true }),
+  ).rejects.toThrow("session missing");
+});
+
+test("logout checkpoints an empty jar so future browsers cannot resurrect authentication", async () => {
+  const r = await rotatingFixture();
+  await r.bridge.run(async () => {
+    r.jar = [];
+  });
+  expect(r.bridge.status().ready).toBe(false);
+  const restarted = new NativeLoginVault(r.f.db, "123", r.f.cipher);
+  await expect(restarted.session(r.f.state)).rejects.toThrow("session expired");
+  expect(r.f.db.query("SELECT * FROM native_cookie_checkpoint").all()).toEqual(
+    [],
+  );
+});
+
+test("native SDK scope checkpoints cookies on newly discovered app subdomains and preserves foreign cookies", async () => {
+  const r = await rotatingFixture(true);
+  await r.bridge.run(async () => {
+    r.jar.push({
+      ...cookie,
+      name: "new-host",
+      value: "new-host-value",
+      domain: "api.service.net",
+      hostOnly: true,
+    });
+    r.jar.push({
+      ...cookie,
+      name: "foreign",
+      domain: "other.net",
+      hostOnly: true,
+    });
+  });
+  const saved = await new NativeLoginVault(r.f.db, "123", r.f.cipher).session(
+    r.f.state,
+  );
+  expect(saved?.find((c) => c.name === "new-host")).toMatchObject({
+    domain: "api.service.net",
+    value: "new-host-value",
+    hostOnly: true,
+  });
+  expect(saved?.some((c) => c.name === "foreign")).toBe(false);
+  expect(r.jar.some((c) => c.name === "foreign")).toBe(true);
+  await r.bridge.run(async () => {
+    r.jar = r.jar.filter((c) => c.name !== "new-host");
+  });
+  expect(
+    (await r.f.vault.session(r.f.state))?.some((c) => c.name === "new-host"),
+  ).toBe(false);
+});
+
+const rotationEndpoint = process.env.AIKO_SESSION_TEST_CDP;
+(rotationEndpoint ? test : test.skip)(
+  "live Chrome rotation survives encrypted restart into a different empty browser context",
+  async () => {
+    const { openPrivateBrowserCdp, createOwnedCookieAdapter } =
+      await import("../src/browser-driver.ts");
+    const f = await fixture();
+    f.dependencies.save({ ...f.state, status: "connected", revision: 2 });
+    await f.vault.verified(f.state, [cookie]);
+    const cdp = await openPrivateBrowserCdp(rotationEndpoint!);
+    const contexts: string[] = [];
+    const newBrowser = async () => {
+      const { browserContextId } = await cdp.send(
+        "Target.createBrowserContext",
+        {},
+      );
+      contexts.push(browserContextId);
+      const { targetId } = await cdp.send("Target.createTarget", {
+        url: "about:blank",
+        browserContextId,
+      });
+      return {
+        browserContextId,
+        adapter: await createOwnedCookieAdapter(cdp, {
+          browserContextId,
+          targetId,
+        }),
+      };
+    };
+    try {
+      const first = await newBrowser();
+      await first.adapter.replaceCookies([cookie], ["service.net"], true);
+      const bridge = await f.vault.bridge(
+        f.state,
+        first.adapter,
+        "live-runtime",
+        ["service.net"],
+        f.dependencies.read,
+      );
+      await bridge.run(async () => {
+        await first.adapter.replaceCookies(
+          [
+            { ...cookie, value: "LIVE_ROTATED_FIXTURE" },
+            {
+              ...cookie,
+              name: "subdomain",
+              domain: "api.service.net",
+              hostOnly: true,
+              value: "LIVE_HOST_FIXTURE",
+            },
+          ],
+          ["service.net"],
+          true,
+        );
+      });
+      f.vault.close();
+      const reopened = new Database(f.path);
+      try {
+        const vault = new NativeLoginVault(reopened, "123", f.cipher);
+        const second = await newBrowser();
+        expect(
+          await second.adapter.exportCookies(["service.net"], true),
+        ).toEqual([]);
+        await vault.restore(f.state, {
+          send: (method, params) =>
+            cdp.send(method, {
+              ...params,
+              browserContextId: second.browserContextId,
+            }),
+        });
+        const actual = await second.adapter.exportCookies(
+          ["service.net"],
+          true,
+        );
+        expect(actual.find((c) => c.name === "session")?.value).toBe(
+          "LIVE_ROTATED_FIXTURE",
+        );
+        expect(actual.find((c) => c.name === "subdomain")?.value).toBe(
+          "LIVE_HOST_FIXTURE",
+        );
+        expect(actual.every((c) => c.httpOnly && c.secure)).toBe(true);
+      } finally {
+        reopened.close();
+      }
+    } finally {
+      for (const browserContextId of contexts)
+        await cdp.send("Target.disposeBrowserContext", { browserContextId });
+      cdp.close();
+    }
+  },
+);
