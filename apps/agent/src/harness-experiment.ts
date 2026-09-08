@@ -26,7 +26,9 @@ const identifier = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
 const isDigest = (v: unknown): v is HarnessDigest => typeof v === "string" && /^sha256:[a-f0-9]{64}$/.test(v);
 // Measurement identity only. It grants no execution/recovery authority. A new
 // process cannot report elapsed time from another process's monotonic clock.
-const trialClockEpoch = randomUUID();
+// Workers allow randomness inside a request, not during module evaluation.
+let trialClockEpoch: string | undefined;
+const currentTrialClockEpoch = () => trialClockEpoch ??= randomUUID();
 export interface HarnessExperimentLimits {
   candidates: number; runs: number; wallMs: number;
   proposalTokens: number; costUsd: number;
@@ -88,7 +90,7 @@ async function bounded<T>(run: () => Promise<T>, signal: AbortSignal): Promise<T
 const nonnegative = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
 const validCost = (v: unknown): v is number | null => v === null || nonnegative(v);
 const retainedTrialElapsed = (prepared: Event): number | null => {
-  if (prepared.clockEpoch !== trialClockEpoch || !nonnegative(prepared.startedAtMonotonic)) return null;
+  if (prepared.clockEpoch !== currentTrialClockEpoch() || !nonnegative(prepared.startedAtMonotonic)) return null;
   const elapsed = performance.now() - prepared.startedAtMonotonic;
   return nonnegative(elapsed) ? elapsed : null;
 };
@@ -277,7 +279,7 @@ export class HarnessExperiment {
       this.binding.library.guard(preparation.evidence);
       if (preparation.measurements && Object.values(preparation.measurements).some(v => v !== null && (!Number.isSafeInteger(v) || v < 0))) throw Error("Invalid preparation measurement");
       const prepared: Event = { type: "AikoHarnessExperimentPrepared", regimeDigest: preparation.regimeDigest, evidence: preparation.evidence, costUsd: preparation.costUsd,
-        clockEpoch: trialClockEpoch, startedAtMonotonic: beganAt, ...(preparation.measurements ? { measurements: preparation.measurements } : {}) };
+        clockEpoch: currentTrialClockEpoch(), startedAtMonotonic: beganAt, ...(preparation.measurements ? { measurements: preparation.measurements } : {}) };
       const { type: _type, ...preparationData } = prepared;
       await this.emit("Prepared", id, brief.id, preparationData);
       if (harnessExperimentKnownCost(await this.journal.read(), this.binding.library.owner, brief.id) >= brief.limits.costUsd || this.binding.costCeilingUsd && preparation.costUsd !== null && preparation.costUsd > this.binding.costCeilingUsd.trial) return this.settle(brief, "budget-exhausted", "preparation-cost-limit-reached");
