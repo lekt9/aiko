@@ -33,12 +33,13 @@ const signal = () => AbortSignal.timeout(1800000);
 let files: Awaited<ReturnType<typeof createMediaFixtures>>, runtime: SandboxPythonRuntime, source: string, inspectorSource: string;
 const cleanups: (() => Promise<void>)[] = [];
 beforeAll(async () => {
-  if (!mediaReady) return;
+  const packages = process.env.MEDIA_HARNESS_PACKAGES, models = process.env.MEDIA_HARNESS_MODELS;
+  if (!packages || !models) return;
   files = await createMediaFixtures();
   await mediaCommand(["/usr/bin/espeak-ng", "-v", "en-us", "-s", "135", "-w", join(files.directory, "normal-owned.wav"), "A silver bicycle is parked beside the small garden gate."]);
   await mediaCommand(["/usr/bin/ffmpeg","-nostdin","-v","error","-i",join(files.directory,"com_00610_00008909944.wav"),"-af","volume=0.8","-y",join(files.directory,"normal-owned-es.wav")]);
-  await verifyMediaModelDirectory(join(process.env.MEDIA_HARNESS_MODELS, "whisper-tiny"), multilingualPins.model);
-  runtime = await createPythonSandboxRuntime({ packages: process.env.MEDIA_HARNESS_PACKAGES, models: process.env.MEDIA_HARNESS_MODELS,
+  await verifyMediaModelDirectory(join(models, "whisper-tiny"), multilingualPins.model);
+  runtime = await createPythonSandboxRuntime({ packages, models,
     tools: { ffmpeg: "/usr/bin/ffmpeg", ffprobe: "/usr/bin/ffprobe" }, sharedLibraries: ["/usr/lib/libSDL3.so.0"] });
   expect(runtime.lock.version).toBe(2);
   source = await readFile(new URL("../assets/media-harness.py", import.meta.url), "utf8");
