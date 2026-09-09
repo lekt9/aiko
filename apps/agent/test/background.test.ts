@@ -686,10 +686,21 @@ test("a user-saved note changes real memory while routine indexing stays silent 
   } finally { memory.close(); }
   expect(model.calls).toBe(0);
   expect(ofType(foreground, "AikoProactiveAccepted")).toHaveLength(0);
-  expect(f.deliveries).toHaveLength(deliveries + 1); // The requested foreground reply only.
+  // Silent tool work sends one native progress line, then the requested reply.
+  // Indexing must not add a third interruption after those two.
+  const rememberTurn = f.deliveries
+    .slice(deliveries)
+    .map((d) => String(d.text ?? ""));
+  expect(rememberTurn).toHaveLength(2);
+  expect(rememberTurn[0]).toBe("I’m looking into your request now.");
+  expect(rememberTurn[1]).toContain("Saved an agent memory claim");
+  expect(rememberTurn[1]).toContain("Aurorapanda release review is on Thursday");
+  expect(rememberTurn.some((text) => text.includes("Unrequested note alert"))).toBe(false);
   await f.restart();
   expect(model.calls).toBe(0);
-  expect(f.deliveries).toHaveLength(deliveries + 1);
+  expect(
+    f.deliveries.slice(deliveries).map((d) => String(d.text ?? "")),
+  ).toEqual(rememberTurn);
   expect(ofType(await f.events("user-123"), "AikoProactiveAccepted")).toHaveLength(0);
 });
 
