@@ -893,6 +893,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                     config.modelRouting!.roles.conversation.model,
                   redact,
                 }),
+                readSandboxFile: (input) =>
+                  capabilities.compute.exportFile(input.path, input.signal, input.limitBytes),
               }
             : {}),
         })
@@ -2156,6 +2158,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                         "telegram_send",
                         "telegram_voice",
                         "telegram_screenshot",
+                        "telegram_sandbox_media",
                       ].includes(
                         (e.result as { action?: string } | undefined)?.action ??
                           "",

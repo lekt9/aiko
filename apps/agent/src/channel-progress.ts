@@ -18,7 +18,7 @@ type Progress = {
   context?: { replyTo?: number; messageThreadId?: number };
 };
 type Turn = { epoch: number; done: boolean; feedbackPlanned: boolean; context: Progress["context"]; pending?: Progress };
-const messageTools = new Set(["send_message", "telegram_send", "telegram_voice", "telegram_screenshot", "respond"]);
+const messageTools = new Set(["send_message", "telegram_send", "telegram_voice", "telegram_screenshot", "telegram_sandbox_media", "respond"]);
 
 function progress(turn: string, current: Turn, text: string, source: Progress["source"]): Progress {
   return {

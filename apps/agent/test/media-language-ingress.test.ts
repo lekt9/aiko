@@ -1,4 +1,7 @@
 import {test,expect} from 'bun:test';
+import {existsSync} from 'node:fs';
+const modelRoot=process.env.MEDIA_HARNESS_MODELS??'/tmp/unlock-media-multilingual-models';
+const modelsReady=existsSync(modelRoot+'/whisper-tiny/config.json');
 import {normalizeTelegramUpdate,serializeTelegramInbound} from '../src/telegram-normalize.ts';
 import {mediaIngressApi} from '../src/media-host.ts';
 test('private Telegram locale survives normalized durable ingress as a bounded language hint',()=>{
@@ -11,11 +14,11 @@ test('missing isolated runtime never admits media or publishes a model variant',
  for(const path of ['/api/media','/api/media/catalog'])expect((await mediaIngressApi(new Request('http://fixture'+path,{method:'POST',body:'{}'}),'123',undefined,()=>{throw Error('No wake');})).status).toBe(503);
 });
 
-test('published multilingual model requires the exact retained file hashes',async()=>{
+test.skipIf(!modelsReady)('published multilingual model requires the exact retained file hashes',async()=>{
  const {verifyMediaModelDirectory}=await import('../src/harness-media-lock.ts');
  const pin=(await import('../assets/media-multilingual-model.lock.json')).default.model;
  const {mkdtemp,readFile,writeFile,rm}=await import('node:fs/promises');
- const root=process.env.MEDIA_HARNESS_MODELS??'/tmp/unlock-media-multilingual-models';
+ const root=modelRoot;
  await verifyMediaModelDirectory(root+'/whisper-tiny',pin);
  const dir=await mkdtemp('/tmp/model-hash-denial-');try{const bytes=await readFile(root+'/whisper-tiny/config.json');bytes[0]=bytes[0]!^1;await writeFile(dir+'/config.json',bytes);await expect(verifyMediaModelDirectory(dir,pin)).rejects.toThrow();}finally{await rm(dir,{recursive:true,force:true});}
 });

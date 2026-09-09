@@ -191,8 +191,8 @@ export const TELEGRAM_API_METHODS = [
 /** Execution remains on typed, owner-bound native tools. No arbitrary Bot API proxy. */
 const mounted: Record<string, string> = {
   sendMessage: "respond / telegram_send", sendRichMessage: "telegram_send (long text)",
-  sendPhoto: "telegram_send / telegram_screenshot", sendVideo: "telegram_send", sendAnimation: "telegram_send",
-  sendAudio: "telegram_send", sendDocument: "telegram_send", sendVoice: "telegram_voice / telegram_send",
+  sendPhoto: "telegram_send / telegram_screenshot / telegram_sandbox_media", sendVideo: "telegram_send / telegram_sandbox_media", sendAnimation: "telegram_send / telegram_sandbox_media",
+  sendAudio: "telegram_send / telegram_sandbox_media", sendDocument: "telegram_send / telegram_sandbox_media", sendVoice: "telegram_voice / telegram_send",
   sendVideoNote: "telegram_send", sendSticker: "telegram_send", sendMediaGroup: "telegram_send",
   sendLocation: "telegram_send", sendVenue: "telegram_send", sendContact: "telegram_send", sendPoll: "telegram_send",
   setMessageReaction: "telegram_react", editMessageText: "telegram_progress", sendMessageDraft: "native progress / telegram_progress",

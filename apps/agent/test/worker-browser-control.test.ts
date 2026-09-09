@@ -106,6 +106,15 @@ test('native driver rechecks current origin and private authority around scoped 
   ws.send(JSON.stringify({id:call.id,result}));
  }}});
  const client=AgentBrowserClient.prototype as any,network=CdpNetworkListener.prototype as any;
+ const originalOwnedTabs=client.ownedTabs;
+ const originalCreateOwnedTab=client.createOwnedTab;
+ const originalSelectOwnedTab=client.selectOwnedTab;
+ const originalCloseOwnedTab=client.closeOwnedTab;
+ const fixtureTab={tabId:'t1',targetId:'page',active:true};
+ client.ownedTabs=async()=>[fixtureTab];
+ client.createOwnedTab=async()=>fixtureTab;
+ client.selectOwnedTab=async()=>{};
+ client.closeOwnedTab=async()=>{};
  const mocks=[
   spyOn(client,'prepareViewport').mockResolvedValue(undefined),spyOn(client,'streamStatus').mockResolvedValue({enabled:true,port:1}),
   spyOn(client,'connectTelemetry').mockResolvedValue(undefined),spyOn(client,'networkObservationEndpoint').mockResolvedValue(`ws://127.0.0.1:${server.port}/devtools/browser/fixture`),
@@ -125,5 +134,13 @@ test('native driver rechecks current origin and private authority around scoped 
   url='https://outside.invalid/';await expect(driver.executeScoped!({action:'click',selector:'#save'},policy)).rejects.toThrow();expect(calls).toEqual(['navigate','click']);
   url=origin+'/';afterClick=()=>{url='https://outside.invalid/';};await expect(driver.executeScoped!({action:'click',selector:'#save'},policy)).rejects.toThrow();
   expect(calls).toEqual(['navigate','click','click']);expect(rpc).toContain('Runtime.evaluate');
- }finally{await driver?.close();for(const mock of mocks)mock.mockRestore();await server.stop(true);}
+ }finally{
+  await driver?.close();
+  for(const mock of mocks)mock.mockRestore();
+  client.ownedTabs=originalOwnedTabs;
+  client.createOwnedTab=originalCreateOwnedTab;
+  client.selectOwnedTab=originalSelectOwnedTab;
+  client.closeOwnedTab=originalCloseOwnedTab;
+  await server.stop(true);
+ }
 });

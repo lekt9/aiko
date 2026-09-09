@@ -17,6 +17,7 @@ import { cancellationRequested } from "tardie/core/method/cancellation";
 import { harnessDigest } from "../src/harness-library.ts";
 import { createAikoActor } from "../src/actor.ts";
 import { createVoice } from "../src/voice.ts";
+import { createTelegramTools } from "../src/telegram-tools.ts";
 
 const dbs: Database[]=[];
 afterEach(()=>{for(const db of dbs.splice(0))db.close();});
@@ -235,4 +236,21 @@ test("owner cancellation interrupts a package effect and settles the native code
   await driving;
   expect(aborted).toBe(true);expect(attempts).toBe(1);
   const events=await host.read("user-123");expect(events.some(e=>e.type==="TurnCancelled")).toBe(true);expect(events.find(e=>e.type==="CodeSettled")?.error).toContain("cancelled");
+});
+test("sandbox Telegram media is a code-mode tools.call target; final send stays native", () => {
+  const tools = createTelegramTools({
+    owner: "123",
+    telegram: {
+      sendRich: async () => ({ status: "delivered" }),
+      activity: () => async () => {},
+    } as any,
+    readSandboxFile: async () => ({ bytes: new Uint8Array([1]), fileName: "clip.mp4" }),
+  });
+  const harness = new CodeHarness("123", "user-123", runCodeSegment, redact);
+  harness.package(tools);
+  const names = harness.toolSpecs().map(tool => tool.name);
+  expect(names).toContain("telegram_sandbox_media");
+  expect(names).not.toContain("telegram_send");
+  expect(names).not.toContain("send_message");
+  expect(names).not.toContain("respond");
 });

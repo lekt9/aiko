@@ -1,4 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+const mediaReady = Boolean(process.env.MEDIA_HARNESS_PACKAGES && process.env.MEDIA_HARNESS_MODELS);
+const physical = test.skipIf(!mediaReady);
 import { Database } from "bun:sqlite";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -31,7 +33,7 @@ const signal = () => AbortSignal.timeout(1800000);
 let files: Awaited<ReturnType<typeof createMediaFixtures>>, runtime: SandboxPythonRuntime, source: string, inspectorSource: string;
 const cleanups: (() => Promise<void>)[] = [];
 beforeAll(async () => {
-  if (!process.env.MEDIA_HARNESS_PACKAGES || !process.env.MEDIA_HARNESS_MODELS) throw Error("Physical media integration requires the pinned offline runtime and models");
+  if (!mediaReady) return;
   files = await createMediaFixtures();
   await mediaCommand(["/usr/bin/espeak-ng", "-v", "en-us", "-s", "135", "-w", join(files.directory, "normal-owned.wav"), "A silver bicycle is parked beside the small garden gate."]);
   await mediaCommand(["/usr/bin/ffmpeg","-nostdin","-v","error","-i",join(files.directory,"com_00610_00008909944.wav"),"-af","volume=0.8","-y",join(files.directory,"normal-owned-es.wav")]);
@@ -121,7 +123,7 @@ async function fixture() {
 }
 
 
-test("live catalog acquires multilingual variant in native codeMode and reuses across channel plus SQLite restart", async () => {
+physical("live catalog acquires multilingual variant in native codeMode and reuses across channel plus SQLite restart", async () => {
   const f = await fixture();
   // The component and host already exist. Publish trusted immutable metadata only.
   // No user caption, provider bytes or model instruction receives install authority.

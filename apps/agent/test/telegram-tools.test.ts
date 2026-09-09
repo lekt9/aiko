@@ -100,7 +100,7 @@ const incoming = (
     telegram: { messageId: 10, media: [{ ...photo, owner }] },
     ...extra,
   });
-function fixture(capture = true, compose?: ThinkFeelComposer) {
+function fixture(capture = true, compose?: ThinkFeelComposer, readSandboxFile?: (input: { path: string; limitBytes: number; signal: AbortSignal }) => Promise<{ bytes: Uint8Array; fileName: string }>) {
   const events: AikoEvent[] = [incoming()],
     calls: string[] = [],
     activities: string[] = [],
@@ -178,6 +178,7 @@ function fixture(capture = true, compose?: ThinkFeelComposer) {
           return screenshot;
         }
       : undefined,
+    readSandboxFile,
   });
   const log = {
     read: Effect.sync(() => [...events]),
@@ -864,4 +865,41 @@ test("native drafts keep typing through composition and fence delivery by resume
   state = machine.step(state, event("AikoDeliverySettled", {turn:"turn-1",epoch:1,result:{status:"delivered"}}));
   await settle();
   expect(stops).toBe(2);
+});
+
+const sandboxVideo = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 105, 115, 111, 109, 1, 2, 3, 4]);
+test("sandbox media is host-uploaded from an owned VM path and never treated as a final reply", async () => {
+  expect(fixture().native.some(tool => tool.spec.name === "telegram_sandbox_media")).toBe(false);
+  let reads = 0;
+  const f = fixture(true, undefined, async ({ path, limitBytes }) => {
+    reads++;
+    expect(path).toBe("/tmp/ugc_v3.mp4");
+    expect(limitBytes).toBeGreaterThan(sandboxVideo.byteLength);
+    return { bytes: sandboxVideo, fileName: "ugc_v3.mp4" };
+  });
+  expect(f.native.some(tool => tool.spec.name === "telegram_sandbox_media")).toBe(true);
+  const input = { path: "/tmp/ugc_v3.mp4", kind: "video", caption: "Try these noodles" };
+  expect(await f.run("telegram_sandbox_media", input, "sandbox-ok")).toMatchObject({
+    status: "delivered",
+    final: false,
+    action: "telegram_sandbox_media",
+    reply: "Try these noodles",
+  });
+  expect(f.calls).toEqual(["sendVideo"]);
+  expect(f.activities).toContain("upload_video");
+  expect(reads).toBe(1);
+  expect((await f.run("telegram_sandbox_media", input, "sandbox-ok")).status).toBe("delivered");
+  expect(reads).toBe(1);
+  expect(f.calls).toEqual(["sendVideo"]);
+  expect((await f.run("telegram_sandbox_media", { path: "/etc/passwd", kind: "video" }, "sandbox-etc")).status).toBe("rejected");
+  expect((await f.run("telegram_sandbox_media", { path: "/tmp/ugc_v3.mp4", kind: "photo" }, "sandbox-photo")).status).toBe("rejected");
+  expect(reads).toBe(2);
+});
+test("sandbox media unknown sends are not retried", async () => {
+  const f = fixture(true, undefined, async () => ({ bytes: sandboxVideo, fileName: "ugc_v3.mp4" }));
+  f.status = "unknown";
+  const input = { path: "/tmp/ugc_v3.mp4", kind: "video" };
+  expect((await f.run("telegram_sandbox_media", input, "sandbox-upload")).status).toBe("unknown");
+  expect((await f.run("telegram_sandbox_media", input, "sandbox-upload")).status).toBe("unknown");
+  expect(f.calls).toEqual(["sendVideo"]);
 });

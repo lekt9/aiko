@@ -1,4 +1,5 @@
 import { beforeAll, afterAll, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { readFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -47,8 +48,11 @@ let fixture: Awaited<ReturnType<typeof createMediaFixtures>>,
   binding: SandboxJobBinding,
   db: Database;
 let definitions: ReturnType<typeof mediaHarnessDefinitions>;
+const mediaReady = Boolean(process.env.MEDIA_HARNESS_PACKAGES && existsSync(process.env.MEDIA_HARNESS_PACKAGES));
+const physical = test.skipIf(!mediaReady);
 const signal = () => AbortSignal.timeout(mediaLifecycleBudgets.invocationWallMs);
 beforeAll(async () => {
+  if (!mediaReady) return;
   const setupBegan = performance.now();
   fixture = await createMediaFixtures();
   const models =
@@ -187,15 +191,15 @@ async function executeCase(id: string) {
 }
 
 
-test("multilingual CPU sandbox meets frozen natural Spanish and English speech rubric with bounded timestamps", async () => {
+physical("multilingual CPU sandbox meets frozen natural Spanish and English speech rubric with bounded timestamps", async () => {
   for (const id of ["speech", "held-out-speech", "6930-75918-0000", "6930-75918-0007", "cof_00610_00008989777", "com_00610_00008909944"]) await executeCase(id);
 }, 300000);
 
-test("multilingual CPU sandbox returns explicit silence noise malformed and long outcomes", async () => {
+physical("multilingual CPU sandbox returns explicit silence noise malformed and long outcomes", async () => {
   for (const id of ["silence-es", "noise-es", "malformed-es", "long-es", "no-audio"]) await executeCase(id);
 }, 300000);
 
-test("retained multilingual job result survives SQLite journal reopen without executing again", async () => {
+physical("retained multilingual job result survives SQLite journal reopen without executing again", async () => {
   const {job,receipt} = await executeCase("com_00610_00008909944");
   db.close(); db = new Database(join(fixture.directory,"jobs.sqlite"));
   const journal = await sandboxJobJournal(db, join(fixture.directory,"receipt.key"));
@@ -204,7 +208,7 @@ test("retained multilingual job result survives SQLite journal reopen without ex
   binding = {...binding,journal};
 },300000);
 
-test("cancelled physical multilingual job retains terminal custody and cleans its resource scope", async () => {
+physical("cancelled physical multilingual job retains terminal custody and cleans its resource scope", async () => {
   const job = await jobFor("media.transcribe",{asset:"cof_00610_00008989777.wav",language:"es"});
   const controller = new AbortController();
   const timer = setTimeout(()=>controller.abort(),200);
@@ -217,7 +221,7 @@ test("cancelled physical multilingual job retains terminal custody and cleans it
   expect(await runSandboxJob(job,{...binding,python:{...runtime,execute:async()=>{throw Error("Cancelled operation redispatched");}}},signal())).toEqual(receipt);
 },300000);
 
-test("independent multilingual checker rejects fabricated words language identity and segment bounds", async () => {
+physical("independent multilingual checker rejects fabricated words language identity and segment bounds", async () => {
   const {receipt} = await executeCase("cof_00610_00008989777");
   const sample = fixture.fixtures.find(f => f.id === "cof_00610_00008989777")!;
   const definition = definitions.find(d => d.artifact.name === "media.transcribe")!;

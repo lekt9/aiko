@@ -21,7 +21,10 @@ test("local scheduled-task routes explain unsupported execution without acceptin
     expect((await service.fetch(request())).status).toBe(401);
     const result = await service.fetch(request(token));
     expect(result.status).toBe(503);
-    expect(await result.json()).toMatchObject({ error: "promises_unavailable", message: expect.stringContaining("No task or decision was accepted") });
+    expect(await result.json()).toMatchObject({
+      error: "promises_unavailable",
+      message: "Scheduled tasks need a configured native code executor. Your saved tasks have not been changed.",
+    });
     expect((await service.fetch(request("synthetic-scheduled-task-operator-token"))).status).toBe(403);
     // Reading an unregistered native thread opens it; inspect the directory
     // instead so the no-task assertion itself does not create work.

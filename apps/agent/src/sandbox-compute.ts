@@ -20,6 +20,48 @@ const identity = (value: unknown) => {
   return value;
 };
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const EXPORT_LIMIT_BYTES = 50 * 1024 * 1024;
+const EXPORT_SCRIPT = `import base64, hashlib, json, sys
+from pathlib import Path
+job = json.loads(Path(sys.argv[1]).read_text())
+src = Path(job["path"])
+prefix = Path(job["outPrefix"])
+limit = int(job["limitBytes"])
+if src.is_symlink() or not src.is_file():
+    raise SystemExit("not_a_regular_file")
+resolved = src.resolve()
+text = str(resolved)
+if not (text.startswith("/tmp/") or text.startswith("/home/")):
+    raise SystemExit("path_not_allowed")
+size = resolved.stat().st_size
+if size < 1 or size > limit:
+    raise SystemExit("size_out_of_range")
+data = resolved.read_bytes()
+if len(data) != size:
+    raise SystemExit("size_changed")
+(prefix.with_name(prefix.name + ".meta.json")).write_text(
+    json.dumps({"version": 1, "size": size, "sha256": hashlib.sha256(data).hexdigest()}),
+    encoding="ascii",
+)
+(prefix.with_name(prefix.name + ".payload.b64")).write_text(base64.b64encode(data).decode("ascii"), encoding="ascii")
+print("aiko-export-ready")
+`;
+
+/** Owned compute-VM paths only. Host filesystem, URLs and parent traversal are rejected. */
+export function computeExportPath(value: unknown): string {
+  if (typeof value !== "string" || value.length < 5 || value.length > 255)
+    throw Error("Invalid sandbox file path");
+  if (
+    value.includes("\0") ||
+    value.includes("//") ||
+    value.split("/").includes("..") ||
+    value.endsWith("/") ||
+    !(value.startsWith("/tmp/") || value.startsWith("/home/")) ||
+    !/^\/(?:tmp|home)\/[A-Za-z0-9._][A-Za-z0-9._/-]*$/.test(value)
+  )
+    throw Error("Sandbox media must be an owned /tmp or /home file");
+  return value;
+}
 
 /** Account-owned general compute, separate from the browser VM and its cookies.
  * Gateway credentials never enter the VM. Durable dispatch markers prevent
@@ -229,6 +271,60 @@ export class SandboxCompute {
       unchanged: ("output" in result ? result.output : undefined) === initialOutput,
       instruction: "The existing job is still running. Do not resubmit it. If progress remains unchanged, inspect its output or polling script and explain the wait to the user. For provider jobs use the returned status_url/response_url, not a guessed route; bound error retries.",
     } : {}) };
+  }
+
+  /** Read an existing owned VM file through the host gateway. The VM never
+   * receives Telegram or host credentials. Binary files are ASCII-armored
+   * because the gateway UTF-8-decodes downloads. */
+  async exportFile(path: string, signal: AbortSignal, limitBytes = EXPORT_LIMIT_BYTES) {
+    const source = computeExportPath(path);
+    if (!Number.isSafeInteger(limitBytes) || limitBytes < 1 || limitBytes > EXPORT_LIMIT_BYTES)
+      throw Error("Invalid export size limit");
+    const machine = await this.machine();
+    if (!machine?.id) throw Error("No compute VM is allocated; create the file with sandbox_exec first");
+    const id = await this.ensure(signal);
+    const operation = crypto.randomUUID();
+    const prefix = `/tmp/aiko-export-${operation}`;
+    const job = { path: source, limitBytes, outPrefix: prefix };
+    const fileName = source.slice(source.lastIndexOf("/") + 1);
+    try {
+      await this.gateway.request(`/v1/sandboxes/${id}/upload`, {
+        path: `${prefix}.py`, contentBase64: Buffer.from(EXPORT_SCRIPT).toString("base64"),
+      }, signal);
+      await this.gateway.request(`/v1/sandboxes/${id}/upload`, {
+        path: `${prefix}.json`, contentBase64: Buffer.from(JSON.stringify(job)).toString("base64"),
+      }, signal);
+      const prepared = await this.gateway.request(`/v1/sandboxes/${id}/exec`, {
+        command: `/usr/bin/python3 ${prefix}.py ${prefix}.json`, async: false,
+      }, signal, undefined, 4096);
+      if (prepared.exitCode !== 0 || !String(prepared.output ?? "").includes("aiko-export-ready"))
+        throw Error("Sandbox file was missing, too large, or not a regular owned file");
+      const metadata = await this.gateway.request(`/v1/sandboxes/${id}/download`, { path: `${prefix}.meta.json` }, signal, undefined, 4096);
+      if (typeof metadata.contentBase64 !== "string" || !/^[A-Za-z0-9+/]*={0,2}$/.test(metadata.contentBase64))
+        throw Error("Invalid sandbox export metadata");
+      const meta = JSON.parse(Buffer.from(metadata.contentBase64, "base64").toString("utf8"));
+      if (meta?.version !== 1 || !Number.isSafeInteger(meta.size) || meta.size < 1 || meta.size > limitBytes ||
+          typeof meta.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(meta.sha256))
+        throw Error("Invalid sandbox export metadata");
+      const armorBytes = 4 * Math.ceil(meta.size / 3);
+      const downloaded = await this.gateway.request(
+        `/v1/sandboxes/${id}/download`, { path: `${prefix}.payload.b64` }, signal, undefined,
+        4 * Math.ceil(armorBytes / 3) + 4096,
+      );
+      if (typeof downloaded.contentBase64 !== "string") throw Error("Invalid sandbox export transfer");
+      const armor = Buffer.from(downloaded.contentBase64, "base64").toString("utf8");
+      if (armor.length !== armorBytes || !/^[A-Za-z0-9+/]*={0,2}$/.test(armor))
+        throw Error("Sandbox export transfer invalid");
+      const bytes = new Uint8Array(Buffer.from(armor, "base64"));
+      if (bytes.byteLength !== meta.size || createHash("sha256").update(bytes).digest("hex") !== meta.sha256)
+        throw Error("Sandbox export integrity mismatch");
+      return { bytes, fileName, size: meta.size, sha256: meta.sha256 };
+    } finally {
+      await this.gateway.request(`/v1/sandboxes/${id}/exec`, {
+        command: `/usr/bin/python3 -c 'from pathlib import Path; p="${prefix}"; [Path(p+s).unlink(missing_ok=True) for s in [".py",".json",".meta.json",".payload.b64"]]'`,
+        async: false,
+      }, AbortSignal.timeout(15_000), undefined, 4096).catch(() => undefined);
+    }
   }
 }
 

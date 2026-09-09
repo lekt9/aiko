@@ -9,6 +9,7 @@ TOKEN = 'database-preview-synthetic-local-only'
 def enter(artifact):
     new_tab(BASE + '/connect?artifact=' + artifact)
     wait_for_load()
+    wait('!!document.querySelector(".db-workspace")')
     click('DisclosureTriangle', 'Use an account access token')
     fill('Account access token', TOKEN); click('button', 'Connect')
     wait('!!document.querySelector(".db-layout-controls")')

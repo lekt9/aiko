@@ -44,7 +44,7 @@ import { memoryTools } from "./memory.ts";
 import { databaseEntities } from "./database-entities.ts";
 import { publicWebTool } from "./public-web.ts";
 import { createObservedNetworkTools, resolveObservedRead, listObservedReads } from "./observed-network.ts";
-import { SandboxCompute, sandboxComputeTools } from "./sandbox-compute.ts";
+import { SandboxCompute, sandboxComputeTools, sandboxComputeCancellation } from "./sandbox-compute.ts";
 import {CodeHarness} from "./code-harness.ts";
 import {Layer} from "effect";
 import {loginObservationEvent,type NativeLoginObservation} from "./native-login-observation.ts";
@@ -885,6 +885,7 @@ export async function createService(
                           },
                         },
                         extraTools: [
+                          ...(computeFor(owner)?sandboxComputeTools(computeFor(owner)!,memory):[]),
                           ...(codingFor(owner)?codingWorkspaceTools(codingFor(owner)!.binding(thread,redact)):[]),
                 ...(overrides.workerTools?.(owner,thread)??[]),
                           ...(mcpFor(owner,thread)?.tools()??[]),
@@ -899,8 +900,10 @@ export async function createService(
                                 speak: media?.speak,
                                 inspectImages: media?.vision,
                                 captureScreenshot: media?.captureScreenshot,
+                                ...(computeFor(owner) ? { readSandboxFile: (input) => computeFor(owner)!.exportFile(input.path, input.signal, input.limitBytes) } : {}),
                               }) : []),
                         ],
+                        computeCancellation: computeFor(owner) ? sandboxComputeCancellation(computeFor(owner)!, thread) : undefined,
                         ...(telegramTyping ? { telegramTyping } : {}),
                       });
         actors.set(thread, validateActor(instance));
@@ -1623,6 +1626,7 @@ export async function createService(
                   "telegram_send",
                   "telegram_voice",
                   "telegram_screenshot",
+                  "telegram_sandbox_media",
                 ].includes(String((e.result as { action?: unknown })?.action))),
           )
           .slice(-50)

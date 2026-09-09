@@ -10,18 +10,29 @@ import { parseThreadAddress } from "tardie/core/communication/endpoint";
 import { Self } from "tardie/core/runtime";
 import { EventLog, withWatermark } from "tardie/core/log";
 import { Codegraff, type SandboxStore } from "../src/codegraff.ts";
-import { SandboxCompute, sandboxComputeTools, sandboxComputeCancellation, type ComputeStore } from "../src/sandbox-compute.ts";
+import { createHash } from "node:crypto";
+import { SandboxCompute, sandboxComputeTools, sandboxComputeCancellation, computeExportPath, type ComputeStore } from "../src/sandbox-compute.ts";
 import { redactor } from "../src/security.ts";
 
 function fixture() {
   const rows = new Map<string, unknown>();
   const store: ComputeStore = { claim: async (key,value) => { if(rows.has(key)) return false; rows.set(key,structuredClone(value)); return true; }, get: async <T>(key: string) => structuredClone(rows.get(key)) as T, put: async (key, value) => { rows.set(key, structuredClone(value)); } };
   const calls: { path: string; body: any; method: string | undefined }[] = [];
-  const state = { machine: "started", job: "running", exitCode: 0, output: "", loseLaunch: false, loseCancel: false, setupState: "completed", setupExit: 0, loseSetup: false };
+  const files = new Map<string, string>();
+  const state = { machine: "started", job: "running", exitCode: 0, output: "", loseLaunch: false, loseCancel: false, setupState: "completed", setupExit: 0, loseSetup: false, exportExit: 0, payload: new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 105, 115, 111, 109, 1, 2, 3, 4]) };
   const gateway = new Codegraff("private-host-key", async (url, init) => {
     const path = new URL(String(url)).pathname + new URL(String(url)).search;
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ path, body, method: init?.method });
+    if (path.endsWith("/upload") && typeof body?.path === "string" && typeof body.contentBase64 === "string") {
+      files.set(body.path, Buffer.from(body.contentBase64, "base64").toString("utf8"));
+      return Response.json({ ok: true });
+    }
+    if (path.endsWith("/download")) {
+      const text = files.get(body.path);
+      if (text === undefined) return new Response("missing", { status: 404 });
+      return Response.json({ contentBase64: Buffer.from(text, "utf8").toString("base64") });
+    }
     if (path.endsWith("/exec") && body.command.startsWith("bash /tmp/aiko-compute-cloak-")) {
       if (state.loseSetup) throw Error("lost setup ack");
       return Response.json({execId:"cloak-setup"});
@@ -29,6 +40,22 @@ function fixture() {
     if (path.includes("/exec/cloak-setup")) return Response.json({state:state.setupState,exitCode:state.setupExit});
     if (path === "/v1/sandboxes") return Response.json({ id: "compute-test" });
     if (path.endsWith("/start")) { state.machine = "started"; return Response.json({ ok: true }); }
+    if (path.endsWith("/exec") && body?.async === false) {
+      if (typeof body.command === "string" && body.command.includes("aiko-export-") && body.command.includes("python3") && !body.command.includes("unlink")) {
+        const match = /\/tmp\/aiko-export-([0-9a-f-]+)\.py/.exec(body.command);
+        const job = match ? JSON.parse(files.get(`/tmp/aiko-export-${match[1]}.json`) ?? "{}") : {};
+        if (state.exportExit !== 0) return Response.json({ state: "completed", exitCode: state.exportExit, output: "not_a_regular_file" });
+        const prefix = String(job.outPrefix ?? "");
+        const armor = Buffer.from(state.payload).toString("base64");
+        files.set(`${prefix}.meta.json`, JSON.stringify({
+          version: 1, size: state.payload.byteLength,
+          sha256: createHash("sha256").update(state.payload).digest("hex"),
+        }));
+        files.set(`${prefix}.payload.b64`, armor);
+        return Response.json({ state: "completed", exitCode: 0, output: "aiko-export-ready" });
+      }
+      return Response.json({ state: "completed", exitCode: 0, output: "" });
+    }
     if (path.endsWith("/exec")) {
       if (state.loseLaunch) throw Error("connection_lost");
       return Response.json({ execId: "exec-test", state: "running" });
@@ -227,4 +254,25 @@ test("interrupted installation resumes original exec; failure and lost acknowled
     expect(g.calls.filter(c=>c.path==="/v1/sandboxes")).toHaveLength(1);
     expect(g.calls.some(c=>c.body?.command==="must-not-run")).toBe(false);
   }
+});
+
+test("owned VM files export through host-armored download and reject foreign paths", async () => {
+  expect(() => computeExportPath("/etc/passwd")).toThrow();
+  expect(() => computeExportPath("/tmp/../etc/passwd")).toThrow();
+  expect(() => computeExportPath("https://example.com/v.mp4")).toThrow();
+  expect(computeExportPath("/tmp/ugc_v3.mp4")).toBe("/tmp/ugc_v3.mp4");
+  const missing = fixture();
+  await expect(missing.compute.exportFile("/tmp/ugc_v3.mp4", signal())).rejects.toThrow("No compute VM is allocated");
+  const f = fixture();
+  await f.compute.exec("user-123", "make-file", { command: "true" }, signal());
+  const exported = await f.compute.exportFile("/tmp/ugc_v3.mp4", signal());
+  expect(exported).toMatchObject({ fileName: "ugc_v3.mp4", size: f.state.payload.byteLength });
+  expect([...exported.bytes]).toEqual([...f.state.payload]);
+  expect(f.calls.some(c => c.path.endsWith("/upload") && String(c.body?.path ?? "").endsWith(".py"))).toBe(true);
+  expect(f.calls.some(c => c.path.endsWith("/download") && String(c.body?.path ?? "").endsWith(".payload.b64"))).toBe(true);
+  expect(JSON.parse(f.calls.find(c => c.path.endsWith("/upload") && String(c.body?.path ?? "").endsWith(".json"))!.body.contentBase64 ? Buffer.from(f.calls.find(c => c.path.endsWith("/upload") && String(c.body?.path ?? "").endsWith(".json"))!.body.contentBase64, "base64").toString() : "{}")).toMatchObject({ path: "/tmp/ugc_v3.mp4" });
+  const failed = fixture();
+  await failed.compute.exec("user-123", "make-file", { command: "true" }, signal());
+  failed.state.exportExit = 2;
+  await expect(failed.compute.exportFile("/tmp/ugc_v3.mp4", signal())).rejects.toThrow("not a regular owned file");
 });

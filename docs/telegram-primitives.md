@@ -37,7 +37,7 @@ Verification: [progress tests](../apps/agent/test/channel-progress.test.ts) exer
 | Replies and topics | Incoming message IDs and topic IDs propagate to final delivery. Deleted reply targets can fall back to a normal send in the same topic. Control responses retain the topic too. |
 | Inline buttons and callbacks | Bounded callback data, prompt callback acknowledgment, secure connection buttons, status and cancellation controls. Arbitrary callback text is user input. |
 | Reactions | Owner-scoped reaction input and output, with provider delivery receipts. |
-| Photos, video, audio, voice, documents, stickers and albums | Owned file descriptors, bounded download/inspection, transcription/vision where configured, media replies and voice synthesis. Albums can arrive in separate updates. |
+| Photos, video, audio, voice, documents, stickers and albums | Owned file descriptors, bounded download/inspection, transcription/vision where configured, media replies and voice synthesis. Albums can arrive in separate updates. Files written on the owner's compute VM are delivered with `telegram_sandbox_media` (a `tools.call` target inside execute); `telegram_send` still accepts only inbound thread file IDs. The VM never receives a bot token. |
 | Locations, venues, contacts and polls | Bounded native outbound cards. Shared inbound cards become readable user context; unneeded raw contact vCards are omitted. |
 | Commands | Ten commands installed for private chats: start, apps, connect, connections, discover, status, cancel, secretary, disconnect and help. |
 | Mini App navigation | Connect apps opens the deployed connection page from Telegram's menu. Telegram provides the surrounding account session. |

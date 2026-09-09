@@ -21,6 +21,7 @@ import type {
 } from "./telegram-outbound.ts";
 import type { TelegramInbound } from "./telegram-normalize.ts";
 import { TELEGRAM_MEDIA_LIMITS } from "./telegram-media.ts";
+import { computeExportPath } from "./sandbox-compute.ts";
 import type { ThinkFeelComposer } from "./voice.ts";
 
 type LogEvent = Event & Record<string, any>;
@@ -82,6 +83,11 @@ type Options = {
   inspectImages?: TelegramVision;
   captureScreenshot?: TelegramScreenshotCapture;
   compose?: ThinkFeelComposer;
+  readSandboxFile?: (input: {
+    path: string;
+    limitBytes: number;
+    signal: AbortSignal;
+  }) => Promise<{ bytes: Uint8Array; fileName: string }>;
 };
 const record = (value: unknown): Record<string, any> | undefined =>
   value && typeof value === "object" && !Array.isArray(value)
@@ -165,6 +171,50 @@ function attachments(
     }
   }
   return [...files.values()];
+}
+
+const SANDBOX_MEDIA_KINDS = ["photo", "video", "animation", "audio", "document"] as const;
+type SandboxMediaKind = (typeof SANDBOX_MEDIA_KINDS)[number];
+function sandboxMediaMime(kind: SandboxMediaKind, bytes: Uint8Array): string | undefined {
+  if (kind === "photo") {
+    if (bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return "image/jpeg";
+    if (
+      bytes.length >= 8 &&
+      [137, 80, 78, 71, 13, 10, 26, 10].every((byte, index) => bytes[index] === byte)
+    )
+      return "image/png";
+    if (
+      bytes.length >= 12 &&
+      bytes[0] === 82 &&
+      bytes[1] === 73 &&
+      bytes[2] === 70 &&
+      bytes[3] === 70 &&
+      Buffer.from(bytes.subarray(8, 12)).toString("ascii") === "WEBP"
+    )
+      return "image/webp";
+    return undefined;
+  }
+  if (kind === "video") {
+    if (bytes.length >= 12 && Buffer.from(bytes.subarray(4, 8)).toString("ascii") === "ftyp")
+      return "video/mp4";
+    if (bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3)
+      return "video/webm";
+    return undefined;
+  }
+  if (kind === "animation") {
+    const header = bytes.length >= 6 ? Buffer.from(bytes.subarray(0, 6)).toString("ascii") : "";
+    return header === "GIF87a" || header === "GIF89a" ? "image/gif" : undefined;
+  }
+  if (kind === "audio") {
+    if (bytes.length >= 3 && Buffer.from(bytes.subarray(0, 3)).toString("ascii") === "ID3") return "audio/mpeg";
+    if (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1]! & 0xe0) === 0xe0) return "audio/mpeg";
+    if (bytes.length >= 4 && Buffer.from(bytes.subarray(0, 4)).toString("ascii") === "OggS") return "audio/ogg";
+    return undefined;
+  }
+  return bytes.length >= 1 ? "application/octet-stream" : undefined;
+}
+function sandboxUploadAction(kind: SandboxMediaKind) {
+  return kind === "photo" ? "upload_photo" : kind === "video" || kind === "animation" ? "upload_video" : kind === "audio" ? "upload_voice" : "upload_document";
 }
 
 /** Native tools: the owner and destination are host-bound; models never receive a bot key or download URL. */
@@ -300,8 +350,8 @@ export function createTelegramTools(
               }),
             ]);
           let prepared = args;
-          if (options.compose && ["telegram_send", "telegram_voice", "telegram_screenshot", "telegram_progress"].includes(name)) {
-            const field = name === "telegram_send" ? (args.kind === "text" ? "text" : args.kind === "poll" ? "question" : "caption") : name === "telegram_screenshot" ? "caption" : "text";
+          if (options.compose && ["telegram_send", "telegram_voice", "telegram_screenshot", "telegram_progress", "telegram_sandbox_media"].includes(name)) {
+            const field = name === "telegram_send" ? (args.kind === "text" ? "text" : args.kind === "poll" ? "question" : "caption") : name === "telegram_screenshot" || name === "telegram_sandbox_media" ? "caption" : "text";
             if (typeof args[field] === "string" && args[field].trim()) {
               const composed = yield* Effect.promise(() => options.compose!(safe(args[field]), context.signal));
               if (composed.status !== "ready") {
@@ -747,6 +797,81 @@ export function createTelegramTools(
       );
     },
   );
+  if (options.readSandboxFile)
+    add(
+      "telegram_sandbox_media",
+      "Deliver a file that already exists on this owner's Codegraff compute VM to their private Telegram chat. Call this from execute with tools.call after sandbox_exec wrote the artifact. Path must be an absolute /tmp or /home file on that VM. The host downloads through the existing gateway and uploads with the bot credential; the VM never receives a Telegram token, URL or file_id. This is not a final answer — finish with respond or telegram_send. Never retry an unknown delivery. Arbitrary URLs, host filesystem paths and other users' files are rejected.",
+      {
+        path: { type: "string", minLength: 5, maxLength: 255 },
+        kind: { type: "string", enum: [...SANDBOX_MEDIA_KINDS] },
+        caption: { type: "string" },
+        replyTo: { type: "integer" },
+      },
+      ["path", "kind"],
+      async (args, _log, turn, signal) => {
+        if (!options.readSandboxFile)
+          return receipt(turn, "telegram_sandbox_media", "unsupported", "Sandbox Telegram media is not mounted.");
+        let source: string;
+        try {
+          source = computeExportPath(args.path);
+        } catch {
+          return receipt(turn, "telegram_sandbox_media", "rejected", "Sandbox media must be an owned /tmp or /home file.");
+        }
+        const kind = args.kind as SandboxMediaKind;
+        if (!SANDBOX_MEDIA_KINDS.includes(kind))
+          return receipt(turn, "telegram_sandbox_media", "rejected", "Unsupported sandbox media kind.");
+        if (
+          (args.caption !== undefined &&
+            (typeof args.caption !== "string" || [...args.caption].length > TELEGRAM_MEDIA_LIMITS.captionChars)) ||
+          (args.replyTo !== undefined && (!Number.isSafeInteger(args.replyTo) || args.replyTo < 1))
+        )
+          return receipt(turn, "telegram_sandbox_media", "rejected", "Invalid sandbox media caption or reply target.");
+        const limitBytes = kind === "photo" ? TELEGRAM_MEDIA_LIMITS.photoUploadBytes : TELEGRAM_MEDIA_LIMITS.uploadBytes;
+        let exported: { bytes: Uint8Array; fileName: string };
+        try {
+          exported = await options.readSandboxFile({ path: source, limitBytes, signal });
+        } catch {
+          return receipt(
+            turn,
+            "telegram_sandbox_media",
+            "failed",
+            "The sandbox file could not be read. Inspect the existing VM path; do not claim a Telegram upload.",
+          );
+        }
+        const mimeType = exported.bytes instanceof Uint8Array ? sandboxMediaMime(kind, exported.bytes) : undefined;
+        const fileName = typeof exported.fileName === "string"
+          ? exported.fileName.replace(/[\u0000-\u001f/\\]/g, "_").slice(0, 255)
+          : "";
+        if (!mimeType || !fileName || exported.bytes.byteLength < 1 || exported.bytes.byteLength > limitBytes)
+          return receipt(
+            turn,
+            "telegram_sandbox_media",
+            "rejected",
+            "That sandbox file is not a bounded matching media kind.",
+          );
+        const uploading = options.telegram.activity(options.owner, sandboxUploadAction(kind), signal);
+        let result;
+        try {
+          result = await options.telegram.sendRich(
+            options.owner,
+            {
+              kind,
+              file: { owner: options.owner, bytes: exported.bytes, mimeType, fileName },
+              ...(typeof args.caption === "string" ? { caption: safe(args.caption) } : {}),
+              ...(args.replyTo !== undefined ? { replyTo: args.replyTo } : {}),
+            },
+            signal,
+          );
+        } finally {
+          await uploading();
+        }
+        return receipt(turn, "telegram_sandbox_media", result.status, `Sandbox Telegram media ${result.status}.`, {
+          ...result,
+          final: false,
+          reply: safe(typeof args.caption === "string" ? args.caption : `[${kind} from sandbox]`),
+        });
+      },
+    );
   add(
     "telegram_react",
     "Set or remove one emoji reaction on a message actually recorded in the owner's Telegram thread. This is lightweight acknowledgement, not a final reply.",

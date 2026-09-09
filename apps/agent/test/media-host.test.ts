@@ -1,4 +1,5 @@
 import { beforeAll, afterAll, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -21,11 +22,14 @@ import type { SandboxJob } from "../src/sandbox-job.ts";
 import { harnessDigest } from "../src/harness-library.ts";
 import { registryExternalEventAllowed } from "../src/registry-host.ts";
 let runtime: SandboxPythonRuntime;
+const mediaPackages =
+  process.env.MEDIA_HARNESS_PACKAGES ??
+  "/tmp/unlock-media-runtime/lib/python3.13/site-packages";
+const mediaReady = existsSync(mediaPackages);
 beforeAll(async () => {
+  if (!mediaReady) return;
   runtime = await createPythonSandboxRuntime({
-    packages:
-      process.env.MEDIA_HARNESS_PACKAGES ??
-      "/tmp/unlock-media-runtime/lib/python3.13/site-packages",
+    packages: mediaPackages,
     models:
       process.env.MEDIA_HARNESS_MODELS ??
       "/tmp/unlock-media-multilingual-models",
@@ -35,6 +39,7 @@ beforeAll(async () => {
   expect(runtime.lock.version).toBe(2);
 }, 300000);
 afterAll(() => runtime?.dispose());
+const physical = test.skipIf(!mediaReady);
 function silence(seconds: number) {
   const b = Buffer.alloc(44 + seconds * 32000);
   b.write("RIFF");
@@ -53,7 +58,7 @@ function silence(seconds: number) {
 }
 const token = "aiko_media_host_fixture_token_12345678901234567890";
 for (const language of ["en", "es"] as const)
-  test(`default real host privately acquires ${language} media, hydrates prompt and reuses verified executables after disk reopen`, async () => {
+  physical(`default real host privately acquires ${language} media, hydrates prompt and reuses verified executables after disk reopen`, async () => {
     const dir = await mkdtemp("/tmp/media-host-"),
       db = new Database(join(dir, "jobs.sqlite")),
       journal = await sandboxJobJournal(db, join(dir, "receipt.key")),

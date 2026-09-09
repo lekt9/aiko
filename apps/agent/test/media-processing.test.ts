@@ -1,4 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
+const mediaReady = Boolean(process.env.MEDIA_HARNESS_PACKAGES && process.env.MEDIA_HARNESS_MODELS);
+const physical = test.skipIf(!mediaReady);
 import { Database } from "bun:sqlite";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -29,7 +31,7 @@ const signal = () => AbortSignal.timeout(1800000);
 let files: Awaited<ReturnType<typeof createMediaFixtures>>, runtime: SandboxPythonRuntime, source: string, inspectorSource: string;
 const cleanups: (() => Promise<void>)[] = [];
 beforeAll(async () => {
-  if (!process.env.MEDIA_HARNESS_PACKAGES || !process.env.MEDIA_HARNESS_MODELS) throw Error("Physical media integration requires the pinned offline runtime and models");
+  if (!mediaReady) return;
   files = await createMediaFixtures();
   await mediaCommand(["/usr/bin/espeak-ng", "-v", "en-us", "-s", "135", "-w", join(files.directory, "normal-owned.wav"), "A silver bicycle is parked beside the small garden gate."]);
   await verifyMediaModelDirectory(join(process.env.MEDIA_HARNESS_MODELS, "whisper-tiny.en"));
@@ -110,7 +112,7 @@ async function fixture() {
   };
 }
 
-test("native attachment miss acquires immutable media, executes codeMode, derives passive SKILL and reuses across messages/channels after SQLite restart", async () => {
+physical("native attachment miss acquires immutable media, executes codeMode, derives passive SKILL and reuses across messages/channels after SQLite restart", async () => {
   const f = await fixture(), first = await f.admission("video.mp4", "telegram", "attachment-1");
   expect(f.media.supports("video/mp4")).toBe(true); expect(f.media.supports("image/jpeg")).toBe(false);
   await f.media.admit(first, signal());
@@ -187,7 +189,7 @@ test("native attachment miss acquires immutable media, executes codeMode, derive
   const afterCancel = f.count(); await f.restart(); expect(f.count()).toEqual(afterCancel);
 }, 300000);
 
-test("normal owned English speech has physical coverage and confidence evidence without a fabricated reference or semantic quality score", async () => {
+physical("normal owned English speech has physical coverage and confidence evidence without a fabricated reference or semantic quality score", async () => {
   const f = await fixture(), request = await f.admission("normal-owned.wav", "internal", "owned-speech");
   await f.media.admit(request, signal()); await f.host.drive();
   const result = await f.media.readResult(request, signal());
@@ -224,7 +226,7 @@ test("normal owned English speech has physical coverage and confidence evidence 
   expect(f.count()).toEqual(count);
 }, 180000);
 
-test("admission is scoped, conflicts cannot replace custody, cancelled and deleted inputs never dispatch on restart", async () => {
+physical("admission is scoped, conflicts cannot replace custody, cancelled and deleted inputs never dispatch on restart", async () => {
   const f = await fixture(), request = await f.admission("video.mp4", "telegram", "cancelled");
   await expect(f.media.admit({ ...request, owner: "456" }, signal())).rejects.toThrow("scope");
   const foreignRef = await retainMediaAsset(f.blobs, "456", await files.bytes("video.mp4"));
