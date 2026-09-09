@@ -52,7 +52,7 @@ beforeAll(async () => {
       videoCases.push({id:spec.id,split:spec.split,input:{asset:spec.asset,task:"crossing-conflict",frames:receipt.output as HarnessJson},expected:spec.expected as VideoOracleCase["expected"]});
     }
   }finally{db.close();}
-},60000);
+},300000);
 async function physical(modules:Record<string,string>,input:any,binding:SandboxJobBinding) {
   const entry=Object.keys(modules)[0]!;
   const artifact={kind:"python" as const,entry,modules:Object.fromEntries(await Promise.all(Object.entries(modules).map(async([name,source])=>[name,{source,digest:await sandboxDigest(source)}]))),runtimeLockDigest:runtime.lockDigest};

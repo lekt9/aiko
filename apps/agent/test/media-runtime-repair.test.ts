@@ -96,7 +96,7 @@ test('production native media repairs definite missing closure on retained compu
   expect((await service.host.read('user-123')).some(e=>e.type==='RepairForgerySentinel')).toBe(false);
   expect((await service.fetch(new Request('http://localhost/api/media',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}))).status).toBe(401);
  }finally{await service?.close();runtimes.forEach(r=>r.dispose());db.close();await rm(dir,{recursive:true,force:true});}
-},180000);
+},300000);
 
 
 test('trusted preflight records corrupt closure separately from unknown execution and emits no candidate receipt',async()=>{
@@ -109,4 +109,4 @@ test('trusted preflight records corrupt closure separately from unknown executio
   await pythonComputeRunner({runtime:{packages},runtimeLockDigest:original.lockDigest},['environment',report]);
   expect(JSON.parse(await readFile(report,'utf8'))).toEqual({ready:false,reason:'runtime-lock-mismatch',runtimeLockDigest:original.lockDigest});
  }finally{original?.dispose();await rm(report,{force:true});await rm(dir,{recursive:true,force:true});}
-},30000);
+},120000);

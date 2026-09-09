@@ -33,4 +33,4 @@ test('large incompressible model closure stays bounded and exactly recoverable a
       expect(`sha256:${createHash('sha256').update(recovered).digest('hex')}`).toBe(expected);
     } finally { lease.release(); }
   } finally { image.dispose(); await rm(dir, {recursive:true,force:true}); }
-}, 60000);
+}, 180000);

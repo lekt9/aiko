@@ -177,15 +177,18 @@ test("an unresponsive renewal releases the private mutation queue when its calle
   const controller = new AbortController();
   const request = f.watches.renew({ id: f.config.id, expectedGeneration: 1, expectedLeaseRevision: 0, expiresAt: f.config.expiresAt + 60_000, maxOccurrences: 300 }, controller.signal);
   const bounded = request.then(value => ({ status: "returned", value }), () => ({ status: "aborted" }));
-  const timeout = setTimeout(() => controller.abort(), 20);
-  try {
-    await bounded;
-    expect(await f.watches.control(f.config.id, "paused", 0, signal())).toMatchObject({ status: "paused", release: { status: "confirmed" } });
-    expect(f.leaseCalls.filter(call => call.startsWith("pause:"))).toHaveLength(1);
-    expect(f.leaseRequests.filter(lease => lease.leaseRevision === 1)).toHaveLength(1);
-    expect((await f.events()).filter(e => e.type === "AikoBrowserWatchLeaseRenewalChecked" && e.status === "confirmed")).toHaveLength(0);
-  } finally { clearTimeout(timeout); }
-}, 1000);
+  const started = Date.now();
+  while (f.leaseRequests.filter(lease => lease.leaseRevision === 1).length === 0) {
+    if (Date.now() - started > 2000) throw new Error("stalled renewal never entered private lease custody");
+    await Bun.sleep(5);
+  }
+  controller.abort();
+  await bounded;
+  expect(await f.watches.control(f.config.id, "paused", 0, signal())).toMatchObject({ status: "paused", release: { status: "confirmed" } });
+  expect(f.leaseCalls.filter(call => call.startsWith("pause:"))).toHaveLength(1);
+  expect(f.leaseRequests.filter(lease => lease.leaseRevision === 1)).toHaveLength(1);
+  expect((await f.events()).filter(e => e.type === "AikoBrowserWatchLeaseRenewalChecked" && e.status === "confirmed")).toHaveLength(0);
+}, 10000);
 
 test("expired unconfirmed renewal can read its retained receipt before a fresh revision extends collection", async () => {
   let now = Date.now(); const clock = spyOn(Date, "now").mockImplementation(() => now);

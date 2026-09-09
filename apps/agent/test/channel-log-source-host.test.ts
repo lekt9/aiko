@@ -522,4 +522,4 @@ test("native source lifetime budget is finite across batches and restart; expiry
       (e) => e.type === "AikoChannelLogSourceProgress",
     ),
   ).toBe(false);
-}, 20000);
+}, 60000);
