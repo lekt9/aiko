@@ -2,10 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { AikoMessages } from "@unlock/sdk/aiko";
 import { DatabaseArtifact } from "./database-artifact";
 import { artifactLaunchId, databaseClient, type DatabaseCatalog, type DatabaseClient } from "../lib/databases";
-
-export function databaseLaunch(search: string) {
-  return new URLSearchParams(search).has("artifact") || new URLSearchParams(search).get("screen") === "databases";
-}
+import { pollWhileVisible } from "../lib/poll";
 
 /** Credentials stay in memory; artifact URLs contain only stable object identifiers. */
 export function DatabaseWorkspace({ search }: { search: string }) {
@@ -42,8 +39,9 @@ function DatabaseLibrary({ client, open }: { client: DatabaseClient; open: (id: 
       } catch (e) { if (!abort.signal.aborted) { setCatalog(undefined); setMessages(undefined); setError((e as Error).message); } }
       finally { running = false; }
     };
-    setCatalog(undefined); setMessages(undefined); void load(); const timer = setInterval(() => void load(), 3000);
-    return () => { clearInterval(timer); abort.abort(); };
+    setCatalog(undefined); setMessages(undefined); void load();
+    const stopPolling = pollWhileVisible(() => void load(), 3000);
+    return () => { stopPolling(); abort.abort(); };
   }, [client]);
   const openTable = async (tableId: string, title: string) => {
     const existingArtifact = catalog?.artifacts.find(artifact => artifact.tableId === tableId && artifact.dataMode === "live") ?? catalog?.artifacts.find(artifact => artifact.tableId === tableId);

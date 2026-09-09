@@ -69,7 +69,11 @@ Supabase Auth/RLS, website Telegram OAuth, personal account/custody linking, sec
 
 ## Verification
 
-- Run `pnpm test` for the current project suite; database-dependent skips are reported separately. See the [unlimited execution receipt](../artifacts/aiko-unlimited/verification.json) for updated counts.
+The default `pnpm test:e2e` / `pnpm test:e2e:aiko` command builds the connector UI and runs four local synthetic journeys: native sign-in recovery, database editing/recovery, secretary work, and approval/draft/console recovery. Install Python 3.12 with `browser-harness==0.1.8` and Chrome/Chromium; set `CHROME_BIN` if it is outside the standard Linux locations. The runner starts isolated profiles and loopback fixture hosts, then cleans up its own processes. It needs no provider credentials or personal browser. Each run writes its own checks, logs and screenshots under `artifacts/aiko-ui-qa/<run-id>/`; interrupted/missing reports are not passes. CI runs the same command. These fixtures do not validate deployed Telegram or provider sessions.
+
+The following public-browser checks and counts describe their separately recorded historical scope:
+
+- Run `pnpm test` for the current project suite; database-dependent skips are reported separately. Use the completed run's output for current counts.
 - Native regressions cover sixteen tool calls, bounded truthful replies, opaque argument logging, transient page/model output through the actual GLM adapter with a mocked provider stream, signed fixture-owner isolation, approval/denial/stale snapshots, cancellation, continued execution across unchanged results and configuration/egress rejection.
 - A real native host restores a log at the action-start/pre-finish boundary and produces an unknown receipt without opening a browser or repeating the interaction.
 - `scripts/aiko_browser_qa.py`, run through **browser-harness**, uses actual agent-browser/Chromium to read `example.com` then `iana.org` in one session. No mocked browser is used for those checks.

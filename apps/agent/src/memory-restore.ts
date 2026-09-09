@@ -2,6 +2,9 @@ import { Memory, MemoryError, type ErasureFence, type MemoryStorage, type Memory
 
 /** Host control data: deliberately outside the entity-learn archive and account KV snapshot. */
 const TABLE = "aiko_memory_erasure_authority";
+const connections = new WeakMap<Memory, MemoryStorage>();
+/** Exact native connection identity, never reconstructed from a path/archive. */
+export const guardedMemoryStorage = (memory: Memory) => connections.get(memory);
 const valid = (scope: string, fence: ErasureFence): boolean => fence.version === 1 && fence.scope === scope &&
   Number.isSafeInteger(fence.seq) && fence.seq >= 0 && /^[a-f0-9]{64}$/.test(fence.digest) &&
   (fence.seq !== 0 || fence.digest === "0".repeat(64));
@@ -39,9 +42,13 @@ export function openGuardedMemory(options: {
   restoreAuthority?: RestoreAuthority;
   /** Synchronous executor custody checks inside EACH native transaction. The
    * host must supply this for all-write admission, including direct callers. */
-  writeAuthority?: { check(scope: string): void; after(scope: string): void };
+  writeAuthority?: { storage: MemoryStorage; check(scope: string): void; after(scope: string): void };
+  /** Per-call handles may share a host-owned connection; only its owner closes it. */
+  closeStorage?: boolean;
 }): Memory {
   const { storage, scope } = options;
+  if (options.writeAuthority && options.writeAuthority.storage !== storage)
+    throw new MemoryError("forbidden", "Memory write guard requires the same native connection");
   storage.exec(`CREATE TABLE IF NOT EXISTS ${TABLE} (scope TEXT PRIMARY KEY, fence TEXT NOT NULL)`);
   const local = () => localAuthority(storage, scope);
   const retain = (fence: ErasureFence) => {
@@ -53,10 +60,18 @@ export function openGuardedMemory(options: {
       .run(scope, JSON.stringify(fence));
   };
   let memory: Memory;
+  const authorize = (phase: "check" | "after") => {
+    if (!options.writeAuthority) return;
+    const result: unknown = options.writeAuthority[phase](scope);
+    // TypeScript permits an async function in a void-returning slot. It must
+    // never turn a pending RPC into synchronous permission to commit SQL.
+    if (result !== undefined) throw new MemoryError("forbidden", "Memory write authority must be synchronous");
+  };
   const guardedStorage: MemoryStorage = {
     ...storage,
+    ...(options.closeStorage === false ? { close: () => {} } : {}),
     transaction: run => storage.transaction(() => {
-      options.writeAuthority?.check(scope);
+      authorize("check");
       // A recovered checkpoint without its journal does not make a fresh write
       // safe. Only a transaction restoring that native erasure history can
       // resume writes; otherwise its new data would omit the subject fences.
@@ -73,7 +88,7 @@ export function openGuardedMemory(options: {
       // Preparation may immediately follow the first write on this same handle.
       // Retain its checkpoint atomically, not only when a later handle opens.
       if (!local() && memory.journal.scopeVersion(scope) > 0) retain(memory.erasureFence());
-      options.writeAuthority?.after(scope);
+      authorize("after");
       return result;
     }),
   };
@@ -97,6 +112,7 @@ export function openGuardedMemory(options: {
         if (!retained) retain(current);
       }
     });
+    connections.set(memory, storage);
     return memory;
   } catch (error) { memory.close(); throw error; }
 }

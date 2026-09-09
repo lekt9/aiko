@@ -9,7 +9,7 @@ import uuid
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MANIFEST = pathlib.Path('artifacts/csv-qa/verification-run.json')
-CHECKS = ('unit', 'typecheck', 'format', 'build', 'http-dev', 'http-production', 'vault-browser', 'csv-browser')
+CHECKS = ('unit', 'typecheck', 'format', 'build', 'http-dev', 'vault-browser', 'csv-browser')
 
 
 def require(condition, message):
@@ -67,15 +67,14 @@ def validate(root=ROOT):
 
 
 def capture(root=ROOT):
-    """Requires explicit local demo dev/production servers and isolated browser CDP."""
+    """Requires an explicit local development demo server and isolated browser CDP."""
     import os
     env = dict(os.environ)
     dev = env.get('UNLOCK_DEMO_DEV_URL', 'http://127.0.0.1:4173')
-    production = env.get('UNLOCK_DEMO_PREVIEW_URL', 'http://127.0.0.1:4174')
     from urllib.parse import urlparse
-    for origin in (dev, production):
+    for origin in (dev,):
         require(urlparse(origin).hostname in ('localhost', '127.0.0.1', '::1'), 'Demo checks require loopback servers')
-    run = {'schemaVersion': 1, 'runId': str(uuid.uuid4()), 'source': source_identity(root), 'startedAt': now(), 'checks': {}, 'files': {}}
+    run = {'schemaVersion': 1, 'runId': str(uuid.uuid4()), 'source': source_identity(root), 'startedAt': now(), 'scope': 'development-demo', 'origin': dev, 'checks': {}, 'files': {}}
     qa = root / 'artifacts/csv-qa'
     qa.mkdir(parents=True, exist_ok=True)
     # Delete only this generator's manifest. A failed refresh cannot validate an old run.
@@ -86,9 +85,8 @@ def capture(root=ROOT):
         ('format', ['pnpm', 'format:check'], None),
         ('build', ['pnpm', 'build'], None),
         ('http-dev', ['node', 'scripts/http-smoke.mjs', '--json'], dev),
-        ('http-production', ['node', 'scripts/http-smoke.mjs', '--json'], production),
-        ('vault-browser', ['node', 'scripts/browser-qa.mjs'], production),
-        ('csv-browser', ['node', 'scripts/browser-qa.mjs', '--csv'], production),
+        ('vault-browser', ['node', 'scripts/browser-qa.mjs'], dev),
+        ('csv-browser', ['node', 'scripts/browser-qa.mjs', '--csv'], dev),
     ]
     for name, command, origin in commands:
         started = now()

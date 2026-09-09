@@ -341,9 +341,9 @@ export function createBrowserWatches(binding: BrowserWatchBindings) {
     signal.throwIfAborted();
   };
   const restoration = createBrowserWatchReauthorization({ owner, journal, refresh, mutate: mutateLease,
-    restoreProof: binding.restoreProof, reauthorizeLease: binding.reauthorizeLease,
+    restoreProof: binding.restoreProof, reauthorizeLease: binding.reauthorizeLease, restoreReceipt: binding.restoreReceipt,
     current: config => binding.current() && binding.configCurrent?.(config) === true,
-    authorize: (config, signal) => allowed(config, "configure", signal),
+    authorize: (config, signal, operation = "configure") => allowed(config, operation, signal),
     status: (producer, signal) => binding.leaseStatus?.(producer, signal) ?? Promise.resolve(undefined),
     scope: (history, id) => {
       const s = state(id, history);
@@ -1000,6 +1000,9 @@ export function createBrowserWatches(binding: BrowserWatchBindings) {
     },
   });
   const tools: NativeTool<Self>[] = [
+    { spec: { name: "browser_watch_check_restore", description: "Check an existing restore receipt, including while paused or expired. Does not resume collection or create delivery permission.", inputSchema: {
+      type: "object", properties: { id: { type: "string" }, requestId: { type: "string" } }, required: ["id", "requestId"], additionalProperties: false } },
+      run: raw => Effect.promise(signal => restoration.checkReceipt(raw as Parameters<typeof restoration.checkReceipt>[0], signal)) },
     { spec: { name: "browser_watch_reauthorize", description: "Reauthorize a restored watch only after proving its original queue matches retained observations. Never replays tasks or changes its source identity.", inputSchema: {
       type: "object", properties: { id: { type: "string" }, expectedGeneration: { type: "integer", minimum: 1 }, expectedLifecycleRevision: { type: "integer", minimum: 0 },
         expectedLeaseRevision: { type: "integer", minimum: 0 }, challenge: { type: "string" } }, required: ["id", "expectedGeneration", "expectedLifecycleRevision", "expectedLeaseRevision", "challenge"], additionalProperties: false } },
@@ -1027,5 +1030,5 @@ export function createBrowserWatches(binding: BrowserWatchBindings) {
     if (!binding.current()) throw Error("watch_owner_denied");
     return result;
   }) }));
-  return { component: nativeComponent, tools: scopedTools, refresh, producerGrants, sourceGrants, reauthorize: restoration.reauthorize, restoreAdmissionAllowed: restoration.admissionAllowed, configure, activate, control, disconnect, inspect, sample, reconcile, acknowledgeGap, discovery, dispatchCurrent, authorizeAction, renew };
+  return { component: nativeComponent, tools: scopedTools, refresh, producerGrants, sourceGrants, reauthorize: restoration.reauthorize, checkRestore: restoration.checkReceipt, restoreAdmissionAllowed: restoration.admissionAllowed, configure, activate, control, disconnect, inspect, sample, reconcile, acknowledgeGap, discovery, dispatchCurrent, authorizeAction, renew };
 }

@@ -120,7 +120,7 @@ for (const loss of ["response-loss", "http-500", "aborted-after-commit"]) test(`
   expect(await f.get()).toMatchObject({ state: "unknown", reason: "uncertain_outcome" });
   const restarted = structuredClone(f.events);
   for (const callId of ["dispatch", "a-new-execution-call"]) {
-    expect((await run(restarted, f.dispatch, { session: f.session, callId, send })).status).toBe("unknown");
+    expect(await run(restarted, f.dispatch, { session: f.session, callId, send })).toMatchObject({status:"unknown"});
   }
   expect(effects).toBe(1);
   expect(JSON.stringify(restarted)).not.toContain("SECRET_COOKIE");
@@ -138,6 +138,25 @@ test("authorization rejection and cancellation before dispatch never contact the
   expect(effects).toBe(0);
 });
 
+test("lost settlement persistence leaves consumed consent visibly unknown on every replay", async () => {
+  const f = await approvalFixture(); await f.approve();
+  let effects = 0;
+  const send = async (): Promise<HarnessTransportResponse> => {
+    effects++;
+    return { status: 201, headers: {}, classification: "application", body: { ok: true } };
+  };
+  const first = await run(f.events, f.dispatch, { session: f.session, callId: "dispatch", send,
+    failAppend: rows => rows.some(e => e.type === "AikoActionApprovalTransition" && (e.snapshot as { state?: string }).state === "settled"),
+  });
+  expect(first.status).toBe("unknown"); expect(effects).toBe(1);
+  expect((await f.get())?.state).toBe("dispatched");
+  const restarted = structuredClone(f.events);
+  for (const callId of ["dispatch", "different-dispatch"]) {
+    expect(await run(restarted, f.dispatch, { session: f.session, callId, send })).toMatchObject({status:"unknown"});
+  }
+  expect(effects).toBe(1);
+});
+
 function logOf(events: Event[]) {
   return {
     read: Effect.sync(() => events),
@@ -146,7 +165,7 @@ function logOf(events: Event[]) {
     append: (items: Event[]) => Effect.sync(() => { events.push(...items); }),
   } as any;
 }
-async function run(events: Event[], input: unknown, extra: { send?: (request: any) => Promise<HarnessTransportResponse>; arcade?: () => Promise<boolean>; session?: any; callId?: string; turn?: string; signal?: AbortSignal } = {}): Promise<Record<string, any>> {
+async function run(events: Event[], input: unknown, extra: { send?: (request: any) => Promise<HarnessTransportResponse>; arcade?: () => Promise<boolean>; session?: any; callId?: string; turn?: string; signal?: AbortSignal; failAppend?: (rows: Event[]) => boolean } = {}): Promise<Record<string, any>> {
   const tool = createObservedNetworkTools({
     owner: "123",
     thread: "user-123",
@@ -157,7 +176,8 @@ async function run(events: Event[], input: unknown, extra: { send?: (request: an
   }).find(t => t.spec.name === "observed_network_run")!;
   return Effect.runPromise(tool.run(input, { callId: extra.callId ?? "c1", turn: extra.turn ?? "turn-1", signal: extra.signal ?? new AbortController().signal }).pipe(
     Effect.provideService(Self, { actor: "aiko", instance: "test", thread: "user-123" }),
-    Effect.provideService(EventLog, logOf(events)),
+    Effect.provideService(EventLog, { ...logOf(events), append: (rows: Event[]) =>
+      extra.failAppend?.(rows) ? Effect.die(Error("Synthetic durable settlement write failure")) : logOf(events).append(rows) }),
   )) as Promise<Record<string, any>>;
 }
 async function compiledWrite() {

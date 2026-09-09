@@ -27,7 +27,7 @@ class EvidenceTest(unittest.TestCase):
         self.file.parent.mkdir(parents=True)
         self.file.write_text('{"success": true}')
         self.run = {'schemaVersion': 1, 'runId': 'fixture-run', 'source': self.source, 'startedAt': self.started,
-                    'completedAt': now(), 'files': {'artifacts/csv-qa/unit-results.json': digest(self.file)},
+                    'scope': 'development-demo', 'origin': 'http://127.0.0.1:4173', 'completedAt': now(), 'files': {'artifacts/csv-qa/unit-results.json': digest(self.file)},
                     'checks': {name: {'exitCode': 0, 'runId': 'fixture-run', 'source': self.source,
                                      'startedAt': self.started, 'completedAt': now()} for name in CHECKS}}
         self.run['completedAt'] = now()
@@ -93,10 +93,9 @@ class EvidenceTest(unittest.TestCase):
             check['source'] = self.run['source']
         files = {
             'csv-qa/unit-results.json': {'success': True, 'numFailedTests': 0, 'numFailedTestSuites': 0, 'numPassedTests': 2},
-            'csv-qa/http-dev.txt': {'passed': 2, 'failed': failed, 'checks': ['one', 'two']},
-            'csv-qa/http-production.txt': {'passed': 2, 'failed': 0, 'checks': ['one', 'two']},
-            'vault-qa/browser-results.json': {'origin': 'http://127.0.0.1:4174', 'checks': [{'check': 'vault', 'passed': True}]},
-            'csv-qa/browser-results.json': {'origin': 'http://127.0.0.1:4174', 'checks': [{'check': 'csv', 'passed': True}]},
+            'csv-qa/http-dev.txt': {'origin':'http://127.0.0.1:4173', 'passed': 2, 'failed': failed, 'checks': ['one', 'two']},
+            'vault-qa/browser-results.json': {'origin': 'http://127.0.0.1:4173', 'checks': [{'check': 'vault', 'passed': True}]},
+            'csv-qa/browser-results.json': {'origin': 'http://127.0.0.1:4173', 'checks': [{'check': 'csv', 'passed': True}]},
             'vault-qa/test-axe.json': [],
         }
         if mutate:
@@ -154,6 +153,18 @@ class EvidenceTest(unittest.TestCase):
         self.assertEqual(report['verifiedAt'], self.run['completedAt'])
         self.assertGreaterEqual(report['generatedAt'], report['verifiedAt'])
         self.assertEqual(report['runId'], 'fixture-run')
+        page = (self.root / 'docs/verification.html').read_text()
+        self.assertIn('2 browser checks passed', page)
+        self.assertIn('http://127.0.0.1:4173', page)
+        self.assertNotIn('1,000 rows', page)
+        self.assertNotIn('Five views were checked', page)
+        self.assertNotIn('127.0.0.1:4174', page)
+        self.assertEqual(report['scope'], 'development-demo')
+
+    def test_renderer_rejects_http_from_another_preview(self):
+        result = self.renderer_fixture(mutate=lambda f: f['csv-qa/http-dev.txt'].update(origin='http://127.0.0.1:4999'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('different preview', result.stderr)
 
 
 if __name__ == '__main__':

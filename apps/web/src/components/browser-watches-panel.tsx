@@ -6,6 +6,7 @@ import {
   watchSampleText,
   watchStateLabel,
   watchReauthorizationRequest,
+  watchRestoreCheckRequest,
   type WatchConfig,
   type WatchDiscovery,
   type WatchReply,
@@ -270,6 +271,7 @@ export function BrowserWatchesPanel({
               restore = watch.collector?.restore,
               restorePending = watch.reauthorization && watch.reauthorization.status !== "confirmed",
               restoreRequest = watchReauthorizationRequest(watch, Date.now()),
+              restoreCheck = watchRestoreCheckRequest(watch),
               sample = samples[watch.id],
               preview = sample && watchSampleText(sample.payload);
             return (
@@ -360,16 +362,17 @@ export function BrowserWatchesPanel({
                         ? "The saved event history is unavailable. Watching remains held. Refresh to check whether recovery is available."
                         : restorePending
                           ? watch.reauthorization?.status === "needs-attention"
-                            ? "Recovery could not be confirmed. Check the existing request; this will not start a new recovery attempt."
-                            : "Checking the saved history and current connection. Refresh or check the existing request for progress."
+                            ? "Recovery could not be confirmed. Check the saved result. This keeps the watch's current status and limits."
+                            : "Recovery is pending. Check the saved result for progress. Checking does not resume the watch or retry authorization."
                           : "Allow Aiko to verify the saved history and continue this watch with its existing action and limits."}
                     </p>
-                    {restoreRequest && (
+                    {(restoreCheck || restoreRequest) && (
                       <button type="button" className="text-button" disabled={disabled}
                         onClick={() => void perform(async () => {
-                          await read("/reauthorize", restoreRequest);
+                          if (restoreCheck) await read("/check-restore", restoreCheck);
+                          else if (restoreRequest) await read("/reauthorize", restoreRequest);
                         }, "Restored watch checked. Review its current status.")}
-                      >{restorePending ? "Check restored watch" : "Verify and continue watch"}</button>
+                      >{restoreCheck ? "Check restored watch" : "Verify and continue watch"}</button>
                     )}
                   </div>
                 )}

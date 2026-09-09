@@ -30,6 +30,22 @@ export type BrowserWatchReauthorizeRequest = Omit<BrowserWatchRestoreProof,"deli
   previousDeliveryEpoch:string|null;
   deliveryEpoch:string;
 };
+export interface BrowserWatchRepairProof extends BrowserWatchRestoreProof {
+  stopped:boolean;
+  /** Keyed digest of the exact private lease and synchronous stop fence. */
+  leaseDigest:string;
+}
+export interface BrowserWatchRepairRequest {
+  previousRequest:BrowserWatchReauthorizeRequest;
+  previousRequestDigest:string;
+  proof:BrowserWatchRepairProof;
+}
+export interface BrowserWatchRestoreReceipt {
+  owner:string;producer:string;profile:string;epoch:string;generation:number;
+  connectionId:string;connectionRevision:string;
+  challenge:string;requestDigest:string;deliveryEpoch:string;currentDeliveryEpoch:string|null;
+  status:"applied"|"unapplied";
+}
 
 /** Identical on the native host and private VM; hashes identities, never payloads. */
 export function browserWatchRestorePrefixDigest(

@@ -9,7 +9,10 @@ import type { ConnectorEngine, Connection } from "./connectors.ts";
 export interface ActorConnectorBinding {
   owner: string;
   thread: string;
-  engine: Pick<ConnectorEngine, "search" | "connectBrowser" | "connections" | "execute">;
+  engine: Pick<ConnectorEngine, "search" | "connectBrowser" | "connections" | "execute"> & Partial<Pick<ConnectorEngine, "loginOperationContext" | "connectionSnapshot" | "nativeControl">>;
+  /** Optional generative login layout from the host's metadata-only renderer.
+   * Failures fall back to the validated catalog spec; never blocks control. */
+  renderLogin?: import("./native-login-render.ts").NativeLoginRenderer;
   miniAppUrl?: string;
   /** Host-only native Mini App buttons; no credential-bearing URL enters the log. */
   deliverConnection: (input: { owner: string; text: string; buttons: TelegramButton[][] }, signal: AbortSignal) => Promise<{ status: "delivered" | "unknown" | "rejected" }>;

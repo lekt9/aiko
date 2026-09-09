@@ -12,7 +12,7 @@ const startedAt = Date.now();
 const directory = resolve(root, `artifacts/browser-events/check-${startedAt}`);
 await mkdir(directory, { recursive: true, mode: 0o700 });
 const focused = [
-  "browser-events", "browser-events-host", "browser-watch-authority",
+  "browser-events", "browser-events-restore-admission", "browser-watch-restore", "browser-watch-reauthorization", "browser-events-host", "browser-watch-authority",
   "browser-watch-driver", "browser-watch-runner", "browser-watch-assembly", "browser-watch-connector-authority", "browser-watch-policy", "browser-watch-config", "browser-watch-config-host",
   "browser-watches", "browser-watch-actions", "browser-watch-actor-actions", "browser-watch-webhook-actions", "browser-watch-webhook-permit", "browser-watch-webhook-assembly",
   "webhook-adapter", "harness-revisions", "harness-library-api", "harness-recovery", "channel-wiring", "channel-log-source-host", "browser-watch-source-renewal",
@@ -30,8 +30,8 @@ const checks: Check[] = [
   { name: "native-watch-delivery-fence", command: ["bun", "test", "apps/agent/test/cloudflare-host.test.ts", "-t", "Router delivery checks current authority"], timeoutMs: 60_000 },
   { name: "native-watch-storage-authority", command: ["bun", "scripts/verify-browser-watch-kv.ts"], files: ["scripts/verify-browser-watch-kv.ts"], timeoutMs: 180_000 },
   { name: "agent-types", command: ["pnpm", "--filter", "@unlock/agent", "typecheck"], timeoutMs: 180_000 },
-  { name: "product-contracts", command: ["pnpm", "exec", "vitest", "run", "apps/web/test/browser-watches.test.ts", "apps/web/test/browser-watch-renewal.test.ts", "apps/web/test/saved-tools.test.ts", "apps/web/test/saved-tools-proxy.test.ts", "--maxWorkers=2"],
-    files: ["apps/web/test/browser-watches.test.ts", "apps/web/test/browser-watch-renewal.test.ts", "apps/web/test/saved-tools.test.ts", "apps/web/test/saved-tools-proxy.test.ts"], timeoutMs: 120_000 },
+  { name: "product-contracts", command: ["pnpm", "exec", "vitest", "run", "apps/web/test/browser-watches.test.ts", "apps/web/test/browser-watch-renewal.test.ts", "apps/web/test/browser-watch-restore.test.ts", "apps/web/test/saved-tools.test.ts", "apps/web/test/saved-tools-proxy.test.ts", "--maxWorkers=2", "--exclude", "**/artifacts/**"],
+    files: ["apps/web/test/browser-watches.test.ts", "apps/web/test/browser-watch-renewal.test.ts", "apps/web/test/browser-watch-restore.test.ts", "apps/web/test/saved-tools.test.ts", "apps/web/test/saved-tools-proxy.test.ts"], timeoutMs: 120_000 },
 ];
 if (full) checks.push(
   { name: "workspace-types", command: ["pnpm", "typecheck"], timeoutMs: 600_000 },
@@ -47,6 +47,10 @@ if (full) checks.push(
   { name: "product-controls-fixture", command: ["python3", "apps/web/test/browser-watches.fixture-run.py"], files: ["apps/web/test/browser-watches.fixture-run.py", "apps/web/test/browser-watches.browser.py", "apps/web/test/browser-watches-mount.browser.py"], timeoutMs: 600_000 },
   { name: "saved-tools-fixture", command: ["python3", "apps/web/test/browser-watches.fixture-run.py", "--saved-tools"], files: ["apps/web/test/browser-watches.fixture-run.py", "apps/web/test/saved-tools.browser.py", "apps/web/test/saved-tools.fixture-api.ts"], timeoutMs: 600_000 },
 );
+// Bun treats bare test paths as substring filters and can discover archived
+// checkout copies under artifacts/. Explicit paths select only this workspace.
+for (const check of checks) if (check.command[0] === "bun" && check.command[1] === "test")
+  check.command = check.command.map(arg => arg.startsWith("apps/") ? `./${arg}` : arg);
 const report: {
   version: 1; mode: string; startedAt: number; finishedAt?: number;
   status: "running" | "incomplete" | "failed" | "passed";

@@ -51,9 +51,10 @@ export interface MemoryBinding {
   eraseCopies?: (observations: readonly string[], operationId: string) => Promise<HarnessDependencyErasureReceipt>;
   /** Shares the host's restore admission boundary, including asynchronous private-copy cleanup. */
   withErasure?: <T>(operation: () => Promise<T>) => Promise<T>;
-  /** Owner-scoped admission around all non-erasure native tool work, including
-   * asynchronous sources. A closed original write needs receipt-only recovery. */
-  withMemory?: <T>(request: { key: string; operation: string; input: unknown; signal: AbortSignal }, run: () => Promise<T>) => Promise<T>;
+  /** Owner-scoped admission around non-erasure native writes, including
+   * asynchronous sources. A closed original write needs receipt-only recovery.
+   * Recorded-evidence reads use current native state without creating a write. */
+  withMemory?: <T>(request: { key: string; operation: string; input: unknown; signal: AbortSignal; nativeReceiptRead: boolean }, run: () => Promise<T>) => Promise<T>;
   /** Required for native memory_erase. Independent host authority is resolved
    * per call; absent/unavailable authority never falls back to local deletion. */
   erasureAuthority?: MemoryErasureBinding | (() => Promise<MemoryErasureBinding>);
@@ -341,6 +342,8 @@ function listText(hits: MemoryHit[], prefix: string): string {
   return lines.join("\n\n");
 }
 
+const recordedMemoryReads = new Set(["scan", "page", "lint_pages", "recall", "get"]);
+
 /** Tardie 0.22 native-tool adapter over the actual entity-learn core, not a parallel memory engine.
  * All I/O happens inside native effects. Self + native turn/call identity determine replay keys.
  */
@@ -379,6 +382,7 @@ export function memoryTools(
                 "Credentials must not enter memory",
               );
             const execute = async (): Promise<ReadReceipt | MemoryReceipt> => {
+            context.signal.throwIfAborted();
             let logSource: ReturnType<typeof tardigradeLogSource> | undefined;
             if (operation === "refresh_logs") {
               const args = object(input, ["after"]);
@@ -767,8 +771,8 @@ export function memoryTools(
               memory.close();
             }
             };
-            return binding.withMemory && operation !== "erase"
-              ? binding.withMemory({ key, operation, input, signal: context.signal }, execute)
+            return binding.withMemory && operation !== "erase" && !recordedMemoryReads.has(operation)
+              ? binding.withMemory({ key, operation, input, signal: context.signal, nativeReceiptRead: operation === "remember" || operation === "forget" }, execute)
               : execute();
           },
           catch: (error) =>
@@ -795,7 +799,7 @@ export function memoryTools(
     inputSchema: ReturnType<typeof schema>,
   ): NativeTool<Self> => ({
     // These operations inspect recorded evidence without refresh, embedding or mutation.
-    speculativeRead: ["scan", "page", "lint_pages", "recall", "get"].includes(operation),
+    speculativeRead: recordedMemoryReads.has(operation),
     spec: { name, description, inputSchema },
     run: run(operation),
   });

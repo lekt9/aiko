@@ -136,7 +136,7 @@ export function evaluateQuery(store: StructuredStore, query: Query): QueryResult
             else if (b.aggregate === "count") result = ready(selected.length);
             else if (b.aggregate === "sum") result = ready(selected.reduce((sum, c) => decimalMath("add", sum, numeric(c.value!)) as string, "0"));
             else throw new DataError("invalid", "Unknown lookup aggregation");
-            if (selected.some(c => c.freshness !== "fresh") && result.state === "ready") result.freshness = "stale";
+            if ((targets.freshness !== "fresh" || selected.some(c => c.freshness !== "fresh")) && result.state === "ready") result = { ...result, freshness: "stale" };
           }
         } else {
           const saved = store.cell(tableId, row.id, columnId);

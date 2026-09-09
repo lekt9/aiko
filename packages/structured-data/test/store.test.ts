@@ -127,6 +127,31 @@ test("exact decimal totals, joined rows and relation lookups use current values"
   expect(() => decimalMath("divide", "1", "3")).toThrow("rounding");
 });
 
+test("lookups preserve expired relation membership freshness, including empty counts", async () => {
+  let now = 1000;
+  const { store } = fixture(":memory:", "owner", { now: () => now }); seed(store);
+  const projects = store.table("projects");
+  projects.value.columns.push({ id: "liveCompany", name: "Live company", type: "relation", nullable: true, relation: { tableId: "companies", cardinality: "many-to-one" }, binding: { kind: "request", sourceId: "membership", contractDigest: "membership-v1", inputs: {}, select: { stepId: "read", jsonPointer: "/company" }, refresh: { mode: "on-demand", maxAgeSeconds: 1 }, retention: "materialized" } });
+  projects.value.columns.find(column => column.id === "tier")!.binding = { kind: "lookup", relation: "liveCompany", field: "tier", aggregate: "first" };
+  projects.value.columns.push({ id: "companyCount", name: "Company count", type: "integer", binding: { kind: "lookup", relation: "liveCompany", field: "tier", aggregate: "count" } });
+  store.execute("live-membership-schema", { kind: "table.define", table: projects.value, expectedRevision: 1 }, ctx);
+  await store.commitCells("membership-read", { tableId: "projects", tableRevision: 2, rows: [
+    { rowId: "p1", rowRevision: 1, cells: { liveCompany: { retention: "materialized", cell: { state: "ready", freshness: "fresh", value: "acme" } } } },
+    { rowId: "p3", rowRevision: 1, cells: { liveCompany: { retention: "materialized", cell: { state: "ready", freshness: "fresh", value: null } } } },
+  ] }, now);
+  const query = (rowId: string) => store.query({ tableId: "projects", select: ["tier", "companyCount"], filter: { field: "$id", op: "eq", value: rowId } }).rows[0]!.cells;
+  expect(query("p1").tier).toMatchObject({ value: "enterprise", freshness: "fresh" });
+  expect(query("p3").companyCount).toMatchObject({ value: 0, freshness: "fresh" });
+  now = 2001;
+  expect(query("p1").tier).toMatchObject({ value: "enterprise", freshness: "stale" });
+  expect(query("p1").companyCount).toMatchObject({ value: 1, freshness: "stale" });
+  expect(query("p3").companyCount).toMatchObject({ value: 0, freshness: "stale" });
+  expect(query("p3").tier?.state).toBe("missing");
+  const joined = store.query({ tableId: "projects", select: ["tier", "current.tier"], filter: { field: "$id", op: "eq", value: "p1" }, joins: [{ tableId: "companies", as: "current", kind: "left", cardinality: "one", on: { local: "company", foreign: "$id" } }] });
+  expect(joined.rows[0]?.cells.tier?.freshness).toBe("stale");
+  expect(joined.rows[0]?.cells["current.tier"]?.freshness).toBe("fresh");
+});
+
 test("pagination tokens reject changed data and aggregates disclose incomplete scans", () => {
   const { store } = fixture(); seed(store);
   const first = store.query({ tableId: "projects", limit: 1 }); expect(first.nextCursor).toBeDefined();

@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   tardie@0.22.0:
-    hash: 17a4292a7c744d957e2bd41db4c6cb9c10b98ed3044d12e1899e41968f9d7aab
+    hash: ff25e99938f9aa079e5a034b87914f4bb09eb756d03193405c50a9bea0c4748a
     path: patches/tardie@0.22.0.patch
 
 importers:
@@ -97,7 +97,7 @@ importers:
         version: 0.32.0
       tardie:
         specifier: 0.22.0
-        version: 0.22.0(patch_hash=17a4292a7c744d957e2bd41db4c6cb9c10b98ed3044d12e1899e41968f9d7aab)(@aws-sdk/credential-provider-node@3.972.82)(@smithy/fetch-http-handler@5.8.0)(@smithy/node-http-handler@4.12.1)(@smithy/signature-v4@5.7.3)(ws@8.21.3)(zod@4.5.4)
+        version: 0.22.0(patch_hash=ff25e99938f9aa079e5a034b87914f4bb09eb756d03193405c50a9bea0c4748a)(@aws-sdk/credential-provider-node@3.972.82)(@smithy/fetch-http-handler@5.8.0)(@smithy/node-http-handler@4.12.1)(@smithy/signature-v4@5.7.3)(ws@8.21.3)(zod@4.5.4)
       zod:
         specifier: 4.5.4
         version: 4.5.4
@@ -6421,7 +6421,7 @@ snapshots:
       minizlib: 3.1.0
       yallist: 5.0.0
 
-  tardie@0.22.0(patch_hash=17a4292a7c744d957e2bd41db4c6cb9c10b98ed3044d12e1899e41968f9d7aab)(@aws-sdk/credential-provider-node@3.972.82)(@smithy/fetch-http-handler@5.8.0)(@smithy/node-http-handler@4.12.1)(@smithy/signature-v4@5.7.3)(ws@8.21.3)(zod@4.5.4):
+  tardie@0.22.0(patch_hash=ff25e99938f9aa079e5a034b87914f4bb09eb756d03193405c50a9bea0c4748a)(@aws-sdk/credential-provider-node@3.972.82)(@smithy/fetch-http-handler@5.8.0)(@smithy/node-http-handler@4.12.1)(@smithy/signature-v4@5.7.3)(ws@8.21.3)(zod@4.5.4):
     dependencies:
       '@cfworker/json-schema': 4.1.1
       '@effect/platform-bun': 4.0.0-rc.110(effect@4.0.0-rc.110)

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type MouseEvent } from "react";
 import { decidePromise, listPromises, pendingPromiseCount, promiseAccessDenied, promiseStatus, type PromiseDecision, type PromiseRequest, type PromiseReview } from "../lib/promises";
+import { pollWhileVisible } from "../lib/poll";
 
 type Props = { request: PromiseRequest; authScope: string; onPendingCount?: (count: number) => void; children: ReactNode };
 type ReviewState = { rows?: PromiseReview[]; error: string; notice: string; busy?: string; fresh: boolean; refresh(): Promise<void>; decide(row: PromiseReview, decision: PromiseDecision): Promise<void> };
@@ -36,8 +37,8 @@ function PromiseAccountProvider({ request, onPendingCount, children }: Props) {
     const controller = new AbortController(); lifetime.current = controller;
     latest.current.onPendingCount?.(0);
     void refresh();
-    const timer = setInterval(() => { void refresh(); }, 5000);
-    return () => { clearInterval(timer); controller.abort(); ++order.current; };
+    const stopPolling = pollWhileVisible(() => { void refresh(); }, 5000);
+    return () => { stopPolling(); controller.abort(); ++order.current; };
   }, []);
   async function decide(row: PromiseReview, decision: PromiseDecision) {
     const controller = lifetime.current;

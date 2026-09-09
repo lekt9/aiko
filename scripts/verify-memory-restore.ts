@@ -9,6 +9,8 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const dir = await mkdtemp("/tmp/aiko-memory-workerd-");
 const worker = `
 import { DurableObject } from "cloudflare:workers";
+import { AikoRegistryDO } from ${JSON.stringify(join(root, "apps/agent/src/cloudflare.ts"))};
+export { AikoRegistryDO };
 import { cloudflareStorage } from ${JSON.stringify(join(root, "packages/entity-learn/lib/cloudflare.ts"))};
 import { openGuardedMemory } from ${JSON.stringify(join(root, "apps/agent/src/memory-restore.ts"))};
 import { createMemoryAuthorityRegistry } from ${JSON.stringify(join(root, "apps/agent/src/memory-authority-host.ts"))};
@@ -168,10 +170,14 @@ export class NativeWrite extends DurableObject {
    check(before===JSON.stringify(memory.exportArchive()),"writer reconciliation changed native memory");
    rejects(()=>memory.remember({subject:"unadmitted",title:"Denied",type:"fact",payload:"denied"},write("unadmitted")),"admission");
    check((await command("advanceWriter",owner)).writer===2,"writer handoff blocked after native closure");
-   await control.write("new-source",{},()=>memory.remember({subject:"new",title:"New",type:"fact",payload:"NEW_GENERATION"},write("new")));
+   const input={subject:"new",title:"New",type:"fact",payload:"NEW_GENERATION"};
+   const saved=await control.write("new-source",{},()=>memory.remember(input,write("new")));
+   const closed=JSON.stringify(memory.exportArchive());
+   const replay=await control.write("new-source",{},()=>{throw Error("original write executed again");},()=>memory.remember(input,write("new")));
+   check(replay.id===saved.id&&JSON.stringify(memory.exportArchive())===closed,"native receipt replay changed memory");
    check(memory.scan().items.length===2,"partial memory lost or source executed again");
    await this.ctx.storage.sync();memory.close();
-   return Response.json({ok:true,nativeExecutionFenced:true,partialPreserved:true,reexecuted:false,writerHandoff:true});
+   return Response.json({ok:true,nativeExecutionFenced:true,partialPreserved:true,reexecuted:false,writerHandoff:true,receiptOnlyReplay:true});
   }catch(e){return Response.json({error:String(e),stack:e.stack},{status:500});}
  }
 }
@@ -186,7 +192,12 @@ export class NativeImport extends DurableObject {
    getAlarm:()=>this.ctx.storage.getAlarm(),setAlarm:at=>this.ctx.storage.setAlarm(at),deleteAlarm:()=>this.ctx.storage.deleteAlarm()};
   const host=await createCloudflareAccountHost({storage,actorName:"aiko",actorInstance:"native-import",ownsThread:t=>t==="user-"+owner,actorFor:()=>undefined,layersFor:()=>Layer.empty});
   const state=await command("read",owner),fence=state?.fence;
-  const memory=openGuardedMemory({storage:cloudflareStorage(this.ctx.storage),scope,...(path.endsWith("/source")?{}:{restoreAuthority:()=>fence})});
+  const sign=memoryAuthorityFingerprint(await command("key",owner));
+  const authority={owner,writer,fingerprint:sign,read:owner=>command("read",owner),event:(owner,key)=>command("event",owner,key),erasureClaim:(owner,key)=>command("erasureClaim",owner,key),
+   append:async(owner,event)=>{const result=await command("append",owner,event);if(event.type==="AikoMemoryAuthorityRestoreSettled")throw Error("authority settlement acknowledgement lost");return result;}};
+  let memory;const nativeStorage=cloudflareStorage(this.ctx.storage);
+  const control=createMemoryWriteAuthority({storage:nativeStorage,memory:()=>memory,authority});
+  memory=openGuardedMemory({storage:nativeStorage,scope,...(path.endsWith("/source")?{}:{restoreAuthority:()=>fence,writeAuthority:control.guard})});
   const denied=async(run)=>{let failed=false;try{await run();}catch{failed=true;}check(failed,"expected native import rejection");};
   try {
    if(path.endsWith("/source")) {
@@ -203,16 +214,20 @@ export class NativeImport extends DurableObject {
    check(fixture,"native fixture missing");
    const sidecarFingerprint=createHash("sha256").update(JSON.stringify(fixture.archive)).digest("hex");
    const nativeDigest=createHash("sha256").update(JSON.stringify([fixture.histories,sidecarFingerprint])).digest("hex");
-   const fingerprint=memoryAuthorityFingerprint(await command("key",owner))(["native-import",owner,importId,nativeDigest]);
-   const authority={read:owner=>command("read",owner),event:(owner,key)=>command("event",owner,key),append:async(owner,event)=>{const result=await command("append",owner,event);if(event.type==="AikoMemoryAuthorityRestoreSettled")throw Error("authority settlement acknowledgement lost");return result;}};
-   const publication=nativeMemoryImportPublication({owner,memory,storage:cloudflareStorage(this.ctx.storage),importId,operationId,fingerprint,archive:fixture.archive,histories:fixture.histories,history:host.exportHistory});
-   const lease=await memoryRestoreAdmission({owner,writer,authority,operationId:"account:"+importId,fingerprint,publication});
+   const fingerprint=sign(["native-import",owner,importId,nativeDigest]);
+   let lease;
+   const publication=nativeMemoryImportPublication({owner,memory,storage:nativeStorage,importId,operationId,fingerprint,archive:fixture.archive,histories:fixture.histories,history:host.exportHistory,
+    withExecutionFence:verify=>control.fencePublication(lease.claim,verify)});
+   lease=await memoryRestoreAdmission({owner,writer,authority,operationId:"account:"+importId,fingerprint,publication});
    if(path.endsWith("/prepare")) {
     check((await lease.prepare()).status==="admitted","native restore not admitted");
     check((await lease.reconcile()).status==="pending","absent import claimed success");
-    failSync=true;
-    await denied(()=>host.importHistory(importId,fixture.histories,{fingerprint:createHash("sha256").update(JSON.stringify(fixture.archive)).digest("hex"),import:()=>memory.importArchive(fixture.archive)}));
-    failSync=false;
+    failSync=true;const entered=Promise.withResolvers();
+    this.ctx.waitUntil(control.exclusive(lease.claim,async()=>{
+     await denied(()=>host.importHistory(importId,fixture.histories,{fingerprint:sidecarFingerprint,import:()=>memory.importArchive(fixture.archive)}));
+     failSync=false;entered.resolve();await new Promise(()=>{});
+    }));
+    await entered.promise;
     check(memory.get(fixture.fact),"native commit lost with acknowledgement");
     check((await command("read",owner)).pending,"authority released before verification");
     await this.ctx.storage.sync();return Response.json({ok:true,nativeImportCommitted:true,acknowledgementLost:true});
@@ -227,7 +242,7 @@ export class NativeImport extends DurableObject {
    check(memory.get(fixture.fact).observation.payload==="NATIVE_IMPORT_SYNTHETIC","original citation lost");
    check(!(await command("read",owner)).pending,"native import claim held after verified completion");
    check((await command("advanceWriter",owner)).writer===2,"verified recovery did not permit writer handoff");
-   await this.ctx.storage.sync();return Response.json({ok:true,publicationReconciled:true,secondImport:false,originalCitation:true,writerHandoff:true});
+   await this.ctx.storage.sync();return Response.json({ok:true,publicationReconciled:true,secondImport:false,originalCitation:true,writerHandoff:true,nativeExecutorFenced:true});
   }catch(e){return Response.json({error:String(e),stack:e.stack},{status:500});}finally{failSync=false;memory.close();await host.close();}
  }
 }
@@ -287,14 +302,31 @@ export class Authority extends DurableObject {
   finally{await registry.close();}
  }
 }
-export default {fetch(request,env){const path=new URL(request.url).pathname;if(path==="/ready")return Response.json({ready:true});if(path.startsWith("/native-write/"))return env.WRITE.get(env.WRITE.idFromName("writer")).fetch(request);if(path.startsWith("/native-import/"))return env.IMPORT.get(env.IMPORT.idFromName("target")).fetch(request);if(path.startsWith("/external/"))return env.EXTERNAL.get(env.EXTERNAL.idFromName(path.split("/")[2])).fetch(request);if(path.startsWith("/authority/"))return env.AUTHORITY.get(env.AUTHORITY.idFromName("registry")).fetch(request);return env.FIXTURE.get(env.FIXTURE.idFromName("fixture")).fetch(request);}};
+export default {async fetch(request,env){const path=new URL(request.url).pathname;if(path==="/ready")return Response.json({ready:true});
+if(path==="/registry-rpc"){
+ const registry=env.PRODUCTION_REGISTRY.getByName("rpc-boundary");
+ check(await registry.admit("123",1),"production admission failed");
+ const current=await registry.memoryAuthority("123");
+ check(current?.owner==="123"&&current.revision===1,"production authority missing");
+ const denied=[];
+ for(const name of ["control","authority","key","append","advanceWriter","close"]){
+  let rejected=false;try{await registry[name]("123");}catch(e){
+   check(/does not implement|not a function|not available|not an own property|does not exist|not callable/i.test(String(e)),"unexpected RPC failure: "+String(e));rejected=true;
+  }check(rejected,"private registry capability was exposed: "+name);denied.push(name);
+ }
+ check(JSON.stringify(await registry.memoryAuthority("123"))===JSON.stringify(current),"RPC probe changed authority");
+ check((await registry.list()).length===1,"production inventory changed");
+ return Response.json({ok:true,productionRegistry:true,denied,revision:current.revision});
+}
+if(path.startsWith("/native-write/"))return env.WRITE.get(env.WRITE.idFromName("writer")).fetch(request);if(path.startsWith("/native-import/"))return env.IMPORT.get(env.IMPORT.idFromName("target")).fetch(request);if(path.startsWith("/external/"))return env.EXTERNAL.get(env.EXTERNAL.idFromName(path.split("/")[2])).fetch(request);if(path.startsWith("/authority/"))return env.AUTHORITY.get(env.AUTHORITY.idFromName("registry")).fetch(request);return env.FIXTURE.get(env.FIXTURE.idFromName("fixture")).fetch(request);}};
 `;
 await writeFile(join(dir,"worker.ts"),worker);
 // Freeze the current dirty candidate, not HEAD. Discover the actual bundled
 // dependency closure, hash it around a second build, and restart only the emitted
 // immutable bundle. Shared source edits after this point cannot drift the run.
 const buildOptions = { entrypoints: [join(dir,"worker.ts")], target: "browser" as const, conditions: ["workerd"],
-  external: ["cloudflare:workers", "node:*"], metafile: true };
+  external: ["cloudflare:workers", "node:*"], metafile: true,
+  loader: { ".sh": "text" as const, ".py": "text" as const, ".txt": "text" as const } };
 const discovered = await Bun.build(buildOptions);
 if (!discovered.success) throw new AggregateError(discovered.logs,"Fixture bundle failed");
 const inputs = Object.keys(discovered.metafile!.inputs).map(path => resolve(path));
@@ -309,7 +341,7 @@ assert.equal(built.outputs.length,1,"Unexpected fixture build outputs");
 const bundle = new Uint8Array(await built.outputs[0]!.arrayBuffer()), bundleSha256=createHash("sha256").update(bundle).digest("hex");
 await writeFile(join(dir,"worker.js"),bundle);
 await writeFile(join(dir,"source-freeze.json"),JSON.stringify({inputs:before,bundleSha256,bun:Bun.version},null,2));
-await writeFile(join(dir,"wrangler.json"),JSON.stringify({name:"memory-restore-local",main:join(dir,"worker.js"),no_bundle:true,compatibility_date:"2026-09-01",compatibility_flags:["nodejs_compat"],durable_objects:{bindings:[{name:"FIXTURE",class_name:"Fixture"},{name:"AUTHORITY",class_name:"Authority"},{name:"EXTERNAL",class_name:"ExternalMemory"},{name:"IMPORT",class_name:"NativeImport"},{name:"WRITE",class_name:"NativeWrite"}]},migrations:[{tag:"v1",new_sqlite_classes:["Fixture","Authority","ExternalMemory","NativeImport","NativeWrite"]}]}));
+await writeFile(join(dir,"wrangler.json"),JSON.stringify({name:"memory-restore-local",main:join(dir,"worker.js"),no_bundle:true,compatibility_date:"2026-09-01",compatibility_flags:["nodejs_compat"],durable_objects:{bindings:[{name:"FIXTURE",class_name:"Fixture"},{name:"AUTHORITY",class_name:"Authority"},{name:"EXTERNAL",class_name:"ExternalMemory"},{name:"IMPORT",class_name:"NativeImport"},{name:"WRITE",class_name:"NativeWrite"},{name:"PRODUCTION_REGISTRY",class_name:"AikoRegistryDO"}]},migrations:[{tag:"v1",new_sqlite_classes:["Fixture","Authority","ExternalMemory","NativeImport","NativeWrite","AikoRegistryDO"]}]}));
 const socket=createServer();await new Promise<void>(resolve=>socket.listen(0,"127.0.0.1",resolve));
 const port=(socket.address() as {port:number}).port;await new Promise<void>(resolve=>socket.close(()=>resolve()));
 let child:ReturnType<typeof Bun.spawn>|undefined;let log="";
@@ -324,14 +356,14 @@ async function start(){
 }
 async function call(path:string){const response=await fetch('http://127.0.0.1:'+port+path,{signal:AbortSignal.timeout(10000)});const body=await response.text();assert.equal(response.status,200,body);evidence.push({path,result:JSON.parse(body)});}
 try{
- await start();await call("/prepare");await call("/authority/prepare");
+ await start();await call("/registry-rpc");await call("/prepare");await call("/authority/prepare");
  for(const scenario of ["cleanup","cancel","loss"])await call(`/external/${scenario}/prepare`);
  await call("/native-import/prepare");await call("/native-write/prepare");await stop();
  await start();await call("/lose");await call("/authority/settle");
  for(const scenario of ["cleanup","cancel","loss"])await call(`/external/${scenario}/recover`);
  await call("/native-import/reconcile");await call("/native-write/reconcile");await stop();
  await start();await call("/restore");await stop();
- await start();await call("/verify");await call("/authority/verify");
+ await start();await call("/verify");await call("/authority/verify");await call("/registry-rpc");
  const report={verified:true,runtime:"actual local workerd",coldRestarts:3,providerCalls:0,bundleSha256,sourceInputs:Object.keys(before).length,evidence,directory:dir};
  await writeFile(join(dir,"report.json"),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }catch(error){console.error(log.slice(-12000));throw error;}

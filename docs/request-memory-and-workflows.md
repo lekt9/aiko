@@ -233,6 +233,17 @@ The shipped host dispatcher supports Arcade tools explicitly classified as non-d
 
 Runs are atomically claimed before dispatch. Definitions are immutable by digest, and terminal receipts cannot be overwritten. The local host uses private SQLite; Cloudflare uses Durable Object storage transactions. A process crash can leave an unknown/running receipt requiring inspection, rather than triggering an automatic replay.
 
+2026-09-09 — The native workflow tool also reconciles execution errors against
+the existing run receipt. If settlement was saved but its acknowledgement was
+lost, it returns that settled result. A running or unreadable receipt reports an
+uncertain outcome with the original run ID and instructions against repeating
+the action. Only a confirmed absence of a run receipt permits the ordinary
+blocked result. Native recovery reads the same custody without dispatching the
+workflow again. [Host regression tests](../apps/agent/test/workflow-host.test.ts)
+inject failures before and after receipt persistence and during receipt lookup,
+then restore a fresh native host at the pre-settlement checkpoint. These are
+local SQLite/native-runtime checks, not live-provider or power-loss evidence.
+
 2026-09-08 — Declarative workflow crystallization now retains an `observed-success` applicability record: each step pins the owner, tool ID, input schema and read/write classification actually used by the successful run. Reuse checks all dependencies before its first call and resolves them again at each step. Schema drift also removes the saved procedure from router discovery. Authorization still runs for every invocation, and runtime inputs remain fresh parameters rather than cached results. This evidence describes one successful example; it does not verify semantic correctness, provider implementation versions or external-state freshness. Harness contracts and independent witnesses remain the route for stronger outcome claims.
 
 Legacy saved workflows without dependency evidence remain inspectable, but cannot execute as trusted reusable procedures. Prepare a new definition ID, run it, and crystallize its successful receipt; never rewrite old evidence to match a changed dependency. Historical run receipts remain intact. [Workflow regression tests](../apps/agent/test/tool-workflows.test.ts) cover new inputs, changed/missing dependencies, mid-run drift and unknown outcomes; [router tests](../apps/agent/test/tool-router-workflows.test.ts) cover discovery after restart.

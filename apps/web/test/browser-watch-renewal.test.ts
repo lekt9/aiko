@@ -117,8 +117,8 @@ afterEach(() => {
   if (original === undefined) delete process.env.AIKO_CONNECTOR_ORIGIN;
   else process.env.AIKO_CONNECTOR_ORIGIN = original;
 });
-test.each(["renew", "reauthorize"])("client preserves exact %s control on uncertain response and proxy uses the owner's fixed endpoint", async (operation) => {
-  const body = operation === "renew" ? makeWatchRenewal(watch, site, 9000, 120, 1000) : {id:"watch",expectedGeneration:3,expectedLifecycleRevision:2,expectedLeaseRevision:2,challenge:"held-challenge"};
+test.each(["renew", "reauthorize", "check-restore"])("client preserves exact %s control on uncertain response and proxy uses the owner's fixed endpoint", async (operation) => {
+  const body = operation === "renew" ? makeWatchRenewal(watch, site, 9000, 120, 1000) : operation === "check-restore" ? {id:"watch",requestId:"restore:watch:3:held-challenge"} : {id:"watch",expectedGeneration:3,expectedLifecycleRevision:2,expectedLeaseRevision:2,challenge:"held-challenge"};
   vi.stubGlobal("window", {});
   const fetch = vi
     .fn()

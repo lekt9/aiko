@@ -17,6 +17,8 @@ test("status and counts distinguish queued, running, expired and unconfirmed wor
   expect(promiseStatus({ ...row, state: "resolved" })).toContain("queued");
   expect(promiseStatus({ ...row, state: "dispatching" })).toContain("not yet completed");
   expect(promiseStatus({ ...row, state: "unknown" })).toContain("unconfirmed");
+  // A task can expire after approval while it is still queued.
+  expect(promiseStatus({ ...row, state: "expired" })).toBe("Expired before dispatch");
   expect(promiseStatus({ ...row, state: "settled", outcome: "failed" })).toBe("Could not complete");
   expect(promiseAccessDenied({ status: 403 })).toBe(true);
   expect(promiseAccessDenied({ status: 503 })).toBe(false);

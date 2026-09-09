@@ -112,6 +112,12 @@ export type WatchRequest = <T>(
 ) => Promise<T>;
 export type WatchReply<T> = { available: true; result: T };
 export const watchPath = "/channels/browser-watches";
+/** Checks the retained result only, including after pause or expiry. Never applies a permit. */
+export function watchRestoreCheckRequest(watch: WatchStatus) {
+  const request = watch.reauthorization;
+  if (!request || request.status === "confirmed" || !request.requestId) return;
+  return { id: watch.id, requestId: request.requestId };
+}
 /** A browser can request the current held watch only; the host supplies all continuity proof and authority. */
 export function watchReauthorizationRequest(watch: WatchStatus, now: number) {
   const pending = watch.reauthorization?.status !== "confirmed" ? watch.reauthorization : undefined;

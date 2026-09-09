@@ -129,3 +129,37 @@ it("watch requests reuse owner authentication and do not fall under connector ro
   fetch.mockResolvedValueOnce(Response.json({error:"watch_operation_unavailable"},{status:503}));
   await expect(connectorRequest("/channels/browser-watches",undefined,undefined,{bearer:"owner-only",telegram:false})).rejects.toThrow("unavailable for this account");
 });
+
+it("leaving during Telegram exchange releases only that caller and never dispatches its login", async () => {
+  setup();
+  let resolveSession!: (response: Response) => void;
+  const fetch = vi.fn((url: RequestInfo | URL) => String(url).endsWith("/session")
+    ? new Promise<Response>(resolve => { resolveSession = resolve; })
+    : Promise.resolve(Response.json({ connections: [] })));
+  vi.stubGlobal("fetch", fetch);
+  const leaving = new AbortController();
+  const login = connectorRequest("/native", { action: "form" }, leaving.signal);
+  const other = connectorRequest("/connections");
+  leaving.abort();
+  await expect(login).rejects.toMatchObject({ name: "AbortError" });
+  resolveSession(Response.json({ token: "fixture-session" }));
+  await expect(other).resolves.toEqual({ connections: [] });
+  expect(fetch.mock.calls.map(call => call[0])).toEqual(["/api/connectors/session", "/api/connectors/connections"]);
+});
+
+it.each(["form", "finish", "status"])("bounds %s metadata reads independently of private submissions", async action => {
+  vi.stubGlobal("window", {});
+  const deadline = new AbortController();
+  const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  const fetch = vi.fn((_url: RequestInfo | URL, options?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), { once: true });
+  }));
+  vi.stubGlobal("fetch", fetch);
+  try {
+    const read = connectorRequest("/native", { action }, undefined, { telegram: false });
+    expect(timeout).toHaveBeenCalledWith(20_000);
+    deadline.abort(new DOMException("Timed out", "TimeoutError"));
+    await expect(read).rejects.toMatchObject({ name: "TimeoutError" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  } finally { timeout.mockRestore(); }
+});

@@ -154,6 +154,17 @@ async function sessionFor(initData: string) {
   }
 }
 
+/** Stop waiting locally without cancelling the shared Telegram exchange. */
+async function sessionWithSignal(initData: string, signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  if (!signal) return sessionFor(initData);
+  return new Promise<string>((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    sessionFor(initData).then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+
 export async function connectorRequest<T>(
   path: string,
   body?: object,
@@ -169,12 +180,13 @@ export async function connectorRequest<T>(
   if (authentication?.bearer)
     headers.Authorization = `Bearer ${authentication.bearer}`;
   else if (authentication?.telegram !== false && telegram?.initData)
-    headers.Authorization = `tms ${await sessionFor(telegram.initData)}`;
+    headers.Authorization = `tms ${await sessionWithSignal(telegram.initData, signal)}`;
   signal?.throwIfAborted();
   if (body) headers["Content-Type"] = "application/json";
   // Requests always settle: a stalled server surfaces as a retryable error,
   // never an indefinite spinner.
-  const privateSignIn = [
+  const nativeRead = path === "/native" && body && "action" in body && ["form", "finish", "status"].includes(String(body.action));
+  const privateSignIn = !nativeRead && [
     "/native",
     "/browser",
     "/password-managers/fill",

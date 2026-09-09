@@ -322,6 +322,28 @@ test("verified connections trigger one native context index and reflection, neve
  expect(ofType(await f.events("user-123"),"AikoConnectionChanged").map(e=>e.status)).toEqual(["pending","connected"]);
 });
 
+test("connection index failures retain a private-safe phase without replaying the failed read", async () => {
+ let reads = 0;
+ const privateError = "PRIVATE_PAGE_AND_PROVIDER_DIAGNOSTIC";
+ const f = await fixture({}, {connectorBrowser: () => ({native:true,
+  begin: async () => ({authorizationUrl:"https://signin.aiko.com/connect"}),
+  status: async binding => ({...binding,status:"connected",verification:{verified:true,revision:1,expiresAt:Date.now()+600000}}),
+  readContext: async () => { reads++; throw Error(privateError); },
+ })});
+ const connection = await (await f.request("/api/connectors/browser", {domain:"service.net"})).json() as {id:string};
+ await f.request("/api/connectors/complete", {connectionId:connection.id});
+ await f.service.host.drive();
+ const indexer = backgroundThread("123", "indexer");
+ const failures = ofType(await f.events(indexer), "AikoBackgroundFailed");
+ expect(failures).toHaveLength(1);
+ expect(failures[0]).toMatchObject({stage:"indexing",errorCode:"connection_context_index_failed",failurePhase:"connection-context"});
+ expect(ofType(await f.events(indexer), "AikoLearningIndexed")).toHaveLength(0);
+ expect(JSON.stringify(await f.events(indexer))).not.toContain(privateError);
+ await f.restart();
+ expect(reads).toBe(1);
+ expect(ofType(await f.events(indexer), "AikoBackgroundFailed")).toEqual(failures);
+});
+
 test("connected-route frontier survives restart and deduplicates cycles before indexing each page", async () => {
  const indexer = backgroundThread("123", "indexer");
  const reads: string[] = [];

@@ -5,7 +5,7 @@ import { Self } from "tardie/core/runtime";
 import { EventLog } from "tardie/core/log";
 import type { NativeTool } from "tardie/component/tool";
 import { Validator, type Schema } from "@cfworker/json-schema";
-import { ToolWorkflows, type WorkflowJson } from "./tool-workflows.ts";
+import { ToolWorkflows, type WorkflowJson, type WorkflowReceipt } from "./tool-workflows.ts";
 import { validateRouterInput } from "./connector-router-host.ts";
 import { replayCapabilities, capabilityURL } from "./capability-builder.ts";
 import { executableObservedReads } from "./capability-builder-network.ts";
@@ -245,6 +245,15 @@ export class WorkflowController {
     while (this.outputs.size > 32)
       this.outputs.delete(this.outputs.keys().next().value!);
   }
+  private runResult(runId: string, receipt?: WorkflowReceipt) {
+    return {
+      kind: "workflow-receipt", owner: this.owner, runId,
+      ...(receipt ? { receipt } : { status: "unknown" }),
+      ...(!receipt || receipt.status === "unknown"
+        ? { message: "Workflow outcome is uncertain; do not repeat this run or start a replacement run. Inspect its existing receipt first." }
+        : {}),
+    };
+  }
   inference(base: Layer.Layer<Infer>) {
     const c = this;
     return Layer.effect(
@@ -403,8 +412,7 @@ export class WorkflowController {
           const started = events.find(e => e.type === "AikoWorkflowStarted" && e.owner === this.owner && e.runId === runId);
           if (started) {
             const receipt = yield* Effect.tryPromise(() => this.engine.receipt(runId)).pipe(Effect.catch(() => Effect.succeed(undefined)));
-            const result = { kind: "workflow-receipt", owner: this.owner, runId,
-              ...(receipt ? { receipt } : { status: "unknown", message: "Interrupted workflow; do not repeat this run." }) };
+            const result = this.runResult(runId, receipt);
             yield* log.append([{ type: "AikoWorkflowSettled", owner: this.owner, runId, turn: context.turn, result, at: Date.now() }]);
             return result;
           }
@@ -442,12 +450,13 @@ export class WorkflowController {
                   : {};
                 if (program) await this.engine.define(program);
                 const workflowId = program?.id ?? call.args.workflowId;
-                receipt = await this.engine.run({
+                const runReceipt = await this.engine.run({
                   workflowId,
                   runId,
                   input: parameters,
                   signal: context.signal,
                 });
+                return this.runResult(runId, runReceipt);
               } else if (operation === "crystallize")
                 receipt = await this.engine.crystallize(call.args);
               else {
@@ -469,7 +478,14 @@ export class WorkflowController {
               message:
                 "Workflow program, tool access, or execution could not be verified.",
             }),
-          }).pipe(Effect.catch((result) => Effect.succeed(result)));
+          }).pipe(Effect.catch((result) => operation !== "run"
+            ? Effect.succeed(result)
+            : Effect.tryPromise(async () => {
+                // A failed acknowledgement can follow a dispatched or settled
+                // run. Read durable custody before calling it blocked.
+                const receipt = await this.engine.receipt(runId);
+                return receipt ? this.runResult(runId, receipt) : result;
+              }).pipe(Effect.catch(() => Effect.succeed(this.runResult(runId))))));
           yield* log.append([{ type: "AikoWorkflowSettled", owner: this.owner, runId, turn: context.turn, result, at: Date.now() }]);
           return result;
         }),

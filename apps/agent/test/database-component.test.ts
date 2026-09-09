@@ -214,6 +214,37 @@ for (const stop of ["cancelled", "forbidden"] as const) test(`native staged refr
   expect(f.store.cell("items", "two", "balance")).toBeUndefined();
 });
 
+for (const staged of [false, true]) for (const stop of ["cancelled", "forbidden", "lost-ack"] as const) test(`fully committed ${staged ? "staged" : "flat"} refresh remains complete after ${stop}`, async () => {
+  const f = await chainFixture(), refresh = staged ? f.refresh : { ...f.refresh, columnIds: ["account"] };
+  const request = await f.prepare(`finished-${staged}-${stop}`, refresh), count = staged ? 2 : 1;
+  await f.admit(request);
+  if (stop === "lost-ack") {
+    const commit = f.store.commitCells.bind(f.store); let committed = 0;
+    f.store.commitCells = async (...args) => {
+      const receipt = await commit(...args);
+      if (++committed === count) throw Error("Final group acknowledgement lost");
+      return receipt;
+    };
+  } else {
+    const events = [...await f.events()]; let settled = 0;
+    const journal = { read: async () => events, append: async (rows: typeof events) => {
+      if (rows.some(row => row.type === "AikoDatabaseRefreshGroupSettled") && ++settled === count) throw Error("process loss");
+      events.push(...rows);
+    } };
+    await expect(executeDatabaseRefreshGraph(f.binding, request, refresh, journal, new AbortController().signal)).rejects.toThrow("process loss");
+    for (const event of events.filter(event => event.type.startsWith("AikoDatabaseRefresh"))) await f.admit(event);
+    if (stop === "cancelled") await f.cancel(request.id); else f.allow(false);
+    await f.reopen();
+  }
+  await f.drive();
+  expect(databaseState(await f.events(), f.binding).get(request.id)?.status).toBe("committed");
+  expect(f.store.receipt(request.id)?.result).toMatchObject({ coverage: "complete", reasons: [], committed: count, calls: count, bytes: count * 20, budgetAccounting: "measured" });
+  expect(f.calls).toEqual(staged ? ["account", "balance"] : ["account"]);
+  const receipt = f.store.receipt(request.id);
+  await f.reopen(); await f.drive();
+  expect(f.store.receipt(request.id)).toEqual(receipt); expect(f.calls).toHaveLength(count);
+});
+
 test("native refresh reconciles a lost group acknowledgement without dispatching its dependent stage", async () => {
   const f = await chainFixture(), commit = f.store.commitCells.bind(f.store); let lost = false;
   f.store.commitCells = async (...args) => {

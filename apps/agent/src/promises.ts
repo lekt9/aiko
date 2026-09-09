@@ -1,4 +1,6 @@
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
+import { actorMethod } from "tardie/core/method/method";
+import { intent } from "tardie/core/intent";
 import { boundedText } from "./security.ts";
 import { createHash } from "node:crypto";
 import { component } from "tardie/core/component";
@@ -651,6 +653,37 @@ export function promiseTools(
 export const promiseTurn = (id: string) => `promise-execution:${id}`;
 export const promiseCodeId = (id: string) => `promise-code:${id}`;
 
+/** Use the native host's persisted invocation deadlines on both Bun and Worker. */
+export const promiseWaitMethod = actorMethod({
+  input: Schema.Struct({ promiseId: Schema.String }),
+  output: Schema.String,
+  event: call => ({ type: "AikoPromiseDeadline", id: call.invocation.id, promiseId: call.input.promiseId,
+    at: call.at, call: { invocation: call.invocation, deadlineAt: call.deadlineAt } }),
+  projection: {
+    initial: () => [] as Event[],
+    step: (events: Event[], event: Event) => [...events, event],
+    output: events => ({ currentEpoch: () => 0, invocationState: invocation => {
+      const deadline = events.find(e => e.type === "AikoPromiseDeadline" && e.id === invocation.id);
+      if (!deadline) return undefined;
+      const record = promiseState(events).records.get(String(deadline.promiseId));
+      return !record || !["pending", "resolved"].includes(record.state) || events.some(e =>
+        e.type === "AlarmFired" && Number(e.at) >= Number((deadline.call as { deadlineAt: number }).deadlineAt))
+        ? { status: "completed" as const, output: "settled" } : { status: "pending" as const };
+    } }),
+  },
+});
+
+function promiseDeadlines(records: Map<string, PromiseRecord>, events: readonly Event[], owner: string) {
+  return [...records.values()].filter(r => r.owner === owner && r.thread === `user-${owner}` && r.state === "pending").flatMap(r => {
+    const deadlineAt = Math.min(r.expiresAt, r.when.kind === "at" ? r.when.at : Infinity);
+    const id = `${r.id}:${deadlineAt}`;
+    if (events.some(e => e.type === "AikoPromiseDeadline" && e.id === id)) return [];
+    return [intent({ key: `aiko-promise:deadline:${id}`, input: r.id, events: (_, at) => [promiseWaitMethod.event({
+      invocation: { method: "promiseWait", id, epoch: 0 }, input: { promiseId: r.id }, deadlineAt, at,
+    })] })];
+  });
+}
+
 /** Business outcomes come from durable tool receipts, not the code's return text. */
 export function promiseExecutionOutcome(events: readonly Event[], record: PromiseRecord): "succeeded" | "failed" | "unknown" {
   const prefix = `${promiseCodeId(record.id)}.`;
@@ -721,7 +754,7 @@ export function promiseComponent(owner: string) {
     },
     output: (s: Runtime) => ({
       view: undefined,
-      transitions: [...s.work.values()].filter(item => {
+      transitions: [...promiseDeadlines(s.records, s.events, owner), ...[...s.work.values()].filter(item => {
         const record = s.records.get(item.id);
         return !record?.execution || !s.events.some(e => e.type === "MessageReceived" && e.id === record.execution!.turn) ||
           s.events.some(e => e.turn === record.execution!.turn && ["TurnCompleted", "TurnFailed", "TurnCancelled"].includes(e.type));
@@ -779,7 +812,7 @@ export function promiseComponent(owner: string) {
                 ...(telegram ? { channel: "telegram", chat: owner, telegram: original.telegram } : {}), at: Date.now() }];
             }),
         }),
-      ),
+      )],
     }),
   });
 }

@@ -6,6 +6,8 @@ export interface NativeLoginPanelView {
   domain:string;
   expiresAt?:number;
   fields?:string[];
+  /** Detected choices only; source and consent checks still authorize assistance. */
+  providers?:("google")[];
   /** Untrusted generated layout; the registry boundary validates it against fields. */
   layout?:unknown;
   currentHost?:string;

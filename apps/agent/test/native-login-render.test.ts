@@ -84,6 +84,34 @@ test("cancellation stops inference and never starts a fresh retry for that shape
   expect(calls).toBe(1);
 });
 
+test("slow layout inference cannot hold a ready sign-in form open", async () => {
+  let calls = 0, cancelled = false;
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { release = resolve; });
+  const deferred: Promise<unknown>[] = [];
+  const render = createNativeLoginRenderer({ owner: "123", instance: "test", defer: work => { deferred.push(work); }, layer: () => Layer.succeed(Infer, {
+    react: (_request, _id, signal) => Effect.gen(function* () {
+      calls++;
+      signal!.addEventListener("abort", () => { cancelled = true; }, { once: true });
+      yield* Effect.promise(() => ready);
+      return {kind:"complete" as const,output:JSON.stringify(composed())};
+    }),
+  }) });
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const layout = await Promise.race([
+      render(view, inert()),
+      new Promise<never>((_resolve, reject) => { timeout = setTimeout(() => reject(Error("Layout held sign-in hostage")), 1000); }),
+    ]);
+    expect(layout).toEqual({version:LOGIN_UI_VERSION,source:"fallback",spec:fallbackLoginSpec(view.fields)!});
+    expect(cancelled).toBe(false);
+    release();
+    await Promise.all(deferred);
+    expect((await render(view, inert()))?.source).toBe("generated");
+    expect(calls).toBe(1);
+  } finally { clearTimeout(timeout); release(); }
+});
+
 test("native provider adapter receives the catalog and returns a validated generated spec", async () => {
   const spec = composed(), wire: any[] = [];
   const env = { AIKO_ALLOW_PAID_INFERENCE: "true", CODEGRAFF_API_KEY: "fixture-provider-key" };

@@ -14,6 +14,19 @@ function fixture() {
   };
 }
 
+test("authority registry: production RPC surface cannot return private control capabilities", async () => {
+  const module = await productionWorker(), f = fixture();
+  const registry = new module.AikoRegistryDO({ storage: f.storage }, {});
+  expect(await registry.admit("123")).toBe(true);
+  expect(Reflect.get(registry, "control")).toBeUndefined();
+  expect(Reflect.get(registry, "authority")).toBeUndefined();
+  expect(Object.getOwnPropertyNames(module.AikoRegistryDO.prototype).sort()).toEqual([
+    "admit", "constructor", "list", "memoryAuthority",
+  ]);
+  expect((await registry.memoryAuthority("123"))?.owner).toBe("123");
+  expect((await registry.list()).map((row: any) => row.owner)).toEqual(["123"]);
+});
+
 test("authority registry: production admission retains an independent zero checkpoint across restart", async () => {
   const module = await productionWorker(), f = fixture();
   let registry = new module.AikoRegistryDO({ storage: f.storage }, {});
@@ -136,4 +149,18 @@ test("authority registry: deployment writer handoff preserves pending work and r
   await expect(next.append("123", { type: "AikoMemoryAuthorityWriterAdvanced", owner: "123", scope: "aiko:123",
     key: "arbitrary-rotation", expectedRevision: 5, writer: 3, nextWriter: 99, at: 3 })).rejects.toThrow("trusted host path");
   await old.close(); await next.close();
+});
+
+test("authority registry: concurrent deployment handoffs confirm one retained writer transition", async () => {
+  const f = fixture(), old = await createMemoryAuthorityRegistry(f.storage, 2);
+  await old.admit("123"); await old.close();
+  const next = await createMemoryAuthorityRegistry(f.storage, 3), now = Date.now;
+  let clock = 1000;
+  Date.now = () => ++clock;
+  try {
+    const results = await Promise.allSettled([next.advanceWriter("123"), next.advanceWriter("123")]);
+    expect(results.map(result => result.status)).toEqual(["fulfilled", "fulfilled"]);
+    expect(await next.read("123")).toMatchObject({ writer: 3, revision: 2 });
+    expect(f.events().filter(event => event.type === "AikoMemoryAuthorityWriterAdvanced")).toHaveLength(1);
+  } finally { Date.now = now; await next.close(); }
 });

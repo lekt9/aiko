@@ -67,6 +67,24 @@ function sse(value: unknown, call = false) {
 const privateInput = "PRIVATE_WORKER_RUNTIME_INPUT_f936b";
 const program = `const policy=await tools.describe({name:"harness_experiment_start"});if(!policy.description.includes('"proposalTokens":1024'))throw Error("Host limits undiscoverable");const ready=await tools.call({name:"harness_acquire",arguments:{name:"json.project",operationId:"worker-acquire"}});if(ready.status!=="ready")throw Error("acquisition unavailable");const list=await tools.call({name:"harness_list",arguments:{}});const digest=list.candidates.find(c=>c.name==="json.project").harnessDigest;for(let i=0;i<3;i++){const witness=await tools.call({name:"harness_run",arguments:{digest,input:{value:{visible:String.fromCharCode(${[...privateInput].map(c=>c.charCodeAt(0)).join(",")}),omit:true},keys:["visible"]},operationId:"worker-ordinary-"+i}});if(witness.status!=="satisfied")throw Error("not checked");}await tools.call({name:"respond",arguments:{text:"Controlled Worker operations completed."}});return "done";`;
 
+let networkFence: { original: typeof fetch; replacement: typeof fetch; users: number } | undefined;
+function holdNetworkFence() {
+  if (!networkFence) {
+    const replacement = Object.assign(
+      async () => { throw Error("Unexpected network outside the configured physical edges"); },
+      { preconnect: () => { throw Error("Unexpected provider preconnect"); } },
+    ) as typeof fetch;
+    networkFence = { original: globalThis.fetch, replacement, users: 0 };
+    globalThis.fetch = replacement;
+  }
+  const held = networkFence; held.users++;
+  return async () => {
+    if (--held.users !== 0) return;
+    if (globalThis.fetch === held.replacement) globalThis.fetch = held.original;
+    if (networkFence === held) networkFence = undefined;
+  };
+}
+
 export async function fixture(options: { program?: string; logSources?: import("../src/channel-log-source.ts").ChannelLogSourcePolicy; allowBootFailure?: boolean } = {}) {
   const cleanups: (() => Promise<unknown>)[] = [];
   // Imported fixtures must attach teardown to the invoking test. A module's
@@ -80,12 +98,9 @@ export async function fixture(options: { program?: string; logSources?: import("
   });
   const module = await productionWorker(), directory = await mkdtemp("/tmp/optimizer-worker-");
   cleanups.push(() => rm(directory, { recursive: true, force: true }));
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = Object.assign(
-    async () => { throw Error("Unexpected network outside the configured physical edges"); },
-    { preconnect: () => { throw Error("Unexpected provider preconnect"); } },
-  );
-  cleanups.push(async () => { globalThis.fetch = originalFetch; });
+  // Several fixtures may belong to one invoking test. Its teardown callbacks
+  // need not run as a stack: keep the shared fence until the last fixture closes.
+  cleanups.push(holdNetworkFence());
   let db = new Database(join(directory, "account.sqlite"));
   let workCut: Uint8Array | undefined, edgeCut: Uint8Array | undefined;
   const captureWork = () => {

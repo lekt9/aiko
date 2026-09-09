@@ -65,6 +65,9 @@ import { turnEpochOf, turnTerminalOf } from "tardie/code/execution/turns";
 import { preparingReplies } from "./channel-response.ts";
 import { validateActor } from "tardie/core/actor";
 import { withRequiredResponse } from "./channel-response.ts";
+import { promiseApi } from "./promise-api.ts";
+import { promiseEventKey } from "./promises.ts";
+import { withPromiseExecution } from "./promise-execution.ts";
 import {
   acceptSecretary,
   createSecretaryActor,
@@ -638,6 +641,7 @@ export async function createService(
     workspaceSql: false,
     canAppend: (_thread,events,read)=>(channelHosts.get(bindingOf(_thread)?.owner??"")?.dispatchAdmissionAllowed(events,read)??(!browserWatchDispatchAdmissionRequired(events)&&!browserEventAdmissionRequired(events)))&&workAppendAllowed(_thread,events,read)&&proactiveAppendAllowed(events,read,_thread)&&harnessLibraryAppendAllowed(events,read)&&mediaProcessingAppendAllowed(events,read)&&channelWiringAppendAllowed(events,read)&&channelLogSourceAppendAllowed(events,read)&&browserEventAppendAllowed(events,read)&&browserWatchAppendAllowed(events,read),
     keyOf: (e) =>
+      promiseEventKey(e) ??
       databaseEventKey(e) ??
       workerEventKey(e) ??
       codingWorkspaceEventKey(e) ??
@@ -808,6 +812,7 @@ export async function createService(
                         optimizationPolicy:registryFor(owner)?.optimizationPolicy,
                         harnessLibrary:registryFor(owner)?.library,
                         codeHarness:harnessFor(owner),
+                        promises: !!harnessFor(owner),
                         workers:workerPolicyFor(owner),
                         contextWindowTokens:workerContextFor(owner),
                         loginOperation: hostedLoginOperation(owner,()=>host,()=>connectorsFor(owner)),
@@ -856,6 +861,7 @@ export async function createService(
                           owner,
                           thread,
                           engine: connectorsFor(owner),
+                          renderLogin: loginRendererFor(owner),
                           deliverConnection: async (input, signal) => {
                             if (!ownedTelegram || input.owner !== owner)
                               return { status: "rejected" as const };
@@ -963,9 +969,9 @@ export async function createService(
       if (address.role === "secretary") return withSecretaryHistory(model);
       if (address.role !== "foreground") return model;
       const ordinaryBase=databaseInference(databasesFor(address.owner), withRequiredResponse(
-        workflowsFor(address.owner).inference(
+        withPromiseExecution(workflowsFor(address.owner).inference(
           browser ? browser.inference(registryFor(address.owner)?.media?.inference(model)??model, address.owner) : registryFor(address.owner)?.media?.inference(model)??model,
-        ),
+        ), address.owner, () => host.read(thread)),
         redact,
       ));
       const base=codingInferenceFor(address.owner,thread,ordinaryBase);
@@ -1312,7 +1318,7 @@ export async function createService(
     const principal = authenticate(request);
     if (!principal) return json({ error: "unauthorized" }, 401);
     const { owner, scopes } = principal;
-    if (!scopes.includes(harnessLibraryReadRequest(request) || /^\/(?:api|v1)\/databases\/(?:query|field)$/.test(url.pathname) ? "read" : "write"))
+    if (!scopes.includes(request.method === "GET" && /^\/(?:api|v1)\/promises$/.test(url.pathname) || harnessLibraryReadRequest(request) || /^\/(?:api|v1)\/databases\/(?:query|field)$/.test(url.pathname) ? "read" : "write"))
       return json({ error: "forbidden" }, 403);
     if (/^\/(?:api|v1)\/databases(?:\/|$)/.test(url.pathname)) return databaseApi(request, databasesFor(owner), {
       read: () => host.read(`user-${owner}`), commit: event => host.commitRoot(host.self(`user-${owner}`), event),
@@ -1350,10 +1356,15 @@ export async function createService(
       return browserWatchApi(request, owner, channelsFor(owner)?.watches, principal, () => wake(owner));
     if (/^\/(?:api|v1)\/channels(?:\/|$)/.test(url.pathname))
       return channelApi(request, owner, channelsFor(owner), principal, () => wake(owner), () => host.read(`user-${owner}`));
-    if (/^\/(?:api|v1)\/promises(?:\/|$)/.test(url.pathname))
-      return principal.operator
-        ? json({ error: "forbidden" }, 403)
-        : json({ error: "promises_unavailable", message: "Scheduled tasks are not enabled on this local host. No task or decision was accepted." }, 503);
+    if (/^\/(?:api|v1)\/promises(?:\/|$)/.test(url.pathname)) {
+      if (principal.operator) return json({ error: "forbidden" }, 403);
+      if (!harnessFor(owner)) return json({ error: "promises_unavailable", message: "Scheduled tasks need a configured native code executor. Your saved tasks have not been changed." }, 503);
+      return serialize(() => promiseApi(request, owner, principal, {
+        read: () => host.read(`user-${owner}`),
+        append: async events => { for (const event of events) await host.commitRoot(host.self(`user-${owner}`), event); },
+        wake: async () => { void host.wake(`user-${owner}`).catch(() => { failures++; }); },
+      }));
+    }
     if (["/api/secretary/work", "/v1/secretary/work"].includes(url.pathname))
       return serialize(() => secretaryWorkApi(request, createSecretaryWorkBinding(host, {
         owner, thread: "user-" + owner, stateDir: accountDirectory(config.stateDir, owner), redact,

@@ -39,6 +39,36 @@ async function fixture() {
     async close() { memory.close(); db.close(); await registry.close(); await rm(dir, { recursive: true, force: true }); } };
 }
 
+test("guard and snapshot must share the exact native connection; per-call handles cannot close host custody", async () => {
+  const f = await fixture(), otherDb = new Database(join(f.dir, "native.sqlite")), other = storage(otherDb);
+  try {
+    expect(() => openGuardedMemory({ storage: other, scope: "aiko:123", writeAuthority: f.controller.guard })).toThrow("same native connection");
+    const wrong = openGuardedMemory({ storage: other, scope: "aiko:123" });
+    const controller = createMemoryWriteAuthority({ storage: f.native, memory: () => wrong, authority: f.authority });
+    await expect(controller.write("wrong-connection", {}, () => wrong.remember(fact("wrong"), write("wrong")))).rejects.toThrow("same native connection");
+    expect((await f.registry.read("123"))?.pending).toBeUndefined();
+    expect(() => nativeMemoryImportPublication({ owner: "123", memory: f.memory, storage: other, operationId: "restore:wrong", fingerprint: "a".repeat(64),
+      importId: "wrong", archive: {}, histories: [], history: () => [] })).toThrow("same native connection");
+    wrong.close();
+    let closed = false;
+    const borrowed = { ...f.native, close: () => { closed = true; } };
+    openGuardedMemory({ storage: borrowed, scope: "aiko:123", closeStorage: false }).close();
+    expect(closed).toBe(false);
+  } finally { otherDb.close(); await f.close(); }
+});
+
+test("an asynchronous authority callback cannot silently authorize a native transaction", async () => {
+  const f = await fixture();
+  try {
+    const before = f.memory.exportArchive();
+    for (const phase of ["check", "after"] as const) {
+      const memory = openGuardedMemory({ storage: f.native, scope: "aiko:123", writeAuthority: { storage: f.native, check() {}, after() {}, [phase]: async () => {} } });
+      expect(() => memory.remember(fact("not-authorized"), write("async-guard"))).toThrow("synchronous");
+      expect(memory.exportArchive()).toEqual(before); memory.close();
+    }
+  } finally { await f.close(); }
+});
+
 test("native writes require exact executor custody; async admission excludes restore and writer handoff", async () => {
   const f = await fixture(), entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
   try {
@@ -133,24 +163,82 @@ test("native closure persists across failed external acknowledgement; changed cl
   } finally { await f.close(); }
 });
 
+test("failed native closure acknowledgement holds admission; recovery never repeats the committed write", async () => {
+  const f = await fixture(); let calls = 0;
+  try {
+    f.db.exec("CREATE TRIGGER reject_closure BEFORE INSERT ON aiko_memory_execution WHEN NEW.receipt IS NOT NULL BEGIN SELECT RAISE(ABORT,'closure failure'); END");
+    await expect(f.controller.write("closure-failed", {}, () => { calls++; return f.memory.remember(fact("retained"), write("retained")); })).rejects.toThrow("closure failure");
+    const before = f.memory.exportArchive();
+    expect(await f.controller.reconcile("closure-failed")).toEqual({ status: "pending" });
+    await expect(f.controller.reconcile("closure-failed", { fence: true })).rejects.toThrow("closure failure");
+    expect((await f.registry.read("123"))?.pending?.key).toBe("write:closure-failed");
+    f.db.exec("DROP TRIGGER reject_closure");
+    expect(await f.controller.reconcile("closure-failed", { fence: true })).toMatchObject({ status: "closed", receipt: { outcome: "interrupted" } });
+    expect(f.memory.exportArchive()).toEqual(before); expect(calls).toBe(1);
+    expect(f.memory.scan().items.some(item => item.observation.subject === "retained")).toBe(true);
+  } finally { await f.close(); }
+});
+
 test("actual native tools use all-write admission and explicit native erasure custody without bypass", async () => {
   const f = await fixture(), copies = memoryTestAuthority(f.dir), gate = memoryRestoreGate();
   try {
     const binding: MemoryBinding = { owner: "123", thread: "user-123", stateDir: f.dir, redact: s => s, readPage: async () => [],
       openMemory: () => f.memory, withErasure: gate,
-      withMemory: (request, run) => gate(() => f.controller.write(request.key, { operation: request.operation, input: request.input }, run)),
+      withMemory: (request, run) => gate(() => f.controller.write(request.key, { operation: request.operation, input: request.input }, run, request.nativeReceiptRead ? run : undefined)),
       erasureAuthority: { ...f.authority, withNativeMutation: f.controller.exclusive, fenceNativeErasure: f.controller.fenceErasure },
       eraseCopies: copies.binding("123").eraseCopies };
     const invoke = async (name: string, args: unknown, id: string) => Effect.runPromise(memoryTools(binding, { fixtures: false }).find(t => t.spec.name === name)!
       .run(args, { callId: id, signal: new AbortController().signal }).pipe(Effect.provideService(Self, { actor: "aiko", instance: "fixture", thread: "user-123" }))) as Promise<MemoryReceipt>;
     const saved = await invoke("memory_remember", fact("tool-fact"), "remember"); expect(saved.outcome).toBe("ok");
+    const beforeRead = await f.registry.read("123");
+    const scanned = await invoke("memory_scan", {}, "scan");
+    expect(scanned.outcome).toBe("ok");
+    expect(await invoke("memory_scan", {}, "scan")).toEqual(scanned);
+    expect(await f.registry.read("123")).toEqual(beforeRead);
+    const remembered = f.memory.exportArchive();
+    expect(await invoke("memory_remember", fact("tool-fact"), "remember")).toEqual(saved);
+    expect(f.memory.exportArchive()).toEqual(remembered);
     const row = saved.result as { subject: string; id: string };
     expect(f.memory.get(row.id)).not.toBeNull();
     const erased = await invoke("memory_erase", { subject: row.subject, expected: row.id, expectedScopeVersion: f.memory.scan().sourceVersion }, "erase");
     expect(erased.outcome).toBe("ok"); expect(f.memory.get(row.id)).toBeNull();
+    const currentRead = await invoke("memory_scan", {}, "scan");
+    expect(currentRead.outcome).toBe("ok");
+    expect(currentRead.result).toMatchObject({ items: [] });
+    const after = f.memory.exportArchive();
+    expect((await invoke("memory_remember", fact("tool-fact"), "remember")).outcome).toBe("error");
+    expect(f.memory.exportArchive()).toEqual(after);
     expect((await f.registry.read("123"))?.pending).toBeUndefined();
     expect(() => f.memory.remember(fact("direct-unadmitted"), write("direct-unadmitted"))).toThrow("admission");
   } finally { await copies.close(); await f.close(); }
+});
+
+test("a native tool cancelled while waiting for owner admission cannot write", async () => {
+  const f = await fixture(), gate = memoryRestoreGate(), entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>(), queued = Promise.withResolvers<void>();
+  const blocker = gate(async () => { entered.resolve(); await release.promise; });
+  try {
+    const binding: MemoryBinding = { owner: "123", thread: "user-123", stateDir: f.dir, redact: s => s, readPage: async () => [], openMemory: () => f.memory,
+      withMemory: (request, run) => { queued.resolve(); return gate(() => f.controller.write(request.key, request.input, run)); } };
+    await entered.promise;
+    const cancellation = new AbortController();
+    const pending = Effect.runPromise(memoryTools(binding, { fixtures: false }).find(t => t.spec.name === "memory_remember")!
+      .run(fact("cancelled"), { callId: "cancelled", signal: cancellation.signal }).pipe(Effect.provideService(Self, { actor: "aiko", instance: "fixture", thread: "user-123" }))) as Promise<MemoryReceipt>;
+    await queued.promise; cancellation.abort(); release.resolve(); await blocker;
+    expect((await pending).outcome).toBe("error");
+    expect(f.memory.scan().items).toEqual([]);
+    expect((await f.registry.read("123"))?.pending).toBeUndefined();
+  } finally { release.resolve(); await blocker; await f.close(); }
+});
+
+test("a declared receipt reader cannot mutate native memory or execute the original writer", async () => {
+  const f = await fixture(); let writes = 0;
+  try {
+    await f.controller.write("original", {}, () => { writes++; return f.memory.remember(fact("original"), write("original")); });
+    const before = f.memory.exportArchive();
+    await expect(f.controller.write("original", {}, () => { writes++; }, () => { f.memory.remember(fact("not-a-receipt"), write("not-a-receipt")); })).rejects.toThrow("cannot mutate");
+    expect(f.memory.exportArchive()).toEqual(before); expect(writes).toBe(1);
+    expect((await f.registry.read("123"))?.pending).toBeUndefined();
+  } finally { await f.close(); }
 });
 
 test("native import receipt verification fences its still-running executor before releasing restore authority", async () => {
@@ -182,6 +270,12 @@ test("native import receipt verification fences its still-running executor befor
     }).then(() => undefined, error => error as Error);
     await entered.promise;
     const before = memory.exportArchive();
+    for (const withExecutionFence of [undefined, async <T>(verify: () => T | undefined) => verify()]) {
+      const unguarded = nativeMemoryImportPublication({ owner: "123", memory, storage: f.native, importId, operationId: `restore:${importId}`, fingerprint,
+        archive, histories, history: host.exportHistory, withExecutionFence });
+      await expect(unguarded.receipt({ owner: "123", operationId: `restore:${importId}`, fingerprint, fence: zero })).rejects.toThrow("not durably fenced");
+      expect((await f.registry.read("123"))?.pending?.kind).toBe("restore");
+    }
     expect(await lease.reconcile()).toEqual({ status: "published" });
     expect((await f.registry.read("123"))?.pending).toBeUndefined();
     release.resolve(); expect(String(await running)).toContain("closed or fenced");

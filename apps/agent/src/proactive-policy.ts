@@ -361,12 +361,12 @@ export function proactiveAppendAllowed(batch: readonly Event[], read: () => read
     if (e.type === "AikoProactiveAccepted") {
       if (typeof e.owner !== "string") return false;
       if (e.outcome !== undefined && !currentProactiveOutcome(history, e.owner, e.outcome)) return false;
-      const decision = history.find(d => d.type === "AikoProactiveDecision" && d.id === e.id);
-      if (!decision || decision.owner !== undefined && decision.owner !== e.owner || !Array.isArray(e.topics) ||
+      const decision = history.find(d => ownerMatches(d, String(e.owner)) && d.type === "AikoProactiveDecision" && d.id === e.id);
+      if (!decision || !Array.isArray(e.topics) ||
         e.text !== decision.text || e.decisionAt !== decision.at || !Array.isArray(e.supports) || !same(e.supports, decision.supports) ||
         e.sourceThread !== decision.sourceThread || e.root !== decision.root || !same(e.outcome ?? null, decision.outcome ?? null) || e.chat !== undefined && e.chat !== e.owner ||
         !same(e.contribution ?? null, decision.contribution ?? null) || !same(e.work ?? null, decision.work ?? null) ||
-        history.some(r => ["AikoProactiveAccepted", "AikoProactiveSuppressed"].includes(r.type) && r.id === e.id)) return false;
+        history.some(r => ownerMatches(r, String(e.owner)) && ["AikoProactiveAccepted", "AikoProactiveSuppressed"].includes(r.type) && r.id === e.id)) return false;
       const check = proactivePolicy(history, String(e.owner), { id: String(e.id), at: Number(decision.at), topics: e.topics as string[], batchAt: Number(e.batchAt) }, Number(e.at));
       if (check.status !== "allow" || check.revision !== e.policyRevision) return false;
     }
@@ -375,13 +375,13 @@ export function proactiveAppendAllowed(batch: readonly Event[], read: () => read
       const accepted = history.find(d => d.type === "AikoProactiveAccepted" && d.id === e.decisionId && (d.owner === e.owner || d.owner === undefined));
       if (!accepted || !Array.isArray(e.topics) || e.turn !== `proactive:${e.decisionId}` || e.chat !== e.owner || accepted.chat !== e.chat ||
         !same(e.topics, accepted.topics) || !same(e.supports, accepted.supports) ||
-        !batch.some(d => d.type === "AikoDeliveryStarted" && d.turn === e.turn && d.epoch === 0 && d.proactiveClaimId === e.claimId) ||
-        history.some(d => ["AikoDeliveryStarted", "AikoDeliverySettled"].includes(d.type) && d.turn === e.turn)) return false;
+        !batch.some(d => ownerMatches(d, String(e.owner)) && d.type === "AikoDeliveryStarted" && d.turn === e.turn && d.epoch === 0 && d.proactiveClaimId === e.claimId) ||
+        history.some(d => ownerMatches(d, String(e.owner)) && ["AikoDeliveryStarted", "AikoDeliverySettled"].includes(d.type) && d.turn === e.turn)) return false;
       const check = proactivePolicy(history, String(e.owner), { id: String(e.decisionId), at: Number(accepted.decisionAt ?? accepted.at), topics: e.topics as string[] }, Number(e.at), "dispatch");
       if (check.status !== "allow" || check.revision !== e.policyRevision) return false;
     }
     if (e.type === "AikoDeliveryStarted" && String(e.turn).startsWith("proactive:")) {
-      if (!batch.some(d => d.type === "AikoProactiveDispatchAuthorized" && d.turn === e.turn && d.claimId === e.proactiveClaimId && d.owner === d.chat)) return false;
+      if (!batch.some(d => d.type === "AikoProactiveDispatchAuthorized" && d.turn === e.turn && d.claimId === e.proactiveClaimId && d.owner === d.chat && ownerMatches(e, String(d.owner)))) return false;
     }
     history.push(e);
   }

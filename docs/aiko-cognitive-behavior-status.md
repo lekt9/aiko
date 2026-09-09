@@ -109,6 +109,38 @@ The retained development evidence reaches the proposed **120 recovery executions
 
 Whole-plan blockers remain: ten reserved recovery/proactive drivers, independent protected authorship, authoritative general task association for older evidence and other tool paths, selected trusted-contract transfer/repair integration, a preserved equivalent pre-change/simple/combined baseline, blinded/provider measurements and full workspace/Worker gates. Requests for reserved `background.ts`, actor/router/host and library seams are in `.agent-grid/notes/recovery-20260908/requests/cognition.md`; no out-of-scope runtime files were edited by this worker. Recovery development now additionally needs an explicit budget decision. No owner rollout, live mutation, paid comparison or quality/SOTA claim was made.
 
+## Continuation correctness checks — 2026-09-08
+
+The resumed worker made no additional comparison runs. Recorded development executions remain recovery **120/120**, procedures **82**, proactive **80**. No protected case, candidate seal/repin, paid inference or rollout was authorized or performed. The earlier v5 comparison snapshot is historical evidence, not validation of subsequent source changes.
+
+- Recovery now uses one exact-parent deadline helper in its producer and atomic append fence. It takes the earlier valid message/call deadline and the existing 60-second ceiling; malformed original budgets cannot acquire a fresh allowance. Explicitly foreign parent/tool/cancellation rows cannot bind or cancel the owned task; legacy unowned native rows remain supported.
+- Proactive policy ignores explicitly foreign acceptance/suppression/delivery receipts when settling owned waits, accounting for admission reservations and checking atomic admission/dispatch. A foreign Started row cannot supply an owned dispatch claim. Owned and legacy unowned receipts still prevent replay.
+- Recovery host regressions now mount the actual `createAikoActor`, existing deterministic owner indexer, native code tools and private sandbox on both Bun and AccountStorage. Reconciliation retains the actual QuickJS result before synthetic acknowledgement loss and reads it through the original checker. Each host records one write and one receipt read, retaining the original unknown witness. Restart preserves all rows and execution/inference counts. These are offline mechanism tests, not autonomous performance evidence.
+
+Evidence is retained under `artifacts/cognitive-behavior/continuation-20260908T161218Z/`:
+
+| Check | Result and limit |
+| --- | --- |
+| Latest recovery, proactive policy/outbox, library and watch-action regressions | **103 passed, 0 failed, 612 assertions**; `focused-native-v7.log`, `native-v7/`. Five explicitly addressed files; selected source hashes matched before/after, not a hermetic snapshot. |
+| Latest agent TypeScript check | Passed under the shared lock; `agent-typecheck-v5.log`. Earlier lock-contention exits remain recorded. A concurrent explicit `Event` annotation corrected the new fixture's spread-inference type; it was preserved before the final type and native checks. |
+| Shared outbox owner projection | **Unresolved failure** in `foreign-outbox-projection-v3.log`: a foreign delivery receipt removes an owned pending send transition. No effect or host ingress ran; this does not establish an exploitable hosted ingress path. Shared `actor.ts` projection and retained receipt queries require integration's owner-scoped fix and native restart coverage. |
+
+Failed evidence remains intact: initial owner/deadline regressions; an underconfigured AccountStorage indexer fixture; the subsequently corrected indexer inference layer type; two outbox probe setup errors; and `focused-native-v5.log`, whose unprefixed Bun path filters also discovered another session's incomplete release-copy tests (103 own checks passed, five copy-loader errors). Explicit `./apps/…` paths fixed selection without modifying the other session's copy.
+
+**17:40 UTC recheck:** later actor changes mount login/promise tools, not the requested receipt-scope fix. The existing outbox projection probe still fails; the native five-file suite passes **103 tests / 612 assertions**, and agent types pass under the shared lock. Evidence: `artifacts/cognitive-behavior/recheck-20260908T174032Z/`. Concurrent login-tool source drift among 17 selected inputs prevents an isolated current-source acceptance claim. No runtime/test edits, comparisons, protected execution, repin or rollout were made in this recheck.
+
+General task association remains blocked on a trusted source-job field: title-based older-evidence retrieval supplies neither task identity nor authority. The exact producer → retained context → decoder → admission → outbox contract, broader receipt/custody seams and trusted-contract transfer/repair selection still need coordinated work. Current requests and the final partial result are under `/home/deck/.pi/task-recovery/2026-09-08/requests/cognition.md` and `results/cognition.json`. Full-plan acceptance remains open; no acceptance threshold changed.
+
+## Outbox owner isolation — 2026-09-09
+
+The foreign-receipt projection defect recorded above is fixed in the native `voiceAndOutbox` component. Explicitly foreign rows cannot reserve its effect keys, change its reply projection, or satisfy its retained pre-dispatch/post-claim queries. Owned and legacy unowned lifecycle receipts keep their existing meaning, including holding an uncertain send without replay. This extends the existing actor; it introduces no scheduler or delivery ledger.
+
+The regression requires foreign suppressed/prepared/settled rows to exist in native history before reconstructing each Bun and AccountStorage host. An additional interleaving inserts a foreign settlement after the owned atomic dispatch claim; the owned sender executes once and restart does not resend. Projection checks also cover foreign Started rows and owned/legacy unknown settlements. The first Bun fixture accidentally supplied an invalid Started batch and was rejected by the append fence; the corrected test checks retained-row presence, so rejection cannot earn a pass.
+
+Evidence is under `artifacts/cognitive-behavior/outbox-owner-20260909/`: seven relevant regression files passed **146 tests, 995 assertions**, with no failures; the original projection probe now passes; the local Bun bundle passed (240 modules, registry packages external). The dedicated evaluation-script TypeScript project, which imports the actor, passed. Whole-agent TypeScript checking failed in the concurrently added `test/native-replay.test.ts:110` (`Layer` type mismatch); that file was preserved. These are shared-worktree offline checks with hashes captured after execution, not a frozen comparison, Worker/deployment gate, foreign HTTP-ingress witness or migration of historical persisted foreign keys.
+
+No comparison, protected case, candidate repin, paid inference or rollout ran. Recovery development remains at its recorded 120-execution ceiling. The full plan's remaining acceptance work below is unchanged.
+
 ## Rollout
 
 Both Bun and Worker assembly use comma-separated lists of at most 64 owner IDs:

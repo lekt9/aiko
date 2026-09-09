@@ -4,6 +4,30 @@ Audited 2026-09-08. **15 confirmed findings: one P1, thirteen P2, one P3.** The 
 
 P1 means fix before activating the affected capability. P2 means a concrete correctness or workflow issue to prioritize. P3 means documentation drift with lower immediate impact. The P1 affects the optional vault service, not Aiko's separate hosted browser engine.
 
+## Implementation follow-up — 2026-09-09
+
+The original findings below describe the audited pre-fix behavior. The follow-up implements the corresponding recovery and boundary changes in the shared working tree; it does not deploy them. Concurrent work supplied additional fixes and tests, which were preserved and checked.
+
+| Findings | Result and maintained evidence |
+| --- | --- |
+| BND-1 | HTTP recipes seed each cookie at its own validated host and path. [Multi-domain recipe tests](../tests/backend/recipes.test.ts) cover same-name cookies and returned domains. |
+| BND-2 | Ordinary synchronization requires a ready, verified, current-generation session before and after verification. Revoked/stale sessions need explicit owner recovery. [Runtime transaction tests](../tests/backend/runtime-status.test.ts) and [HTTP recovery tests](../tests/backend/http.test.ts) cover revocation races and owner import. |
+| BND-3 | Hosted login imports share a 500-row/1-MiB UTF-8 JSON limit across preview, proxy, account handler and engine. [Joined import tests](../apps/agent/test/login-import-boundaries.test.ts) verify full-size batches, overflow and account isolation. Other request limits remain scoped to their routes. |
+| BND-4 | One SDK deadline covers credential lookup, transport and response consumption; late credentials cannot dispatch cancelled writes. [SDK tests](../tests/aiko-sdk.test.ts) include actual loopback stalls and response-reader cleanup. Cancellation cannot retract an already-dispatched server action. |
+| UI-1 | Secretary request lifetime follows the account mount, with stable transport and preserved capture identity/drafts. [Browser recovery checks](../apps/web/test/ui-recovery.browser.py) cover parent polling, late reads and failed captures. |
+| UI-2 | Transient database reads preserve drafts and pause writes. Denied reads clear protected state. Explicit discard occurs only after a successful refresh and resets editors even at unchanged row revisions. [Database journey](../apps/web/test/database-artifact.browser.py) and [recovery journey](../apps/web/test/ui-recovery.browser.py) cover both distinctions. |
+| UI-3 | Discoverable approval navigation preserves work and private-login input; account-scoped promise decisions stay mounted through navigation. [Recovery checks](../apps/web/test/ui-recovery.browser.py) cover focus, polling, failed decisions and combined queues. |
+| UI-4 | Console submission retains the original text/ID for explicit uncertain-result recovery and preserves newer drafts. [Console regressions](../apps/agent/test/console.test.ts) and the browser recovery journey execute the shipped script. |
+| RUN-1 | Authenticated owner review now reaches frozen promise payloads through the Mini App, proxy and both host APIs. Exact hashes, scope, origin and operator restrictions apply at the handler. [API tests](../apps/agent/test/promise-api.test.ts), [Worker-host tests](../apps/agent/test/promises-host.test.ts), [local-host tests](../apps/agent/test/promises-local-host.test.ts) and [UI contract tests](../apps/web/test/promises.test.ts) cover the path. |
+| RUN-2 | Frozen promises use the existing native execute/tool receipt continuation and persisted deadlines. [Promise tests](../apps/agent/test/promises.test.ts) and host tests cover yielded tools, restart, expiry and authority changes. Legacy started executions and uncertain effects remain consumed. |
+| RUN-3 | Observed-action consent binds the native invocation, owner and thread: exact replay retains its immutable preparation while a new intent gets new consent. [Observed-network tests](../apps/agent/test/observed-network.test.ts) cover expired/consumed replay and conflicting inputs. |
+| RUN-4 | A potentially dispatched write with lost/error response or lost settlement remains unknown and cannot silently resend. [Observed-network tests](../apps/agent/test/observed-network.test.ts) verify one remote effect across receipt loss and replay. |
+| DOC-1 | [Evidence capture](../scripts/verification_evidence.py) records actual command exits, source identity, execution times and artifact hashes; [rendering](../scripts/write-verification.py) rejects stale, changed, mixed or failing evidence, including with Python optimization enabled. [Regression tests](../scripts/verification_evidence_test.py) preserve the historical report on rejection. |
+| DOC-2 | Default E2E now [runs](../scripts/aiko-ui-qa.mjs) native sign-in, database, secretary and recovery journeys in isolated Chromium/local hosts. [Hosted CI](../.github/workflows/hosted.yml) invokes the same suite. Failures remain failures; run-specific evidence and owned-process cleanup prevent stale passes and process leaks. Gateway and legacy-demo checks remain separately named. |
+| DOC-3 | [README](../README.md#storage-and-security-boundary) now distinguishes live proxied endpoints from fixture-only 404s and labels vault/CSV results historical. |
+
+Integration verification and limits are recorded in the follow-up evidence under `artifacts/agents-principles-fixes-2026-09-08/`. These local checks exercise synthetic data and actual local runtimes; they do not establish deployed provider readiness, live Telegram behavior or comprehensive accessibility certification. The original bug-expecting reproductions remain historical evidence and must not be used as passing regression checks.
+
 ## Scope and limits
 
 Three independent workers reviewed the interface, agent runtime, and service/SDK boundaries. The primary agent reviewed documentation and verification. The primary agent independently checked worker findings and reran their focused reproductions; the interface reviewer independently checked the primary agent's findings. The dependency graph joined these four reviews into verification and report stages.

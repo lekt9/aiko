@@ -121,7 +121,7 @@ test("native form returns field names only and submits credentials privately wit
  const deps={read:()=>state,save:(s:NativeLoginState)=>{state=s},cdp:{close(){},async send(method:string,params:any){
   calls.push({method,params});
   if(method === "Target.attachToTarget")return {sessionId:"session"};
-  if(method === "Runtime.evaluate")return {result:{value:params.expression === "location.hostname" ? "linkedin.com" : params.expression === "location.origin" ? "https://linkedin.com" : params.expression.includes("Object.keys(f)") ? ["username","password"] : safe}};
+  if(method === "Runtime.evaluate")return {result:{value:params.expression === "location.hostname" ? "linkedin.com" : params.expression === "location.origin" ? "https://linkedin.com" : params.expression.includes("Object.keys(f)") ? ["username","password"] : safe && params.expression.includes("const names=") ? {username:1,password:1} : safe}};
   return {};
  }}};
  const view=await nativeLogin({connectionId:id,domain:"linkedin.com",action:"form"},deps);
@@ -221,7 +221,7 @@ test("an error document after credential dispatch remains uncertain without navi
   calls.push(method);
   if(method==="Target.attachToTarget")return {sessionId:"s"};
   if(method==="Input.insertText"){broken=true;throw Error("Lost acknowledgement");}
-  if(method==="Runtime.evaluate")return {result:{value:p.expression==="location.hostname"?(broken?"chromewebdata":"service.net"):p.expression==="location.origin"?(broken?"null":"https://service.net"):true}};
+  if(method==="Runtime.evaluate")return {result:{value:p.expression==="location.hostname"?(broken?"chromewebdata":"service.net"):p.expression==="location.origin"?(broken?"null":"https://service.net"):p.expression.includes("const names=")?{password:1}:true}};
   return {};
  }}};
  await expect(nativeLogin({connectionId:id,domain:state.domain,action:"credentials",password:"PRIVATE_VALUE"},deps)).rejects.toThrow("Lost acknowledgement");
@@ -259,4 +259,62 @@ test("native sign-in cannot establish overlapping app jars, but status and disco
     await prepareNativeLogin({...input,action:"disconnect"},[state],async()=>{calls++;});
     expect(calls).toBe(0);
   }
+});
+
+test("split OTP dispatch keeps the challenge binding, uses one character per input, and never replays a lost acknowledgement", async()=>{
+ for(const loseAt of [0,3]) {
+  let state:NativeLoginState={connectionId:id,domain:"service.net",attemptId:crypto.randomUUID(),targetId:"private",status:"pending",revision:1,expiresAt:Date.now()+60000};
+  const inserted:string[]=[],expressions:string[]=[];
+  const deps={read:()=>state,save:(next:NativeLoginState)=>{state=structuredClone(next)},cdp:{close(){},async send(method:string,p:any){
+   if(method==="Target.attachToTarget")return {sessionId:"s"};
+   if(method==="Runtime.evaluate") {
+    expressions.push(p.expression);
+    return {result:{value:p.expression==="location.hostname"?"service.net":p.expression==="location.origin"?"https://service.net":p.expression.includes("Object.keys(f)")?["code"]:p.expression.includes("const names=")?{code:6}:true}};
+   }
+   if(method==="Input.insertText"){inserted.push(p.text);if(inserted.length===loseAt)throw Error("Lost digit acknowledgement");}
+   return {};
+  }}};
+  const view=await nativeLogin({connectionId:id,domain:state.domain,action:"form"},deps);
+  expect(view.fields).toEqual(["code"]);expect(view.challenge).toBeDefined();
+  const input={connectionId:id,domain:state.domain,action:"credentials" as const,code:"654321",attemptId:state.attemptId,challengeId:view.challenge!.id,expectedRevision:view.challenge!.revision,submissionId:crypto.randomUUID()};
+  if(loseAt) await expect(nativeLogin(input,deps)).rejects.toThrow("Lost digit acknowledgement");
+  else expect((await nativeLogin(input,deps)).submission?.status).toBe("acknowledged");
+  expect(inserted).toEqual("654321".slice(0,loseAt||6).split(""));
+  expect(state.submission?.status).toBe(loseAt?"dispatched":"acknowledged");
+  await nativeLogin(input,deps);
+  expect(inserted).toHaveLength(loseAt||6);
+  expect(JSON.stringify({state,view,expressions})).not.toContain("654321");
+ }
+});
+
+test("incomplete or ambiguous split OTP plans stop before the dispatch fence",async()=>{
+ for(const plan of [false,{code:6},{code:9},{code:2},true]) {
+  const attemptId=crypto.randomUUID(),challengeId=crypto.randomUUID();
+  const state:NativeLoginState={connectionId:id,domain:"service.net",attemptId,targetId:"private",status:"pending",revision:1,expiresAt:Date.now()+60000,challenge:{id:challengeId,revision:1,expiresAt:Date.now()+60000}};
+  let inserted=0;
+  await expect(nativeLogin({connectionId:id,domain:state.domain,action:"credentials",attemptId,challengeId,expectedRevision:1,submissionId:crypto.randomUUID(),code:"123"},{read:()=>state,save(){},cdp:{close(){},async send(method:string,p:any){
+   if(method==="Target.attachToTarget")return {sessionId:"s"};
+   if(method==="Input.insertText")inserted++;
+   if(method==="Runtime.evaluate")return {result:{value:p.expression==="location.hostname"?"service.net":p.expression==="location.origin"?"https://service.net":plan}};
+   return {};
+  }}})).rejects.toThrow("supported, unambiguous form");
+  expect(inserted).toBe(0);expect(state.inputDispatched).toBeUndefined();expect(state.submission).toBeUndefined();
+ }
+});
+
+test("Google entry discovery returns a fixed descriptor only on the selected app and never dispatches or approves a provider",async()=>{
+ for(const scenario of [{host:"service.net",count:1,providers:["google" as const]},{host:"service.net",count:2,providers:[]},{host:"accounts.google.com",count:1,providers:[]}]) {
+  const state:NativeLoginState={connectionId:id,domain:"service.net",targetId:"private",status:"pending",revision:1,expiresAt:Date.now()+60000,approvedOrigins:scenario.host==="accounts.google.com"?["https://accounts.google.com"]:[]};
+  const calls:string[]=[];
+  const view=await nativeLogin({connectionId:id,domain:state.domain,action:"form"},{read:()=>state,save(){},cdp:{close(){},async send(method:string,p:any){
+   calls.push(method);
+   if(method==="Target.attachToTarget")return {sessionId:"s"};
+   if(method==="Runtime.evaluate")return {result:{value:p.expression==="location.hostname"?scenario.host:p.expression==="location.origin"?`https://${scenario.host}`:p.expression.includes("Object.keys(f)")?[]:p.expression.includes("const entries=")?scenario.count:null}};
+   return {};
+  }}});
+  expect(view.providers).toEqual(scenario.providers);expect(view.fields).toEqual([]);
+  expect(calls.some(method=>method.startsWith("Input.")||method==="Page.navigate")).toBe(false);
+  expect(state.approvedOrigins).toEqual(scenario.host==="accounts.google.com"?["https://accounts.google.com"]:[]);
+  expect(state.status).toBe("pending");
+ }
 });

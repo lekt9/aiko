@@ -70,7 +70,7 @@ import { preparingReplies } from "./channel-response.ts";
 import { validateActor } from "tardie/core/actor";
 import { withRequiredResponse } from "./channel-response.ts";
 import { parseFallbackVerbosity } from "./fallback-verbosity.ts";
-import { nativeBrowserConnector } from "./native-browser-connector.ts";
+import { nativeBrowserConnector, nativeConnectionEvent } from "./native-browser-connector.ts";
 import { browserOperation } from "./connectors-browser.ts";
 import {
   acceptSecretary,
@@ -461,25 +461,27 @@ export const accountObjectName = (owner: string) =>
   `${ACCOUNT_OBJECT_EPOCH}:${owner}`;
 
 export class AikoRegistryDO extends DurableObject<AikoCloudflareEnv> {
-  private authority?: ReturnType<typeof createMemoryAuthorityRegistry>;
+  #authority?: ReturnType<typeof createMemoryAuthorityRegistry>;
   constructor(ctx: DurableObjectState, env: AikoCloudflareEnv) {
     super(ctx, env);
     this.ctx.storage.sql.exec(
       "CREATE TABLE IF NOT EXISTS accounts(owner TEXT PRIMARY KEY,created_at INTEGER NOT NULL)",
     );
   }
-  private control() {
-    return this.authority ??= createMemoryAuthorityRegistry(this.ctx.storage, ACCOUNT_OBJECT_GENERATION)
-      .catch(error => { this.authority = undefined; throw error; });
+  // ECMAScript privacy is required here: TypeScript `private` methods remain
+  // RPC-visible prototype methods and would return the raw control capability.
+  #control() {
+    return this.#authority ??= createMemoryAuthorityRegistry(this.ctx.storage, ACCOUNT_OBJECT_GENERATION)
+      .catch(error => { this.#authority = undefined; throw error; });
   }
   async admit(owner: string, maximum?: number) {
-    return (await this.control()).admit(owner, maximum);
+    return (await this.#control()).admit(owner, maximum);
   }
   async memoryAuthority(owner: string) {
-    return (await this.control()).read(owner);
+    return (await this.#control()).read(owner);
   }
   async list() {
-    return (await this.control()).list();
+    return (await this.#control()).list();
   }
 }
 
@@ -798,8 +800,8 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         connectorVault(config.connectorVault, owner) ??
         (capabilities
           ? nativeBrowserConnector(owner, capabilities.sandbox.browserFactory(), async (record) => {
-              if(!registryExternalEventAllowed(record as Event) || !workExternalEventAllowed(record as Event))throw Error("Private registry event denied");
-              await host.commitRoot(host.self(`user-${owner}`), loginRuntimeEvent(owner,record as Event));
+              const event = nativeConnectionEvent(owner, record as Event);
+              if (event) await host.commitRoot(host.self(`user-${owner}`), event);
             }, () => capabilities.sandbox.progress())
           : undefined),
       env: { ARCADE_API_KEY: config.arcadeKey },
@@ -956,7 +958,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
     );
     const model = withContributionInference(makeModel(), makeModel(true));
     const renderLogin = createNativeLoginRenderer({ owner, instance: config.instanceId ?? config.mode,
-      layer: () => routing?.layer("conversation") });
+      layer: () => routing?.layer("conversation"), defer: work => this.ctx.waitUntil(work) });
     const workerContextFor=(model:import("tardie/inference/reference").ModelRef|undefined)=>{
       return routing?.contextForHistory(model).contextWindowTokens??config.modelRouting?.contextWindowTokens??32768;
     };
@@ -1226,6 +1228,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
                               owner,
                               thread,
                               engine: connectors,
+                              renderLogin,
                               deliverConnection: async (input, signal) => {
                                 if (!telegram || input.owner !== owner)
                                   return { status: "rejected" as const };
@@ -1288,11 +1291,11 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
             ? withSecretaryHistory(model)
             : role === "foreground"
               ? withRequiredResponse(
-                  workflows.inference(
+                  withPromiseExecution(workflows.inference(
                     capabilities
                       ? capabilities.browser.inference(registry?.media?.inference(model)??model, owner)
                       : registry?.media?.inference(model)??model,
-                  ),
+                  ), owner, () => host.read(`user-${owner}`)),
                   redact,
                 )
               : role === "child" ? workerInference(model,workerBindingFor(thread)) : model;
@@ -1308,9 +1311,7 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
         const sandbox=registry?.continuations?.sandboxLayer(ordinary)??ordinary;
         const prepared=harness.inference(base);
         const contextual=projectFor(thread)?.inference(prepared)??prepared;
-        return Layer.merge(role === "foreground" && capabilities
-          ? withPromiseExecution(contextual, owner, () => host.read(`user-${owner}`))
-          : contextual, sandbox);
+        return Layer.merge(contextual, sandbox);
       },
     });
     if (webhookMount && channels && await webhookMount.initialize(channels)) await host.recover();
@@ -1683,8 +1684,10 @@ export class AikoAccountDO extends DurableObject<AikoCloudflareEnv> {
       return this.serialize(() => secretaryApi(request, owner, host, redact));
     if (/^\/(?:api|v1)\/connectors(?:\/|$)/.test(url.pathname)) {
       // The connector engine serializes its own mutations. Private login and
-      // progress must not wait behind an unrelated long-running actor slice.
-      if (/\/native(?:\/progress)?$/.test(url.pathname)) return connectorApi(request, connectors, route, renderLogin);
+      // passive connection reads must not wait behind an actor slice either.
+      if (/\/native(?:\/progress)?$/.test(url.pathname) ||
+          request.method === "GET" && /^\/(?:api|v1)\/connectors\/connections$/.test(url.pathname))
+        return connectorApi(request, connectors, route, renderLogin);
       return this.serialize(() => connectorApi(request, connectors, route, renderLogin));
     }
     if (["/api/control/backup","/api/control/backups","/api/control/restore"].includes(url.pathname)) {

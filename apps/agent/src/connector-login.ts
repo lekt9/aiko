@@ -134,7 +134,7 @@ export function connectorLoginNotifications(binding: ActorConnectorBinding) {
                   },
                 ]);
                 const status = yield* Effect.tryPromise(async () => {
-                  const connection = (await binding.engine.connections()).find(
+                  const connection = (await (binding.engine.connectionSnapshot?.() ?? binding.engine.connections())).find(
                     (c) => c.id === (notice?.connectionId ?? id),
                   );
                   if (connection?.status !== (notice?.kind === "complete" ? "connected" : "pending")) return "superseded";
@@ -149,7 +149,7 @@ export function connectorLoginNotifications(binding: ActorConnectorBinding) {
                     {
                       owner: binding.owner,
                       text: notice?.kind === "challenge" ? `${name} needs a verification code. Open the sign-in panel to continue.` : notice?.kind === "complete" ? `Sign-in to ${name} is verified.` : `Sign in to ${name} to continue with Aiko.`,
-                      buttons: [[{ text: "Sign in", webAppUrl }]],
+                      buttons: [[{ text: notice?.kind === "complete" ? "Open connection" : "Sign in", webAppUrl }]],
                     },
                     signal,
                   );

@@ -1,8 +1,24 @@
 import {loginObservationEvent,type NativeLoginObservation} from "./native-login-observation.ts";
+import type { Event } from "tardie/core/event";
+import { loginRuntimeEvent } from "./login-operation-host.ts";
+import { registryExternalEventAllowed } from "./registry-host.ts";
+import { workExternalEventAllowed } from "./commitments.ts";
 import { connectionMiniAppUrl } from "./telegram-mini-app.ts";
 import type { SecureBrowserAdapter } from "./connectors-browser.ts";
 import type { BrowserDriverFactory } from "./browser-driver.ts";
 import { connectionRoute, CONNECTION_LINK_LIMIT } from "./connection-index.ts";
+/** Trusted connector-runner boundary, not an ingress permission. Raw tool
+ * transcripts stay in the browser; compiled network evidence reaches the host
+ * unchanged. Login observations use the existing owner-bound allowlist. */
+export function nativeConnectionEvent(owner: string, record: Event): Event | undefined {
+  if (["BrowserToolCallObserved", "BrowserToolResultObserved"].includes(record.type)) return;
+  const event = loginRuntimeEvent(owner, record);
+  if (!workExternalEventAllowed(event) ||
+      event.type !== "AikoPrivateLoginObserved" && !registryExternalEventAllowed(event))
+    throw Error("Private registry event denied");
+  return event;
+}
+
 /** Cloud host binding; credentials travel only through the runner's encrypted private operation seam. */
 export function nativeBrowserConnector(
   owner: string,

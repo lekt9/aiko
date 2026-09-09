@@ -43,7 +43,6 @@ export async function connectorApi(
       if (!/^[a-f0-9-]{36}$/.test(id)) return json({ error: "invalid_query" }, 400);
       return json(await engine.nativeProgress(id));
     }
-    await engine.flushEvents();
     if (request.method === "GET") {
       if (path === "/api/connectors") {
         if (
@@ -54,13 +53,16 @@ export async function connectorApi(
         return json(await engine.search(url.searchParams.get("query") ?? ""));
       }
       if (path === "/api/connectors/connections")
-        return json({ connections: await engine.connections(), nativeInline: (await engine.apps()).nativeInline });
+        return json({ connections: await engine.connectionSnapshot(), nativeInline: (await engine.apps()).nativeInline });
       if (path === "/api/connectors/password-managers")
         return json({ managers: await engine.managers(), providers: engine.managerProviders() });
       return json({ error: "not_found" }, 404);
     }
     if (request.method !== "POST")
       return json({ error: "method_not_allowed" }, 405);
+    // Discovery must remain available while a private browser step or event
+    // delivery waits. Mutations and native host recovery still drain the outbox.
+    await engine.flushEvents();
     const loginImport = path === "/api/connectors/imports/logins";
     let text: string;
     try {

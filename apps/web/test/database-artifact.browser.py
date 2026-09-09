@@ -9,6 +9,7 @@ BASE = os.environ.get('DATABASE_PREVIEW_URL', 'http://127.0.0.1:4387')
 def enter(search, token=TOKEN):
     new_tab(BASE + '/connect?' + search)
     wait_for_load()
+    wait('!!document.querySelector(".db-workspace")')
     click('DisclosureTriangle', 'Use an account access token')
     fill('Account access token', token)
     click('button', 'Connect')

@@ -114,6 +114,7 @@ async function fixture(ttl = 60000) {
               if (method === "Storage.getCookies") return { cookies: [] };
               if (method === "Runtime.evaluate") {
                 const e = params.expression;
+                if (e.includes("const names=")) return { result: { value: { code: 1 } } };
                 if (e === "location.hostname")
                   return { result: { value: "service.net" } };
                 if (e === "location.origin")

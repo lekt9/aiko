@@ -201,6 +201,13 @@ const server = Bun.serve({
       watches.find((watch) => watch.id === input.id) ||
       watches.find((watch) => watch.lastTaskOperationId === input.operationId);
     if (!watch) return json({ error: "missing" }, 404);
+    if (operation === "/check-restore") {
+      if (input.requestId !== watch.reauthorization?.requestId || Object.keys(input).some(k => !["id", "requestId"].includes(k)))
+        return json({error:"conflict"},409);
+      // Receipt settlement preserves the current controls and private collection state.
+      watch.reauthorization!.status="confirmed";
+      return json({available:true,result:watch.reauthorization});
+    }
     if (operation === "/reauthorize") {
       if(input.expectedGeneration!==watch.generation || input.expectedLifecycleRevision!==watch.lifecycleRevision ||
         input.expectedLeaseRevision!==watch.leaseRevision || input.challenge!==(watch.collector?.restore?.challenge??watch.reauthorization?.challenge))
@@ -208,7 +215,7 @@ const server = Bun.serve({
       if(!watch.reauthorization){
         watch.reauthorization={requestId:`restore:${watch.id}`,challenge:input.challenge,status:"pending",attempts:1,deadlineAt:Date.now()+60000};
         // Simulated lost response after clearing; the UI must recover the same request.
-        watch.collector={state:"watching"};
+        watch.collector={state:"watching"};watch.status="watching";
         return json({error:"fixture_lost_confirmation"},409);
       }
       watch.reauthorization.status="confirmed";watch.status="watching";

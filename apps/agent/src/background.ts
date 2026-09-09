@@ -576,20 +576,27 @@ export function createIndexerActor(binding: MemoryBinding, connectionContext?: (
               },
               act: ({job:e, knownUrls, knownIds}) => Effect.gen(function* () {
                 const self = yield* Self;
+                // Fixed phase labels only; provider errors and page content must
+                // never enter the diagnostic receipt.
+                let failurePhase = "source-verification";
                 return yield* Effect.tryPromise({
                   try: async (signal) => {
                     if (!await verifiedLearningJob(binding, self, e, signal)) throw Error("source_evidence_unavailable");
+                    failurePhase = "connection-context";
                     const page = e.type === "AikoConnectionIndexRequested"
                       ? await (connectionContext ? connectionContext(e.connectionId, signal, e.revision === undefined ? undefined : {url:e.url,revision:e.revision,linkOffset:e.linkOffset}) : Promise.reject(new Error("Connection context unavailable")))
                       : undefined;
                     const input = page ? page.input : e.input as LearningInput;
                     signal.throwIfAborted();
+                    failurePhase = "source-reverification";
                     if (page && !await verifiedLearningJob(binding, self, e, signal)) throw Error("source_evidence_unavailable");
+                    failurePhase = "learning";
                     const result = await indexLearning(
                       binding,
                       input,
                       binding.redact,
                     );
+                    failurePhase = "route-frontier";
                     const crawlId = e.crawlId ?? e.id;
                     const visited = new Set([...knownUrls, page?.url]);
                     const scheduled = new Set(knownIds);
@@ -616,6 +623,7 @@ export function createIndexerActor(binding: MemoryBinding, connectionContext?: (
                         id: job.id,
                         stage: "indexing",
                         errorCode,
+                        failurePhase,
                       }),
                     ]),
                   ),

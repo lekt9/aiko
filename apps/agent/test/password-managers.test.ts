@@ -220,7 +220,7 @@ function fixture() {
       status: "connected",
       verification: {
         verified: true,
-        revision: 1,
+        revision: 2,
         expiresAt: Date.now() + 60_000,
       },
     }),
@@ -232,7 +232,7 @@ function fixture() {
     managers: host,
     fetch: async () => Response.json({ items: [] }),
   });
-  return { store, remote, host, engine, submitted };
+  return { store, remote, host, engine, submitted, browser };
 }
 async function connect(f: ReturnType<typeof fixture>) {
   const manager = await f.host.add(add);
@@ -590,4 +590,24 @@ test("cancellation during reference lookup prevents credential submission", asyn
     ),
   ).rejects.toThrow();
   expect(f.submitted).toEqual([]);
+});
+
+test("leaving after saved-password dispatch preserves that submission and requires committed custody", async () => {
+  for (const verified of [true, false]) {
+    const f = fixture(), manager = await connect(f);
+    await f.engine.importLogins([{website:"github.com",username:"octocat"}]);
+    const connection = (await f.engine.connections())[0]!;
+    const panel = new AbortController();
+    let calls = 0;
+    f.browser.control = async (binding, _input, signal) => {
+      calls++; panel.abort();
+      expect(signal!.aborted).toBe(false);
+      return {status:"connected",domain:binding.domain,revision:2,expiresAt:Date.now()+60000};
+    };
+    if (!verified) f.browser.status = async binding => ({...binding,status:"pending"});
+    const operation = f.engine.fillFromManager({connectionId:connection.id,managerId:manager.id,reference:add.entries[0]!.reference},panel.signal);
+    if (verified) expect((await operation).status).toBe("connected");
+    else await expect(operation).rejects.toThrow("custody");
+    expect(calls).toBe(1);
+  }
 });

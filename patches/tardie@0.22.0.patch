@@ -1336,3 +1336,186 @@ diff --git a/src/model/model.ts b/src/model/model.ts
              remember(action.usage, true)
              return served(withSpend(action, spentOf(parts, missed)), action.endpoint ?? endpointOf(config, undefined))
            } catch (e) {
+diff --git a/src/core/component/compose.ts b/src/core/component/compose.ts
+index 8563c4871954032fa6c8ccdcaa2b4f873d16af62..5b9785c10f512ad1825b09b5144e83e6f21c8598 100644
+--- a/src/core/component/compose.ts
++++ b/src/core/component/compose.ts
+@@ -1,7 +1,6 @@
+ import { Chunk } from "effect"
+ import type { Event } from "tardie/core/event"
+ import { materializeProjection, type MaterializedProjectionState } from "tardie/core/projection"
+-import type { Transition } from "tardie/core/transition"
+ import type { ViewAlgebra } from "tardie/core/view"
+ import { composeKeys } from "../log/keys"
+ import {
+@@ -40,7 +39,8 @@ export interface CompositionOptions<R = never> {
+  *     ↓
+  *   Composed ComponentMachine
+  *     ├── step every child machine once
+- *     ├── retain unchanged child identities
++ *     └── retain unchanged child identities
++ *     ↓ (when output is observed)
+  *     ├── update changed output-tree branches
+  *     ├── combine child views
+  *     ├── concatenate child transitions
+@@ -67,10 +67,8 @@ export const composeComponents = <
+   type Output = ReturnType<Machine["output"]>
+   interface CompositionState {
+     readonly children: ReadonlyArray<ChildState>
+-    readonly root: OutputTree<Output>
+     // TODO: Give reconciliation its own projection state so composition does not retain the complete event history.
+     readonly history: Chunk.Chunk<Event>
+-    readonly output: Output
+   }
+
+   const members = components as ReadonlyArray<Component<View, Requirements>>
+@@ -90,63 +88,48 @@ export const composeComponents = <
+     transitions: [...left.transitions, ...right.transitions]
+   })
+
+-  const cancel = (
+-    state: CompositionState,
+-    node: OutputTree<Output>,
+-    cancellation: InvocationCancellation
+-  ): ReadonlyArray<Transition<never, Requirements>> => {
+-    if (node.kind === "empty") return []
+-    if (node.kind === "leaf") {
+-      return machines[node.index]!.cancel?.(state.children[node.index]!.state, cancellation) ?? []
++  // Cache only the last observed tree, not every replay prefix. Child identities
++  // still reuse unchanged branches, including when querying a fork or older state.
++  let observed: { children: ReadonlyArray<ChildState>; root: OutputTree<Output> } | undefined
++  const output = (state: CompositionState): Output => {
++    const changed = state.children.flatMap((child, index) =>
++      Object.is(child, observed?.children[index]) ? [] : [index])
++    let root = observed?.root
++    const replacementCost = changed.length * Math.max(1, Math.ceil(Math.log2(state.children.length)))
++    if (root === undefined || replacementCost >= state.children.length) {
++      root = buildOutputTree(state.children.map((child) => child.value), { view: algebra.empty, transitions: [] }, combine)
++    } else {
++      for (const index of changed) root = replaceOutputTree(root, index, state.children[index]!.value, combine)
+     }
+-    return [...cancel(state, node.left, cancellation), ...cancel(state, node.right, cancellation)]
++    observed = { children: state.children, root }
++    return reconcileComponentOutput(name, reconcile, Chunk.toReadonlyArray(state.history), root.output)
+   }
+
+   return component<CompositionState, View, Requirements>({
+     name,
+     ...(keys === undefined ? {} : { keys }),
+     [COMPONENT_CONTRACT]: mergeComponentContracts(members),
+-    initial: () => {
+-      const children = materialized.map((machine) => machine.initial())
+-      const root = buildOutputTree(children.map((child) => child.value), { view: algebra.empty, transitions: [] }, combine)
+-      const history = Chunk.empty<Event>()
+-      return {
+-        children,
+-        root,
+-        history,
+-        output: reconcileComponentOutput(name, reconcile, Chunk.toReadonlyArray(history), root.output)
+-      }
+-    },
++    initial: () => ({
++      children: materialized.map((machine) => machine.initial()),
++      history: Chunk.empty<Event>()
++    }),
+     step: (state, event) => {
+       let children: Array<ChildState> | undefined
+-      const changed: Array<number> = []
+       for (let index = 0; index < materialized.length; index++) {
+         const current = state.children[index]!
+         const child = materialized[index]!.step(current, event)
+         if (Object.is(child, current)) continue
+         children ??= [...state.children]
+         children[index] = child
+-        changed.push(index)
+       }
+       if (children === undefined && reconcile === undefined) return state
+-      let root = state.root
+-      if (children !== undefined) {
+-        const replacementCost = changed.length * Math.max(1, Math.ceil(Math.log2(children.length)))
+-        if (replacementCost >= children.length) {
+-          root = buildOutputTree(children.map((child) => child.value), { view: algebra.empty, transitions: [] }, combine)
+-        } else {
+-          for (const index of changed) root = replaceOutputTree(root, index, children[index]!.value, combine)
+-        }
+-      }
+-      const history = reconcile === undefined ? state.history : Chunk.append(state.history, event)
+       return {
+         children: children ?? state.children,
+-        root,
+-        history,
+-        output: reconcileComponentOutput(name, reconcile, Chunk.toReadonlyArray(history), root.output)
++        history: reconcile === undefined ? state.history : Chunk.append(state.history, event)
+       }
+     },
+-    output: (state) => state.output,
+-    cancelState: (state: CompositionState, cancellation: InvocationCancellation) => cancel(state, state.root, cancellation)
++    output,
++    cancelState: (state: CompositionState, cancellation: InvocationCancellation) =>
++      machines.flatMap((machine, index) => machine.cancel?.(state.children[index]!.state, cancellation) ?? [])
+   })
+ }
+diff --git a/src/core/projection/projection.ts b/src/core/projection/projection.ts
+index 585d0207147496607b6bb500bfb0fcac49214c31..46b87dbfebdb5b5b9106f3f0de91bdc191ded899 100644
+--- a/src/core/projection/projection.ts
++++ b/src/core/projection/projection.ts
+@@ -35,7 +35,8 @@ export interface MaterializedProjectionState<State, Value> {
+ }
+
+ /**
+- * materializeProjection stores a projection's output and recomputes it when state identity changes.
++ * materializeProjection caches a projection's output on observation, invalidated by state identity.
++ * Cold replay must not derive outputs for every unobserved historical prefix.
+  *
+  * The projection author uses identity as the cache invalidation signal:
+  *
+@@ -46,7 +47,7 @@ export interface MaterializedProjectionState<State, Value> {
+  *     return computeNextState(state, event)
+  *   }
+  *
+- * Returning state reuses the cached output. Returning a new state recomputes it.
++ * Returning state reuses the cached output. A new state computes it on first observation.
+  *
+  * Step must not mutate and return its existing state.
+  * Doing so changes the projection without invalidating its cached output
+@@ -54,16 +55,27 @@ export interface MaterializedProjectionState<State, Value> {
+  */
+ export const materializeProjection = <State, Value>(
+   projection: Projection<State, Value>
+-): Projection<MaterializedProjectionState<State, Value>, Value> => ({
+-  initial: () => {
+-    const state = projection.initial()
+-    return { state, value: projection.output(state) }
+-  },
+-  step: (current, event) => {
+-    const state = projection.step(current.state, event)
+-    return Object.is(state, current.state)
+-      ? current
+-      : { state, value: projection.output(state) }
+-  },
+-  output: (current) => current.value
+-})
++): Projection<MaterializedProjectionState<State, Value>, Value> => {
++  const materialize = (state: State): MaterializedProjectionState<State, Value> => {
++    let observed = false
++    let value: Value
++    return {
++      state,
++      get value() {
++        if (!observed) {
++          value = projection.output(state)
++          observed = true
++        }
++        return value!
++      }
++    }
++  }
++  return {
++    initial: () => materialize(projection.initial()),
++    step: (current, event) => {
++      const state = projection.step(current.state, event)
++      return Object.is(state, current.state) ? current : materialize(state)
++    },
++    output: (current) => current.value
++  }
++}

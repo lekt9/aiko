@@ -16,7 +16,7 @@ export function promiseStatus(row: PromiseReview): string {
     case "settled": return row.outcome === "succeeded" ? "Completed · check action receipts" : "Could not complete";
     case "unknown": return "Outcome unconfirmed · check the app before trying again";
     case "rejected": return "Declined";
-    case "expired": return "Expired · not approved";
+    case "expired": return "Expired before dispatch";
     case "cancelled": return "Cancelled before dispatch";
   }
 }

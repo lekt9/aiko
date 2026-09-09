@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.cloudflare.json",
+  "include": ["src/voyager-worker.ts"],
+  "exclude": ["test"]
+}

@@ -96,12 +96,12 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: Number(process.env.UNLOC
     }
     if (url.pathname === "/accept" || url.pathname === "/verify") {
       const current = pending.get(jar.pending!);
-      const value = request.method === "POST" ? (await request.formData()).get("code") : url.searchParams.get("token");
+      const value = request.method === "POST" ? (await request.formData()).getAll("code").join("") : url.searchParams.get("token");
       if (!current || current.host !== host || current.consumed || current.value !== value || host === LINK && url.searchParams.get("state") !== jar.pending) return new Response("Invalid or consumed sign-in", { status: 403 });
       current.consumed = true; if (host === OTP) metrics.otpConsumed++; else metrics.linkConsumed++;
       return redirect("/", cookie("connected", host));
     }
-    if (url.pathname === "/waiting") return page(host === OTP ? `<h1>Check your email</h1><form method="post" action="/verify"><input type="hidden" name="state" value="${html(jar.pending || '')}"><label>Verification code<input name="code" autocomplete="one-time-code"></label><button>Verify</button></form>` : `<h1>Check your inbox</h1><p>A sign-in link was sent to your email.</p><input type="hidden" name="state" value="${html(jar.pending || '')}">`);
+    if (url.pathname === "/waiting") return page(host === OTP ? `<h1>Check your email</h1><form method="post" action="/verify"><input type="hidden" name="state" value="${html(jar.pending || '')}"><fieldset><legend>Verification code</legend>${Array.from({ length: 6 }, (_, index) => `<input name="code" aria-label="Digit ${index + 1}" maxlength="1" inputmode="numeric" ${index === 0 ? 'autocomplete="one-time-code"' : ''}>`).join('')}</fieldset><button>Verify</button></form>` : `<h1>Check your inbox</h1><p>A sign-in link was sent to your email.</p><input type="hidden" name="state" value="${html(jar.pending || '')}">`);
     return page(`<h1>Sign in</h1><form method="post" action="/email?fixture_case=${encodeURIComponent(url.searchParams.get('fixture_case') || '')}"><label>Email<input name="username" autocomplete="username" type="email"></label><button>Continue</button></form>`);
   },
 });

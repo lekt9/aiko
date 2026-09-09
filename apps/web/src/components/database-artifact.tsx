@@ -10,6 +10,7 @@ import { DatabaseLayoutControls, useDatabaseViewSave, type DatabaseViewSave } fr
 import { DatabaseRefreshControls, useDatabaseRefresh } from "./database-refresh-controls";
 import type { DatabasePresentation } from "../lib/database-layouts";
 import { databaseClient, parseCellDraft, type ApprovalDetail, type DatabaseArtifactResult, type DatabaseAuthentication, type DatabaseClient, type DatabaseColumn, type DatabaseFieldResult, type DatabaseRow } from "../lib/databases";
+import { pollWhileVisible } from "../lib/poll";
 import type { DatabaseCommandInput, DatabaseOperationResult, DatabaseQuery } from "@unlock/sdk/aiko";
 import "../styles/databases.css";
 
@@ -258,8 +259,9 @@ export function DatabaseArtifact({ artifactId, client: supplied, authentication,
         await reload(controller.signal);
       } finally { running = false; }
     };
-    const timer = setInterval(() => void poll(), 3000); void poll();
-    return () => { clearInterval(timer); controller.abort(); };
+    void poll();
+    const stopPolling = pollWhileVisible(() => void poll(), 3000);
+    return () => { stopPolling(); controller.abort(); };
   }, [client, reload]);
   const run = async (command: DatabaseCommandInput["command"], key: string) => {
     const operation = await client.commit({ idempotencyKey: key, command }, abort.current.signal);

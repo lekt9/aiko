@@ -34,6 +34,9 @@ export function NativeLoginPanel({
   }
   const pageError = nativeLoginPageError(view);
   const [busy, setBusy] = useState(true);
+  // Submissions disable the form; metadata reads and observation never do. This
+  // keeps the panel interactive while the private browser step is inspected.
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -114,7 +117,15 @@ export function NativeLoginPanel({
       if (Date.now() >= deadline) { setObserving(false); return; }
       try {
         if (!controller.current && !cancelling.current) {
-          const next = await requestRef.current<View>("/native", { connectionId, action: "finish" }, abort.signal);
+          let next: View;
+          try {
+            next = await requestRef.current<View>("/native", { connectionId, action: "finish" }, abort.signal);
+          } catch (failure) {
+            if (abort.signal.aborted || failure instanceof MiniAppAuthenticationError) throw failure;
+            // Another surface may advance the sign-in while this panel is open.
+            // Read metadata only; unchanged field/challenge keys retain DOM drafts.
+            next = await requestRef.current<View>("/native", { connectionId, action: "form" }, abort.signal);
+          }
           if (abort.signal.aborted || controller.current || cancelling.current) return;
           if (next.status === "connected") {
             abort.abort();
@@ -122,7 +133,7 @@ export function NativeLoginPanel({
             return;
           }
           if (next.status === "disconnected") { abort.abort(); setObserving(false); return; }
-          if (next.assistance) setView(next);
+          if (next.assistance || next.fields || next.providers || next.requiresOrigin || next.pageError) setView(next);
         }
       } catch (failure) {
         if (!abort.signal.aborted && failure instanceof MiniAppAuthenticationError) {
@@ -156,23 +167,10 @@ export function NativeLoginPanel({
     controller.current = abort;
     const read = (action: string) =>
       request<View>("/native", { connectionId, action }, abort.signal);
-    const pause = () =>
-      new Promise<void>((resolve, reject) => {
-        const cancelled = () => {
-          clearTimeout(timer);
-          reject(new DOMException("Aborted", "AbortError"));
-        };
-        const timer = setTimeout(() => {
-          abort.signal.removeEventListener("abort", cancelled);
-          resolve();
-        }, 1500);
-        abort.signal.addEventListener("abort", cancelled, { once: true });
-        if (abort.signal.aborted) cancelled();
-      });
     try {
       if (action === "assist" || action === "assist_consent") {
         if (!view?.attemptId) throw Error("Inspect sign-in before continuing");
-        setSubmitted(true); sent = true; form.current?.reset();
+        setSubmitted(true); sent = true; setSubmitting(true); form.current?.reset();
         const result = await request<View>("/native", { connectionId, action, attemptId: view.attemptId, ...fields }, abort.signal);
         if (!active.current || abort.signal.aborted) return;
         setView(result);
@@ -190,18 +188,10 @@ export function NativeLoginPanel({
         setPreparing(true);
         // Recheck the destination before every submission. Metadata displayed
         // earlier never authorizes sending credentials to a changed page.
-        let ready: View | undefined;
-        for (let attempt = 0; attempt < 6; attempt++) {
-          if (attempt) await pause();
-          ready = await read("form");
-          if (!active.current || abort.signal.aborted) return;
-          if (ready.status === "connected") {
-            onClose();
-            return;
-          }
-          if (nativeLoginPageError(ready) || ready.requiresOrigin) { setView(ready); return; }
-          if (ready.fields?.length) break;
-        }
+        const ready = await read("form");
+        if (!active.current || abort.signal.aborted) return;
+        if (ready.status === "connected") { onClose(); return; }
+        if (nativeLoginPageError(ready) || ready.requiresOrigin) { setView(ready); return; }
         if (!ready?.fields?.length || !nativeLoginRenderSpec(ready.fields) || ready.requiresOrigin) {
           setView(ready);
           if (!ready?.requiresOrigin) setError(
@@ -238,6 +228,7 @@ export function NativeLoginPanel({
         setPreparing(false);
         setSubmitted(true);
         sent = true;
+        setSubmitting(true);
         form.current?.reset();
         setShowPassword(false);
         // Submit once. Polling below never resends credentials, including after uncertain responses.
@@ -261,47 +252,25 @@ export function NativeLoginPanel({
           return;
         }
       }
-      for (let attempt = 0; attempt < 6; attempt++) {
-        if (action !== "form" || attempt > 0) await pause();
-        if (!active.current || abort.signal.aborted) return;
-        if (action !== "form") {
-          try {
-            const verified = await read("finish");
-            if (!active.current || abort.signal.aborted) return;
-            if (verified.status === "connected") {
-              onClose();
-              return;
-            }
-          } catch {
-            if (abort.signal.aborted) return;
-          }
-        }
-        const next = await read("form");
-        if (!active.current || abort.signal.aborted) return;
-        setView(next);
-        if (nativeLoginPageError(next) || next.requiresOrigin) {
-          return;
-        }
-        if (next.status === "connected") {
-          onClose();
-          return;
-        }
-        if (
-          next.fields?.length &&
-          (action === "form" || next.fields.includes("code") || attempt >= 2)
-        ) {
-          if (action !== "form")
-            setError(
-              next.fields.includes("code")
-                ? "Enter your verification code to finish connecting."
-                : "The website needs another sign-in step. Complete the fields below.",
-            );
-          return;
+      // A submission already returned the current step. Release the form now;
+      // background verification never repeats private input.
+      if (action === "credentials") return;
+      if (action === "check") {
+        try {
+          const verified = await read("finish");
+          if (!active.current || abort.signal.aborted) return;
+          if (verified.status === "connected") { onClose(); return; }
+        } catch (failure) {
+          if (abort.signal.aborted) return;
+          if (failure instanceof MiniAppAuthenticationError) throw failure;
         }
       }
-      setError(
-        "This website needs an additional check. Try again after completing any verification on your phone.",
-      );
+      const next = await read("form");
+      if (!active.current || abort.signal.aborted) return;
+      setView(next);
+      if (next.status === "connected") { onClose(); return; }
+      if (!nativeLoginPageError(next) && !next.requiresOrigin && !next.fields?.length && !(Array.isArray(next.providers) && next.providers.includes("google")))
+        setError("The website is still preparing sign-in. Check its status in a moment, or go back and continue later.");
     } catch (failure) {
       if (active.current && !abort.signal.aborted)
         setError(
@@ -315,6 +284,7 @@ export function NativeLoginPanel({
       fields = {};
       if (controller.current === abort) controller.current = undefined;
       if (active.current && !abort.signal.aborted) setBusy(false);
+      if (active.current && !abort.signal.aborted) setSubmitting(false);
       if (active.current && !abort.signal.aborted) setPreparing(false);
     }
   }
@@ -333,7 +303,8 @@ export function NativeLoginPanel({
   // Saved password managers are optional; an unavailable endpoint simply hides the option.
   useEffect(() => {
     let stale = false;
-    request<{ managers: PasswordManager[] }>("/password-managers")
+    const abort = new AbortController();
+    request<{ managers: PasswordManager[] }>("/password-managers", undefined, abort.signal)
       .then((result) => {
         if (!stale) setManagers(result.managers);
       })
@@ -342,6 +313,7 @@ export function NativeLoginPanel({
       });
     return () => {
       stale = true;
+      abort.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -374,23 +346,13 @@ export function NativeLoginPanel({
     setManagerError("");
     const abort = new AbortController();
     controller.current = abort;
-    const read = (action: string) =>
-      request<View>("/native", { connectionId, action }, abort.signal);
-    const pause = () =>
-      new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, 1500);
-        abort.signal.addEventListener(
-          "abort",
-          () => {
-            clearTimeout(timer);
-            resolve();
-          },
-          { once: true },
-        );
-      });
     try {
       // The host resolves the saved reference and submits it into the private
       // page; the password is never sent back to this app.
+      setSubmitted(true);
+      setSubmitting(true);
+      form.current?.reset();
+      setShowPassword(false);
       const next = await request<View>(
         "/password-managers/fill",
         {
@@ -409,52 +371,19 @@ export function NativeLoginPanel({
         onClose();
         return;
       }
-      for (let attempt = 0; attempt < 6; attempt++) {
-        await pause();
-        if (!active.current || abort.signal.aborted) return;
-        try {
-          const verified = await read("finish");
-          if (!active.current || abort.signal.aborted) return;
-          if (verified.status === "connected") {
-            onClose();
-            return;
-          }
-        } catch {
-          if (abort.signal.aborted) return;
-        }
-        const formView = await read("form");
-        if (!active.current || abort.signal.aborted) return;
-        setView(formView);
-        if (nativeLoginPageError(formView) || formView.requiresOrigin) {
-          return;
-        }
-        if (formView.status === "connected") {
-          onClose();
-          return;
-        }
-        if (formView.fields?.length) {
-          setError(
-            formView.fields.includes("code")
-              ? "Enter your verification code to finish connecting."
-              : "The website needs another sign-in step. Complete the fields below.",
-          );
-          return;
-        }
-      }
-      setError(
-        "This website needs an additional check. Try again after completing any verification on your phone.",
-      );
+      setView(next);
     } catch (failure) {
       if (active.current && !abort.signal.aborted)
         setError(
-          failure instanceof Error
+          failure instanceof MiniAppAuthenticationError
             ? failure.message
-            : "Could not use the saved password manager.",
+            : "Could not confirm sign-in. Check its status before trying again; the saved login won’t be resent.",
         );
     } finally {
       if (controller.current === abort) controller.current = undefined;
       if (active.current && !abort.signal.aborted) {
         setBusy(false);
+        setSubmitting(false);
         setPreparing(false);
       }
     }
@@ -482,7 +411,7 @@ export function NativeLoginPanel({
         return;
       }
       setView(next);
-      if (!next.requiresOrigin && !next.fields?.length)
+      if (!next.requiresOrigin && !next.fields?.length && !(Array.isArray(next.providers) && next.providers.includes("google")))
         setError("Aiko couldn’t find supported sign-in fields. Complete any verification on your phone, then check sign-in status.");
     } catch (failure) {
       if (active.current && !abort.signal.aborted)
@@ -493,6 +422,15 @@ export function NativeLoginPanel({
       if (controller.current === abort) controller.current = undefined;
       if (active.current && !abort.signal.aborted) setBusy(false);
     }
+  }
+  function leave() {
+    // Leaving the UI does not revoke the browser session. Explicit cancellation
+    // remains available below and must confirm private cleanup separately.
+    active.current = false;
+    observer.current?.abort();
+    controller.current?.abort();
+    form.current?.reset();
+    onClose();
   }
   async function cancel() {
     if (cancelling.current) return;
@@ -518,7 +456,7 @@ export function NativeLoginPanel({
         setError(
           failure instanceof MiniAppAuthenticationError
             ? failure.message
-            : "Cancellation could not be confirmed. Please try closing again.",
+            : "Cancellation could not be confirmed. Check sign-in status or try Cancel connection again.",
         );
     } finally {
       cancelling.current = false;
@@ -527,11 +465,11 @@ export function NativeLoginPanel({
   }
   // Preserve the last observed DOM inputs (disabled) during a recoverable
   // read failure. Never invent fields or keep old inputs after dispatch.
-  const fields = Array.isArray(view?.fields) && view.fields.length ? view.fields : submitted ? [] : lastFields;
+  const fields = Array.isArray(view?.fields) && view.fields.length ? view.fields : submitted || (Array.isArray(view?.providers) && view.providers.includes("google")) ? [] : lastFields;
   const fieldsReady = !!view?.fields?.length && !!nativeLoginRenderSpec(view.fields) && !pageError;
   const website = view?.domain ?? domain ?? "your website";
   return (
-    <MiniAppScreen title="Connect app" close={() => void cancel()}>
+    <MiniAppScreen title="Connect app" close={leave}>
       <section
         className="native-login"
         aria-label="Connect with password"
@@ -589,7 +527,7 @@ export function NativeLoginPanel({
             </ol>
           </details>
         )}
-        <NativeLoginAssistance domain={website} view={view?.assistance} busy={busy} ready={!!view?.attemptId && !pageError} request={request}
+        <NativeLoginAssistance domain={website} providers={view?.providers} view={view?.assistance} busy={busy} ready={!!view?.attemptId && !pageError} request={request}
           start={(assistMethod, sourceConnectionId) => void act("assist", { assistMethod, sourceConnectionId, assistanceId: crypto.randomUUID() })}
           approve={() => void act("assist_consent", { assistanceId: view?.assistance?.id })} />
         {!view?.assistance && (!view?.requiresOrigin || pageError) && (
@@ -617,7 +555,7 @@ export function NativeLoginPanel({
               fields={fields}
               layout={view?.layout}
               busy={busy}
-              disabled={busy || !fieldsReady}
+              disabled={submitting || !fieldsReady}
               initialUsername={username}
               showPassword={showPassword}
               togglePassword={() => setShowPassword(value => !value)}
@@ -726,6 +664,11 @@ export function NativeLoginPanel({
             </button>
           </div>
         )}
+        <div className="connector-actions">
+          <button type="button" className="button" onClick={leave}>Continue later</button>
+          <button type="button" className="text-button" disabled={cancelling.current} onClick={() => void cancel()}>Cancel connection</button>
+        </div>
+        <p className="aiko-fineprint">You can return to your apps while sign-in is waiting.</p>
         <p className="credential-privacy">
           <LockKeyhole size={14} aria-hidden="true" />
           Private sign-in. Never shared in chat.

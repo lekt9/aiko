@@ -1,16 +1,17 @@
-import { useEffect } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  createRootRoute,
-  createRoute,
-  createRouter,
-  RouterProvider,
-} from "@tanstack/react-router";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ShieldCheck } from "lucide-react";
 import { ConnectorOnboarding } from "../src/components/connector-onboarding";
-import { databaseLaunch, DatabaseWorkspace } from "../src/components/database-workspace";
+import { databaseLaunch } from "../src/lib/databases";
 import "../src/styles/mini-app.css";
+
+// The databases stack is only needed on a databases launch; keep it out of the
+// connections bundle that every mini app open downloads.
+const DatabaseWorkspace = lazy(() =>
+  import("../src/components/database-workspace").then((m) => ({
+    default: m.DatabaseWorkspace,
+  })),
+);
 
 type TelegramAppearance = {
   initData?: string;
@@ -55,23 +56,15 @@ function MiniApp() {
           <ShieldCheck size={16} aria-hidden="true" /> Your access, your choice
         </span>
       </header>
-      {databaseLaunch(window.location.search) ? <DatabaseWorkspace search={window.location.search} /> : <><ConnectorOnboarding /><a href="/connect?screen=databases">Open databases</a></>}
+      {databaseLaunch(window.location.search) ? (
+        <Suspense fallback={<p role="status">Loading your databases…</p>}>
+          <DatabaseWorkspace search={window.location.search} />
+        </Suspense>
+      ) : <><ConnectorOnboarding /><a href="/connect?screen=databases">Open databases</a></>}
       <footer className="mini-footer">A little more connected.</footer>
     </main>
   );
 }
-const rootRoute = createRootRoute();
-const connectRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/connect",
-  component: MiniApp,
-});
-const router = createRouter({
-  routeTree: rootRoute.addChildren([connectRoute]),
-});
-const queryClient = new QueryClient();
-createRoot(document.getElementById("root")!).render(
-  <QueryClientProvider client={queryClient}>
-    <RouterProvider router={router} />
-  </QueryClientProvider>,
-);
+// The mini app is served at exactly one URL (/connect), so a router would only
+// add bundle weight; the component reads window.location.search directly.
+createRoot(document.getElementById("root")!).render(<MiniApp />);

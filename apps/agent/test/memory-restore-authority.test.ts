@@ -122,7 +122,8 @@ test("native account import reconciles original SQL receipt after acknowledgemen
   const source = openGuardedMemory({ storage: cloudflareStorage(sourceStore), scope: zero.scope });
   const targetPath = join(dir, "account.sqlite");
   let db = new Database(targetPath), native = storage(db), host = await createCloudflareAccountHost({ ...hostOptions, storage: native });
-  let memory = openGuardedMemory({ storage: cloudflareStorage(native), scope: zero.scope, restoreAuthority: () => zero });
+  let memoryStorage = cloudflareStorage(native);
+  let memory = openGuardedMemory({ storage: memoryStorage, scope: zero.scope, restoreAuthority: () => zero });
   try {
     const fact = source.remember({ subject: "kept", title: "Keep", type: "fact", payload: "NATIVE_PUBLICATION_FIXTURE" }, write("kept"));
     await sourceHost.seed("user-123", [{ type: "Archived", id: "settled-origin", at: 1 }]);
@@ -131,7 +132,7 @@ test("native account import reconciles original SQL receipt after acknowledgemen
     const nativeDigest = createHash("sha256").update(JSON.stringify([histories, sidecarFingerprint])).digest("hex");
     const fingerprint = (await registry.binding(owner)).fingerprint(["native-import", owner, importId, nativeDigest]);
     const open = async (port = registry) => memoryRestoreAdmission({ owner, writer, authority: port, operationId: `account:${importId}`, fingerprint,
-      publication: nativeMemoryImportPublication({ owner, memory, storage: cloudflareStorage(native), importId, operationId, fingerprint, archive, histories, history: host.exportHistory }) });
+      publication: nativeMemoryImportPublication({ owner, memory, storage: memoryStorage, importId, operationId, fingerprint, archive, histories, history: host.exportHistory }) });
     let lease = await open(); expect(await lease.prepare()).toEqual({ status: "admitted" });
     expect(await lease.reconcile()).toEqual({ status: "pending" });
     let imports = 0;
@@ -143,7 +144,8 @@ test("native account import reconciles original SQL receipt after acknowledgemen
     registry = await openMemoryAuthorityRegistry(join(dir, "independent-control/authority.sqlite"), writer);
     await expect(registry.advanceWriter(owner)).rejects.toThrow("fenced");
     db = new Database(targetPath); native = storage(db); host = await createCloudflareAccountHost({ ...hostOptions, storage: native });
-    memory = openGuardedMemory({ storage: cloudflareStorage(native), scope: zero.scope, restoreAuthority: () => zero });
+    memoryStorage = cloudflareStorage(native);
+    memory = openGuardedMemory({ storage: memoryStorage, scope: zero.scope, restoreAuthority: () => zero });
     const append = registry.append, port = { ...registry, append: async (...args: Parameters<typeof append>) => { await append(...args); throw Error("authority completion acknowledgement lost"); } };
     lease = await open(port);
     await expect(lease.prepare()).rejects.toThrow("reconciliation only");
@@ -158,7 +160,7 @@ test("native account import reconciles original SQL receipt after acknowledgemen
     expect((await registry.read(owner))?.pending).toBeUndefined();
     expect((await registry.read(owner))?.revision).toBe(3);
     expect((await registry.advanceWriter(owner)).writer).toBe(2);
-    const readback = nativeMemoryImportPublication({ owner, memory, storage: cloudflareStorage(native), importId, operationId, fingerprint, archive, histories, history: host.exportHistory });
+    const readback = nativeMemoryImportPublication({ owner, memory, storage: memoryStorage, importId, operationId, fingerprint, archive, histories, history: host.exportHistory });
     memory.remember({ subject: "later", title: "Later", type: "fact", payload: "changed" }, write("later"));
     await expect(readback.receipt({ owner, operationId, fingerprint, fence: zero })).rejects.toThrow("does not match");
   } finally {

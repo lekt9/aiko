@@ -1,6 +1,7 @@
 import { ArrowUpRight, MessageCircle } from "lucide-react";
 import { useEffect, useState } from "react";
-import { databaseLaunch, DatabaseWorkspace } from "./database-workspace";
+import { DatabaseWorkspace } from "./database-workspace";
+import { databaseLaunch } from "../lib/databases";
 import { ConnectorOnboarding } from "./connector-onboarding";
 import { AIKO_TELEGRAM_URL } from "../lib/telegram";
 

@@ -101,6 +101,36 @@ rejection, same-VM restart, private handoff reconnect and settled cancellation.
 It recorded 196 structural trace events and stopped the test VM afterward.
 These are test results; production was not deployed by this migration.
 
+## Isolated verification worktrees
+
+An Unlock worktree also needs an isolated sibling runtime. Preserve the relative
+layout above and pin both source revisions; linking an isolated Unlock tree to
+the live playground still lets concurrent runtime edits change its test input.
+Do not vendor browser source into Unlock to avoid setting up the sibling.
+Verify the resolved module paths from both the root and agent package before
+running source-bound checks.
+
+Start from the relevant dirty source baseline, not just HEAD, without resetting,
+stashing or changing the user's index. Keep pre-existing edits separate from the
+worker's delta. Install both pinned dependency trees with scripts disabled, or
+use a verified independent dependency cache. Never hardlink writable dependency
+files directly to a live checkout. If workers share a private cache, mount it
+read-only; workspace package links must still resolve to each worker's source.
+
+For Pi continuations, `cd WORKTREE && pi --session ORIGINAL` is not enough:
+this installed CLI restores the session's recorded working directory. Use its
+native full-history fork when moving to another worktree, retaining
+`parentSession` and a pinned continuation ID; do not rewrite the original history.
+Recheck the installed CLI contract when changing launch behavior.
+
+Execution receipts must distinguish dispatch, a live process, new task activity,
+completion and integration. Bind process status to boot identity and process
+start time, not a reusable PID. Inherited tool calls in a fork are not new work.
+After a restart, reconcile both original and fork writers before any continuation;
+never remove a dispatch fence to force a retry. The local 2026-09-08 recovery
+fixtures checked these boundaries and filesystem write denial; they are not
+application or deployed-provider acceptance evidence.
+
 ## Concurrent tasks and account tabs
 
 Each Unlock account keeps its existing isolated browser/profile. Native task

@@ -5,6 +5,7 @@ PREVIEW = os.environ.get("CONNECTOR_PREVIEW_URL", "http://127.0.0.1:4189")
 fixture=r"""
 history.replaceState(null,"","/connect?connection=11111111-1111-4111-8111-111111111111");
 window.Telegram={WebApp:{initData:'',ready(){},expand(){}}};
+window.__loginDocument=crypto.randomUUID();
 window.__loginCalls=[];window.__connectionStatus='pending';window.__formStarted=0;
 window.__otp={attemptId:'22222222-2222-4222-8222-222222222222',challenge:{id:'33333333-3333-4333-8333-333333333333',revision:1,expiresAt:Date.now()+300000}};
 window.__otpBound=false;window.__otpAccepted=false;
@@ -47,11 +48,12 @@ window.fetch=async(input,options={})=>{
  if(options.headers?.Authorization!=='tms fixture-session')return json({},401);
  if(url.endsWith('/connections'))return json({nativeInline:true,connections:[{id:window.__activeId||nativeId,connectorId:'browser:'+(window.__domain||'example.com'),provider:'browser',status:window.__connectionStatus,createdAt:Date.now()},...(window.__scenario==='gmail-assist'?[{id:'66666666-6666-4666-8666-666666666666',connectorId:'browser:mail.google.com',provider:'browser',status:'connected',createdAt:Date.now()}]:[])]});
  if(url.endsWith('/approvals'))return json({pending:[]});
- if(url.endsWith('/password-managers'))return json({managers:[]});
- if(url.endsWith('/disconnect')){window.__connectionStatus='disconnected';return json({status:'disconnected',relayDisconnectStatus:window.__cleanupUnknown?'unknown':'confirmed'});}
+ if(url.endsWith('/password-managers')){if(window.__scenario==='slow-manager')await new Promise(()=>{});return json({managers:[]});}
+ if(url.endsWith('/disconnect')){if(window.__holdCleanup)await new Promise(resolve=>window.__releaseCleanup=resolve);window.__connectionStatus='disconnected';return json({status:'disconnected',relayDisconnectStatus:window.__cleanupUnknown?'unknown':'confirmed'});}
  if(url.endsWith('/browser')){window.__domain=body.domain;window.__connectionStatus='pending';window.__activeId='55555555-5555-4555-8555-555555555555';return json({id:window.__activeId,status:'pending',nativeInline:true});}
  if(url.includes('/native/progress'))return json({progress:window.__formStarted?[{stage:'installing',message:'Preparing browser software…',at:window.__formStarted},{stage:'chromium-ready',message:'Chromium is installed.',at:window.__formStarted+1}]:[]});
  if(url.endsWith('/native')){
+  if(window.__scenario==='stalled-form' && body.action==='form')await new Promise(resolve=>window.__releaseForm=resolve);
   if(window.__failAuth)return json({},401);
   const image={screenshot:'data:image/png;base64,fixture-must-not-render',width:390,height:640};
   if(['error-page','legacy-error'].includes(window.__scenario)){
@@ -59,7 +61,7 @@ window.fetch=async(input,options={})=>{
    if(body.action==='form')return json(window.__reloaded?{status:'pending',domain:'example.com',fields:['username','password']}:{status:'pending',domain:'example.com',fields:[],...(window.__scenario==='legacy-error'?{requiresOrigin:'null',currentHost:'chromewebdata'}:{pageError:'navigation_failed'})});
   }
   if(window.__scenario==='gmail-assist'){
-   const base={status:'pending',domain:'example.com',attemptId:window.__otp.attemptId,fields:['username','password']};
+   const base={status:'pending',domain:'example.com',attemptId:window.__otp.attemptId,fields:window.__googleOnly?[]:['username','password'],...(window.__googleOnly?{providers:['google']}:{})};
    if(body.action==='assist'){
     window.__assistRequests=[...(window.__assistRequests||[]),body];
     if(body.attemptId!==base.attemptId||body.sourceConnectionId!=='66666666-6666-4666-8666-666666666666')return json({},400);
@@ -147,7 +149,15 @@ def click(role,name):
    time.sleep(.1);continue
   click_at_xy(sum(q[0::2])/4,sum(q[1::2])/4)
   return
-click('button','Use my Telegram account')
+def sign_in_fixture():
+ try:
+  click('button','Use my Telegram account')
+ except Exception as error:
+  # The app may consume newly available Telegram initData before the coordinate
+  # click. Accept that path only after the actual session request started.
+  if str(error) != 'Missing button Use my Telegram account' or not js('window.__loginCalls.some(c=>c.url.endsWith("/session"))'):
+   raise
+sign_in_fixture()
 time.sleep(2)
 assert js('document.body.innerText.includes("Chromium is installed.")')
 assert not js('!!document.querySelector("#website-password")')
@@ -184,10 +194,12 @@ def wait_for(expression, seconds=15):
 
 def open_fixture(scenario, initial_scenario='ready', values=None):
  cdp('Page.addScriptToEvaluateOnNewDocument',source='sessionStorage.clear();')
+ previous_document=js('window.__loginDocument')
  cdp('Page.navigate',url=PREVIEW+'/connect.html?connection=11111111-1111-4111-8111-111111111111')
+ wait_for('window.__loginDocument && window.__loginDocument !== '+json.dumps(previous_document)+' && document.readyState === "complete"')
  wait_for('document.body.innerText.includes("Use my Telegram account")')
  js('window.Telegram={WebApp:{initData:"fixture-launch",ready(){},expand(){}}};window.__scenario='+json.dumps(initial_scenario))
- click('button','Use my Telegram account')
+ sign_in_fixture()
  # A tile's “Finish sign-in” status can paint before the launch effect opens
  # the panel. It is not a button; wait for the actual owner-bound panel.
  wait_for('!!document.querySelector(".native-login")')
@@ -272,7 +284,8 @@ js('window.__externalApproval=true')
 time.sleep(6)
 assert js('window.__loginCalls.filter(c=>c.action==="finish").length')==count
 assert not js('window.__loginCalls.some(c=>c.action==="credentials")')
-print('PASS: cancellation stops automatic approval checks and ignores later approval')
+assert not js('window.__loginCalls.some(c=>c.url.endsWith("/disconnect"))')
+print('PASS: leaving stops UI checks without disconnecting or submitting input')
 
 open_fixture('mfa-stale')
 click('button','Connect')
@@ -341,7 +354,7 @@ for cleanup_unknown in [False, True]:
  cdp('Page.navigate',url=PREVIEW+'/connect.html?connection=11111111-1111-4111-8111-111111111111')
  wait_for('document.body.innerText.includes("Use my Telegram account")')
  js('window.Telegram={WebApp:{initData:"fixture-launch",ready(){},expand(){}}}')
- click('button','Use my Telegram account')
+ sign_in_fixture()
  wait_for('document.body.innerText.includes("Reconnect app")')
  assert not js('!!document.querySelector("#website-password")')
  click('button','Reconnect app')
@@ -420,7 +433,7 @@ setup=cdp('Page.addScriptToEvaluateOnNewDocument',source='history.replaceState(n
 cdp('Page.navigate',url=PREVIEW+'/connect.html')
 wait_for('document.body.innerText.includes("Use my Telegram account")')
 js('window.Telegram={WebApp:{initData:"fixture-launch",ready(){},expand(){}}}')
-click('button','Use my Telegram account')
+sign_in_fixture()
 wait_for('!document.querySelector("[aria-label=\'Connect Gmail\']").disabled')
 assert js('document.querySelector("[aria-label=\'Add apps\'] .drawer-tile").getAttribute("aria-label")')=='Connect Gmail'
 assert js('document.body.innerText.includes("Start with Gmail")')
@@ -462,3 +475,58 @@ for method,label in [('google','Continue with Google'),('email_code','Use emaile
   assert js('window.__assistRequests.length')==1
  assert not js('window.__privateInputLeak')
 print('PASS: all Gmail assistance methods require an owner action, show private progress, bind consent and stop after source loss')
+
+
+open_fixture('stalled-form')
+click('button','Check sign-in status')
+wait_for('!!window.__releaseForm')
+click('button','Back')
+wait_for('!document.querySelector(".native-login")', seconds=3)
+assert not js('window.__loginCalls.some(c=>c.url.endsWith("/disconnect"))')
+assert js('window.__connectionStatus')=='pending'
+js('window.__releaseForm()')
+time.sleep(5)
+assert not js('document.querySelector(".native-login")')
+assert not js('window.__privateInputLeak')
+print('PASS: Back leaves a stalled inspection immediately without disconnect; late response cannot reopen the panel')
+
+open_fixture('slow-manager', initial_scenario='slow-manager', values=[])
+assert js('document.querySelector("#website-password").disabled')==False
+click('button','Continue later')
+wait_for('!document.querySelector(".native-login")', seconds=3)
+assert not js('window.__loginCalls.some(c=>c.url.endsWith("/disconnect"))')
+print('PASS: stalled optional password managers do not block native fields or leaving')
+
+open_fixture('ready', values=[])
+click('button','Cancel connection')
+wait_for('!document.querySelector(".native-login")')
+assert js('window.__loginCalls.filter(c=>c.url.endsWith("/disconnect")).length')==1
+assert js('window.__connectionStatus')=='disconnected'
+print('PASS: explicit cancellation confirms cleanup separately from leaving')
+
+
+open_fixture('gmail-assist', initial_scenario='gmail-assist', values=[])
+js('window.__googleOnly=true')
+click('button','Check sign-in status')
+wait_for('!document.querySelector(".native-login").getAttribute("aria-busy").includes("true") && !document.querySelector("#website-password")')
+assert not js('document.querySelector("details.manager-fill[open]")')
+assert not js('document.body.innerText.includes("still preparing sign-in")')
+click('button','Continue with Google')
+wait_for("!!document.querySelector('.native-login section[aria-label]')")
+assert js('window.__assistRequests.length')==1
+assert js('window.__assistRequests[0].assistMethod')=='google'
+assert not js('window.__consentRequests?.length')
+assert not js('window.__privateInputLeak')
+print('PASS: detected Google-only step surfaces existing owner-triggered assistance without hidden disclosure or automatic consent')
+
+open_fixture('ready', values=[])
+js('window.__holdCleanup=true;window.__cleanupUnknown=true')
+click('button','Cancel connection')
+wait_for('!!window.__releaseCleanup')
+click('button','Back')
+wait_for('!document.querySelector(".native-login")', seconds=3)
+js('window.__releaseCleanup()')
+time.sleep(1)
+assert not js('document.querySelector(".native-login")')
+assert js('window.__loginCalls.filter(c=>c.url.endsWith("/disconnect")).length')==1
+print('PASS: Back remains local during uncertain cancellation and late cleanup cannot reopen the panel')

@@ -138,6 +138,6 @@ export async function executeDatabaseRefreshGraph(binding: DatabaseBinding, requ
     if (result.outcome) outcome = result.outcome;
     if (value.reasons.length) break;
   }
-  if (stop) { reasons.add(stop); outcome = refreshOutcome(stop); }
+  if (stop && stages < graph.stages.length) { reasons.add(stop); outcome = refreshOutcome(stop); }
   return binding.store.completeEvaluation(request.id, ref, { coverage: reasons.size ? "partial" : "complete", reasons: [...reasons], stages, plannedStages: graph.stages.length, groups, committed, failed, calls, bytes, budgetAccounting, changed: [...changed] }, (binding.now ?? Date.now)(), outcome);
 }

@@ -9,6 +9,7 @@ import {
   Infer,
   outputValidateOnce,
   codeMode,
+  handles,
 } from "tardie";
 import {
   createCloudflareAccountHost,
@@ -16,6 +17,7 @@ import {
 } from "../src/cloudflare-host.ts";
 import {
   promiseComponent,
+  promiseWaitMethod,
   promiseTools,
   promiseEventKey,
   promiseNextWake,
@@ -86,8 +88,8 @@ async function fixture(native: NativeTool<Self | EventLog>[] = []) {
     });
     const definition = actor({
       name: "aiko",
-      methods: { message: agentMessageMethod },
-      components: [promiseComponent(OWNER), infer([
+      methods: { message: agentMessageMethod, promiseWait: promiseWaitMethod },
+      components: [handles(promiseWaitMethod, promiseComponent(OWNER)), infer([
         tool(promiseTools(OWNER, redactor(["private-fixture-secret"]))),
         privateCodeSandbox(codeMode([harness.package(native), definePackage({ name: "waiter", description: "Synthetic durable receipt wait", docs: { wait: { description: "Wait for the synthetic native receipt", input: { type: "object" }, output: {} } }, methods: { wait: (_args, ctx) => Effect.gen(function* () {
           const events = yield* (yield* EventLog).read;

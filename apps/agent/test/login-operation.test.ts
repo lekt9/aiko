@@ -34,6 +34,7 @@ async function fixture(ttl=60000){
     if(method==="Storage.getCookies")return {cookies:[]};
     if(method==="Runtime.evaluate"){
       const expression=params.expression;
+      if(expression.includes("const names="))return {result:{value:{code:1}}};
       if(expression==="location.hostname")return {result:{value:"fixture.service.net"}};
       if(expression==="location.origin")return {result:{value:"https://fixture.service.net"}};
       if(expression.includes("Object.keys(f)"))return {result:{value:authenticated?[]:["code"]}};

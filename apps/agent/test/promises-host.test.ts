@@ -90,6 +90,8 @@ test("production Worker authenticates owner review and exact consent, runs nativ
     expect(rows.filter((e: any) => e.type === "CodeDispatched")).toHaveLength(1);
     expect(rows.filter((e: any) => e.type === "PackageCalled")).toHaveLength(1);
     expect(rows.filter((e: any) => e.type === "AikoCodeToolSettled")).toHaveLength(1);
+    expect(rows.filter((e: any) => e.type === "ToolCalled" && e.name === "respond")).toHaveLength(1);
+    expect(rows.some((e: any) => e.type === "AikoResponseRequested")).toBe(true);
     expect(segments).toBeGreaterThan(1); const before = segments;
     await host.close(); await Promise.allSettled([...work]); db.close(); db = new Database(join(directory, "account.sqlite")); account = new module.AikoAccountDO(context(), env);
     expect((await request("/api/promises/decision", body)).status).toBe(200);

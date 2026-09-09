@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { ConnectorEngine, type ConnectorStore, type SecureBrowserAdapter, type SecureBrowserBinding } from "../src/connectors.ts";
-import { nativeBrowserConnector } from "../src/native-browser-connector.ts";
+import { nativeBrowserConnector, nativeConnectionEvent } from "../src/native-browser-connector.ts";
+import { registryExternalEventAllowed } from "../src/registry-host.ts";
 import { BrowserLearning } from "../src/browser-learning.ts";
 import { executableObservedReads } from "../src/capability-builder-network.ts";
 import type { Event } from "tardie/core/event";
@@ -28,6 +29,20 @@ test("a panel opened before background renewal receives its connected result wit
   expect(calls).toBe(0);
 });
 
+test("private UI completion requires matching committed connector custody", async () => {
+  for (const outcome of ["pending", "revision_changed"] as const) {
+    const e = engine({native:true,begin,
+      control:async binding => ({status:"connected",domain:binding.domain,revision:2,expiresAt:Date.now()+60000}),
+      status:async binding => outcome === "pending" ? {...binding,status:"pending"} : verified(binding,3),
+    });
+    const connection = await e.connectBrowser("service.net");
+    const response = await connectorApi(new Request("http://localhost/api/connectors/native",{method:"POST",body:JSON.stringify({connectionId:connection.id,action:"finish"})}),e);
+    expect(response.status).toBe(409);
+    expect((await response.json() as any).status).not.toBe("connected");
+    expect((await e.nativeProgress(connection.id)).progress.at(-1)?.stage).toBe("failed");
+  }
+});
+
 test("login progress stays readable during private browser work and cancellation releases its queue", async () => {
   const store = new Store();
   let started!: () => void;
@@ -47,12 +62,94 @@ test("login progress stays readable during private browser work and cancellation
   const response = await connectorApi(new Request(`http://localhost/api/connectors/native/progress?connectionId=${c.id}`), e);
   expect(response.status).toBe(200);
   expect((await response.json() as any).progress.some((p:any) => p.stage === "installing")).toBe(true);
+  // Reopening the app drawer must not wait for the private operation, including
+  // when another engine instance is serving the same owner's HTTP request.
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const snapshot = await Promise.race([
+      connectorApi(new Request("http://localhost/api/connectors/connections"), engine({native:true,begin},store)),
+      new Promise<never>((_resolve, reject) => { timeout = setTimeout(() => reject(Error("Connection list blocked behind sign-in")), 500); }),
+    ]);
+    expect(snapshot.status).toBe(200);
+    expect(await snapshot.json()).toMatchObject({nativeInline:true,connections:[{id:c.id,status:"pending"}]});
+    expect(await engine({native:true,begin},store,"456").connectionSnapshot()).toEqual([]);
+  } finally {
+    clearTimeout(timeout);
+    abort.abort();
+  }
   await expect(engine({native:true,begin},store,"456").nativeProgress(c.id)).rejects.toThrow();
   abort.abort();
   expect((await operation).status).toBe(409);
   expect(received!.aborted).toBe(true);
   expect(JSON.stringify(await e.nativeProgress(c.id))).not.toContain("private-secret");
   expect((await e.connections())[0]!.id).toBe(c.id);
+});
+
+test("UI connection snapshots do not renew expired browser sessions", async () => {
+  const store = new Store();
+  let checks = 0;
+  const e = engine({native:true,begin,status:async binding => { checks++; return verified(binding); }}, store);
+  const connection = await e.connectBrowser("service.net");
+  await e.completeAuth(connection.id);
+  const entry = [...store.rows].find(([, row]) => row.id === connection.id)!;
+  entry[1].browserVerification.expiresAt = Date.now() - 1;
+  expect(await e.connectionSnapshot()).toMatchObject([{id:connection.id,status:"failed"}]);
+  const response = await connectorApi(new Request("http://localhost/api/connectors/connections"), e);
+  expect((await response.json() as any).connections[0]).toMatchObject({id:connection.id,status:"failed"});
+  expect(checks).toBe(1);
+  // An explicit verification operation retains the established renewal path.
+  expect((await e.completeAuth(connection.id)).status).toBe("connected");
+  expect(checks).toBe(2);
+});
+
+test("leaving the panel does not cancel or repeat private input already dispatched", async () => {
+  let started!: () => void, finish!: () => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  const submitted = new Promise<void>(resolve => { finish = resolve; });
+  let calls = 0, privateSignal: AbortSignal | undefined;
+  const e = engine({native:true,begin,control:async (binding, _input, signal) => {
+    calls++; privateSignal = signal; started();
+    await submitted;
+    signal!.throwIfAborted();
+    return {status:"pending",domain:binding.domain,fields:["code"],expiresAt:Date.now()+60000,revision:1};
+  }});
+  const connection = await e.connectBrowser("service.net");
+  const panel = new AbortController();
+  const operation = e.nativeControl(connection.id,{action:"login",username:"fixture",password:"fixture-private"},panel.signal);
+  await ready;
+  panel.abort();
+  expect(privateSignal!.aborted).toBe(false);
+  expect(await e.connectionSnapshot()).toMatchObject([{id:connection.id,status:"pending"}]);
+  finish();
+  expect(await operation).toMatchObject({status:"pending",fields:["code"]});
+  expect(calls).toBe(1);
+  await expect(e.nativeControl(connection.id,{action:"login",username:"fixture",password:"fixture-private"},panel.signal)).rejects.toThrow();
+  expect(calls).toBe(1);
+});
+
+test("leaving during an approved Gmail form or finish continuation does not abort its private effects", async () => {
+  for (const action of ["form", "finish"] as const) {
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let privateSignal: AbortSignal | undefined;
+    const attemptId = crypto.randomUUID();
+    const e = engine({native:true,begin,status:async b => verified(b),control:async (binding,input,signal) => {
+      if (input.action === action) { privateSignal = signal; entered(); await gate; signal!.throwIfAborted(); }
+      return {status:"pending",domain:binding.domain,attemptId,revision:1,expiresAt:Date.now()+60000};
+    }});
+    const gmail = await e.connectBrowser("mail.google.com");
+    await e.completeAuth(gmail.id);
+    const target = await e.connectBrowser("service.net");
+    await e.nativeControl(target.id,{action:"assist",attemptId,assistMethod:"google",sourceConnectionId:gmail.id,assistanceId:crypto.randomUUID()});
+    const panel = new AbortController();
+    const operation = e.nativeControl(target.id,{action},panel.signal);
+    await started;
+    panel.abort();
+    expect(privateSignal!.aborted).toBe(false);
+    release();
+    expect((await operation).status).toBe("pending");
+  }
 });
 
 test("expired native connections renew in place and expose a resumable MFA challenge",async()=>{
@@ -163,7 +260,7 @@ test("connection events are durable metadata and replay a lost delivery acknowle
  expect(JSON.stringify(seen)).not.toMatch(/authorization|password|cookie|token|owner-only-relay/);
  expect([...store.rows.values()][0].pendingEvents).toHaveLength(0);
 });
-test("post-login context forwards the complete learned request graph before acknowledging it", async () => {
+test("post-login context crosses the host guard with learned evidence, not raw browser transcripts", async () => {
  const events: Event[] = [];
  let offline = false;
  const adapter = nativeBrowserConnector("123", async ({owner, emit}) => {
@@ -176,6 +273,8 @@ test("post-login context forwards the complete learned request graph before ackn
   });
   return {close: async () => {}, execute: async input => {
    if (input.action === "navigate") {
+    await emit({type:"BrowserToolCallObserved",id:"navigate",action:"navigate"});
+    await emit({type:"BrowserToolResultObserved",id:"navigate",output:"PRIVATE_BROWSER_TRANSCRIPT"});
     const entry = {startedDateTime: new Date(1000).toISOString(), time: 20, _observationComplete: true,
      request: {method: "GET", url: "https://service.net/api/projects", headers: [], cookies: []},
      response: {status: 200, headers: [], cookies: [], content: {mimeType: "application/json", size: 15, text: '{"projects":[]}'}}};
@@ -186,14 +285,35 @@ test("post-login context forwards the complete learned request graph before ackn
    if (input.action === "get_count") return {count: 0};
    return {text: "Projects"};
   }};
- }, async e => { if (offline) throw new Error("Host log unavailable"); events.push(e as Event); });
+ }, async e => {
+  const event = nativeConnectionEvent("123", e as Event);
+  if (!event) return;
+  if (offline) throw new Error("Host log unavailable");
+  events.push(event);
+ });
  const binding = {owner: "123", connectionId: "connected-context", domain: "service.net"};
  await adapter.readContext!(binding);
  expect(executableObservedReads(events)).toHaveLength(1);
+ expect(events.some(e => ["BrowserToolCallObserved","BrowserToolResultObserved"].includes(e.type))).toBe(false);
+ expect(JSON.stringify(events)).not.toContain("PRIVATE_BROWSER_TRANSCRIPT");
  expect(JSON.stringify(events)).not.toContain('{"projects":[]}');
  offline = true;
  await expect(adapter.readContext!(binding)).rejects.toThrow("Host log unavailable");
 });
+test("trusted connector observations cannot mint host authority or weaken public ingestion", () => {
+ const observation = {type:"AikoPrivateLoginObserved",owner:"123",connectionId:crypto.randomUUID(),attemptId:crypto.randomUUID(),sequence:1,revision:1,kind:"opening",at:Date.now(),expiresAt:Date.now()+60000,password:"PRIVATE_PASSWORD"};
+ expect(registryExternalEventAllowed(observation)).toBe(false);
+ const projected = nativeConnectionEvent("123", observation)!;
+ expect(projected).toMatchObject({type:"AikoPrivateLoginObserved",owner:"123",connectionId:observation.connectionId});
+ expect(JSON.stringify(projected)).not.toContain("PRIVATE_PASSWORD");
+ expect(() => nativeConnectionEvent("456", observation)).toThrow("owner mismatch");
+ expect(() => nativeConnectionEvent("123", {...observation,connectionId:"bad"})).toThrow("Invalid login observation");
+ for (const type of ["AikoHarnessPromoted","AikoChannelReceived","AikoWorkTransition","AikoLoginOperationContinued"]) {
+  expect(() => nativeConnectionEvent("123", {type,owner:"123"})).toThrow();
+ }
+ expect(registryExternalEventAllowed({type:"BrowserToolResultObserved"})).toBe(false);
+});
+
 test("initial context needs verified owner access and rechecks disconnection after the read", async()=>{
  const store=new Store();let reads=0;let revoke:undefined|(()=>Promise<unknown>);
  const adapter:SecureBrowserAdapter={native:true,begin,status:async b=>verified(b),readContext:async b=>{reads++;await revoke?.();return {url:`https://${b.domain}/home`,text:"A project has a review due tomorrow."}}};
@@ -418,6 +538,7 @@ test("panel OTP binding reaches the real private handler; stale challenges and l
    if(method==="Runtime.evaluate"){
      if(params.expression==="location.hostname")return {result:{value:"service.net"}};
      if(params.expression==="location.origin")return {result:{value:"https://service.net"}};
+     if(params.expression.includes("return Object.fromEntries(names.map"))return {result:{value:{code:1}}};
      if(params.expression.includes("Object.keys(f)"))return {result:{value:["code"]}};
      if(loseAck&&params.expression.includes("HTMLFormElement.prototype.requestSubmit.call"))throw Error("lost acknowledgement");
      return {result:{value:true}};

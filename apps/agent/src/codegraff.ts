@@ -19,7 +19,7 @@ import { boundedText, type HttpFetch } from "./security.ts";
 import { openMemory, memoryCallKey, type MemoryBinding } from "./memory.ts";
 import type { BrowserDriver, BrowserDriverFactory } from "./browser-driver.ts";
 import type { BrowserWatchLease, BrowserWatchRunnerStatus } from "./browser-watch-runner.ts";
-import type { BrowserWatchRestoreProof, BrowserWatchReauthorizeRequest } from "./browser-watch-restore.ts";
+import type { BrowserWatchRestoreProof, BrowserWatchReauthorizeRequest, BrowserWatchRestoreReceipt, BrowserWatchRepairProof, BrowserWatchRepairRequest } from "./browser-watch-restore.ts";
 import { harnessDigest } from "./harness-library.ts";
 import type { HarnessTransport } from "@unbrowse/browser-harness/harness-runtime";
 import type { TelegramMediaProcessor } from "./telegram-media.ts";
@@ -1239,7 +1239,7 @@ export class CodegraffSandbox {
       !Number.isSafeInteger(p.expiresAt)||p.expiresAt<1||typeof p.challenge!=="string"||
       !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(p.challenge)||
       !Number.isSafeInteger(p.at)||p.at<1||!Number.isSafeInteger(p.hostThrough)||p.hostThrough<0||
-      !/^sha256:[a-f0-9]{64}$/.test(p.prefixDigest)||!p.queue||typeof p.queue!=="object"||Array.isArray(p.queue)||
+      !/^[a-f0-9]{64}$/.test(p.prefixDigest)||!p.queue||typeof p.queue!=="object"||Array.isArray(p.queue)||
       Object.keys(p.queue).some(key=>!["head","acknowledged","offered"].includes(key))||
       ![p.queue.head,p.queue.acknowledged,p.queue.offered].every(Number.isSafeInteger)||
       p.queue.acknowledged<0||p.queue.acknowledged>p.queue.offered||p.queue.offered>p.queue.head||p.hostThrough>p.queue.head)
@@ -1247,11 +1247,50 @@ export class CodegraffSandbox {
     return structuredClone(p);
   }
   private matchesWatchRestoreScope(proof:BrowserWatchRestoreProof,receipt:WatchConfigurationReceipt):boolean {
-    return proof.owner===receipt.owner&&proof.producer===receipt.producer&&proof.generation===receipt.generation&&
+    return this.matchesWatchRestoreIdentity(proof,receipt)&&
       proof.lifecycleRevision===(receipt.lifecycleRevision??0)&&proof.leaseRevision===(receipt.leaseRevision??0)&&
-      proof.expiresAt===receipt.declaredExpiresAt&&!!receipt.scope&&
+      proof.expiresAt===receipt.declaredExpiresAt;
+  }
+  private matchesWatchRestoreIdentity(proof:Pick<BrowserWatchRestoreProof,"owner"|"producer"|"generation"|"profile"|"epoch"|"connectionId"|"connectionRevision">,receipt:WatchConfigurationReceipt):boolean {
+    return proof.owner===receipt.owner&&proof.producer===receipt.producer&&proof.generation===receipt.generation&&!!receipt.scope&&
       proof.profile===receipt.scope.profile&&proof.epoch===receipt.scope.epoch&&proof.connectionId===receipt.scope.connectionId&&
       proof.connectionRevision===receipt.scope.connectionRevision;
+  }
+  private watchReauthorizeRequestValue(producer:string,input:BrowserWatchReauthorizeRequest) {
+    const request=structuredClone(input);
+    if(!request||typeof request!=="object"||Array.isArray(request)||
+      !(request.previousDeliveryEpoch===null||this.watchEpoch(request.previousDeliveryEpoch))||
+      !this.watchEpoch(request.deliveryEpoch)||request.deliveryEpoch===request.previousDeliveryEpoch)
+      throw Error("Browser watch restore request invalid");
+    const {previousDeliveryEpoch,deliveryEpoch,...rest}=request;
+    const proof=this.watchRestoreProofValue({...rest,...(previousDeliveryEpoch===null?{}:{deliveryEpoch:previousDeliveryEpoch})});
+    if(producer!==proof.producer)throw Error("Browser watch restore request invalid");
+    return {request,proof,deliveryEpoch,requestDigest:harnessDigest(request)};
+  }
+  /** Reads the original private commit receipt; never invokes apply or current
+   * lease controls. A matching pending transport record can then be settled. */
+  async watchRestoreReceipt(producer:string,input:BrowserWatchReauthorizeRequest,signal?:AbortSignal):Promise<BrowserWatchRestoreReceipt> {
+    const {request,proof,deliveryEpoch,requestDigest}=this.watchReauthorizeRequestValue(producer,input);
+    return this.serializeWatch(async()=>{
+      const receipts=await this.watchConfigurationReceipts(),saved=receipts.find(r=>r.producer===producer);
+      if(!saved||!this.matchesWatchRestoreIdentity(proof,saved))throw Error("Browser watch restore predecessor unavailable");
+      if(saved.restorePending&&(saved.restorePending.requestDigest!==requestDigest||saved.restorePending.deliveryEpoch!==deliveryEpoch))throw Error("Browser watch restore request conflict");
+      const bounded=signal?AbortSignal.any([signal,AbortSignal.timeout(10_000)]):AbortSignal.timeout(10_000);
+      const id=await this.residentWatchVm(bounded);
+      const result=await this.invokePrivate(id,{operation:"watch-restore-receipt",producer,request},bounded,false,undefined,true) as BrowserWatchRestoreReceipt;
+      const keys=["owner","producer","challenge","requestDigest","deliveryEpoch","status","currentDeliveryEpoch","profile","epoch","generation","connectionId","connectionRevision"];
+      if(!result||typeof result!=="object"||Array.isArray(result)||Object.keys(result).length!==keys.length||Object.keys(result).some(k=>!keys.includes(k))||
+        !this.matchesWatchRestoreIdentity(result,saved)||result.challenge!==request.challenge||result.requestDigest!==requestDigest||result.deliveryEpoch!==deliveryEpoch||
+        !["applied","unapplied"].includes(result.status)||!(result.currentDeliveryEpoch===null||this.watchEpoch(result.currentDeliveryEpoch)))throw Error("Browser watch restore receipt unconfirmed");
+      if(result.status==="applied"&&saved.restorePending){
+        if(result.currentDeliveryEpoch!==deliveryEpoch)throw Error("Browser watch restore receipt epoch changed");
+        const {restorePending:_,...confirmed}=saved;
+        await this.options.store.put(WATCH_CONFIG_KEY,receipts.map(r=>r.producer===producer?{...confirmed,deliveryEpoch,restoreConfirmed:{requestDigest,deliveryEpoch}}:r));
+        const leases=await this.retainedWatchLeases();
+        await this.options.store.put(WATCH_IDLE_KEY,leases.map(r=>r.producer===producer&&r.generation===saved.generation?{...r,deliveryEpoch}:r));
+      }
+      return structuredClone(result);
+    },signal);
   }
   /** Passive private queue proof. No lease/epoch write, wake, or automatic retry. */
   async watchRestoreProof(producer:string,challenge:string,hostThrough:number,signal?:AbortSignal):Promise<BrowserWatchRestoreProof> {
@@ -1270,15 +1309,7 @@ export class CodegraffSandbox {
   /** The sole private restore control. A lost reply retains this exact request;
    * ordinary configure cannot replace its authority while the result is unknown. */
   async watchReauthorize(producer:string,input:BrowserWatchReauthorizeRequest,signal?:AbortSignal):Promise<BrowserWatchRunnerStatus> {
-    const request=structuredClone(input);
-    if(!request||typeof request!=="object"||Array.isArray(request)||
-      !(request.previousDeliveryEpoch===null||this.watchEpoch(request.previousDeliveryEpoch))||
-      !this.watchEpoch(request.deliveryEpoch)||request.deliveryEpoch===request.previousDeliveryEpoch)
-      throw Error("Browser watch restore request invalid");
-    const {previousDeliveryEpoch,deliveryEpoch,...rest}=request;
-    const proof=this.watchRestoreProofValue({...rest,...(previousDeliveryEpoch===null?{}:{deliveryEpoch:previousDeliveryEpoch})});
-    if(producer!==proof.producer)throw Error("Browser watch restore request invalid");
-    const requestDigest=harnessDigest(request);
+    const {request,proof,deliveryEpoch,requestDigest}=this.watchReauthorizeRequestValue(producer,input);
     return this.serializeWatch(async()=>{
       const receipts=await this.watchConfigurationReceipts(),receipt=receipts.find(r=>r.producer===producer);
       if(!receipt||!this.matchesWatchRestoreScope(proof,receipt))throw Error("Browser watch restore predecessor unavailable");

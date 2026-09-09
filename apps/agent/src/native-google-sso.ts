@@ -22,7 +22,8 @@ export function googleIdentityRequest(raw: string, domain: string): boolean {
 }
 export const googleEntryExpression = (origin: string, click: boolean) => `(() => {
   if(location.origin!==${JSON.stringify(origin)}||location.protocol!=='https:')return 0;
-  const entries=[...document.querySelectorAll('a,button,[role="button"]')].filter(e=>e.getClientRects().length&&!e.disabled&&/^(continue|sign[ -]?in|log[ -]?in) with google$/i.test((e.getAttribute('aria-label')||e.innerText||'').trim()));
+  const name=e => e.getAttribute('aria-label') || (e.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean).map(id => document.getElementById(id)?.textContent || '').join(' ') || e.innerText || '';
+  const entries=[...document.querySelectorAll('a,button,[role="button"]')].filter(e=>e.getClientRects().length&&!e.matches(':disabled')&&!e.closest('[inert],[aria-hidden="true"],[aria-disabled="true"]')&&getComputedStyle(e).visibility==='visible'&&/^(continue|sign[ -]?in|log[ -]?in) with google$/i.test(name(e).trim().replace(/\\s+/g,' ')));
   if(entries.length===1&&${click})entries[0].click();return entries.length;
 })()`;
 export const googleAccountExpression = (identity: string, click: boolean, href: string) => `(() => {

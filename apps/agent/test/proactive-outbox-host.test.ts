@@ -16,6 +16,22 @@ import {defaultProactivePreferences,proactiveAppendAllowed,proactiveEventKey,pro
 // Trusted retained-row seeding exercises the native outbox/append boundary,
 // not production HTTP admission or the upstream proactive decision producer.
 type Backend='bun'|'account';
+test('foreign lifecycle rows cannot reserve native outbox keys or change its projection',()=>{
+ const outbox=voiceAndOutbox('123',()=>{throw Error('No voice in projection check');},async()=>{throw Error('No send in projection check');});
+ const accepted=outbox.machine.step(outbox.machine.initial(),{type:'AikoProactiveAccepted',owner:'123',id:'projection',at:1,text:'Owned result',supports:['fixture'],chat:'123'});
+ const prepared=outbox.machine.step(accepted,{type:'AikoReplyPrepared',turn:'proactive:projection',epoch:0,at:1,result:{text:'Owned draft',source:'template'}});
+ expect(outbox.machine.output(prepared).transitions).toHaveLength(1);
+ for(const type of ['AikoVoiceStarted','AikoReplySuppressed','AikoReplyPrepared','AikoDeliveryStarted','AikoDeliverySettled']){
+  const foreign={type,owner:'456',turn:'proactive:projection',epoch:0,at:2,result:{status:'delivered',text:'Foreign draft',source:'template'}};
+  expect(outbox.keys!.keyOf(foreign)).toBeUndefined();
+  expect(outbox.machine.step(prepared,foreign)).toBe(prepared);
+ }
+ for(const owner of ['123',undefined]){
+  const settled={type:'AikoDeliverySettled',owner,turn:'proactive:projection',epoch:0,at:3,result:{status:'unknown'}};
+  expect(outbox.keys!.keyOf(settled)).toBe('aiko-send:proactive:projection:0');
+  expect(outbox.machine.output(outbox.machine.step(prepared,settled)).transitions).toHaveLength(0);
+ }
+});
 async function fixture(backend:Backend,at=Date.now()){
  const dir=await mkdtemp('/tmp/proactive-outbox-'),thread='user-123';
  const memory:MemoryBinding={stateDir:dir,owner:'123',thread,redact:s=>s,readPage:async()=>[]};
@@ -23,7 +39,7 @@ async function fixture(backend:Backend,at=Date.now()){
  const saved=store.remember({subject:'runtime/ready',title:'Runtime ready',type:'decision',kind:'fact',payload:'Controlled verified outcome'}, {key:'fixture-evidence',producer:{kind:'agent',reference:'fixture:trusted-outcome'}});
  store.close();
  const supports=[saved.id],topics=proactiveEvidence(memory,supports)!.topics;
- let seeding=true,rejectClaim=false,afterClaim:(()=>void)|undefined,substituteWinner=false;
+ let seeding=true,rejectClaim=false,afterClaim:(()=>void|Promise<void>)|undefined,substituteWinner=false;
  let sends=0,rejected=0,unknown=false,db:Database|undefined,host:any;
  let voiceStarted:(()=>Promise<void>)|undefined;
  const evidenceAtSend:boolean[]=[];
@@ -38,7 +54,7 @@ async function fixture(backend:Backend,at=Date.now()){
     claimed=true;
     attempted.push(structuredClone([...events]));
     const batch=substituteWinner?events.map(e=>e.type==='AikoProactiveDispatchAuthorized'?{...e,claimId:'other-native-claim'}:e.type==='AikoDeliveryStarted'?{...e,proactiveClaimId:'other-native-claim'}:e):events;
-    return log.append(batch).pipe(Effect.tap(()=>Effect.sync(()=>afterClaim?.())));
+    return log.append(batch).pipe(Effect.tap(()=>Effect.promise(async()=>{await afterClaim?.();})));
    }};
    const result=yield* t.act(input,signal).pipe(Effect.provideService(EventLog,intercepted));
    // Trace this claim's effect, independently of other native activation effects.
@@ -73,7 +89,7 @@ async function fixture(backend:Backend,at=Date.now()){
   {type:'AikoDeliveryStarted',turn:`proactive:${id}`,epoch:0,at,proactiveClaimId:claimId},
  ];
  return {seed,seedClaim:async(events:Event[])=>{seeding=true;await host.seed(thread,events);},decision,prefs,claim,topics,attempted,returned,memory,evidenceAtSend,
-  setReject:()=>{rejectClaim=true;},setUnknown:()=>{unknown=true;},setWinner:()=>{substituteWinner=true;},after:(f:()=>void)=>{afterClaim=f;},
+  setReject:()=>{rejectClaim=true;},setUnknown:()=>{unknown=true;},setWinner:()=>{substituteWinner=true;},after:(f:()=>void|Promise<void>)=>{afterClaim=f;},
   duringVoice:(f:()=>Promise<void>)=>{voiceStarted=f;},
   forget:()=>{const m=openMemory(memory);try{m.forget(saved.subject,saved.id,'fixture-forget-after-claim');}finally{m.close();}},
   counts:()=>({sends,rejected}),rows:()=>host.read(thread) as Promise<Event[]>,
@@ -83,6 +99,36 @@ async function fixture(backend:Backend,at=Date.now()){
  };
 }
 for(const backend of ['bun','account'] as const){
+ test(`${backend}: foreign outbox lifecycle rows cannot consume an owned reply through restart`,async()=>{
+  const f=await fixture(backend);
+  try{
+   const decision=f.decision('owner-collision'),turn='proactive:owner-collision';
+   await f.seed(decision.slice(0,2));
+   await f.seedClaim([
+    {type:'AikoReplySuppressed',owner:'456',turn,epoch:0,at:Date.now()},
+    {type:'AikoReplyPrepared',owner:'456',turn,epoch:0,at:Date.now(),result:{text:'Foreign draft',source:'template'}},
+    {type:'AikoDeliverySettled',owner:'456',turn,epoch:0,at:Date.now(),result:{status:'delivered'}},
+   ]);
+   expect((await f.rows()).filter(e=>e.owner==='456')).toHaveLength(3);
+   await f.seed(decision.slice(2));
+   await f.restart();await f.drive();
+   expect(f.counts().sends).toBe(1);
+   const rows=await f.rows();
+   expect(rows.filter(e=>e.type==='AikoDeliverySettled'&&e.owner!=='456'&&(e.result as any)?.status==='delivered')).toHaveLength(1);
+   expect(rows.some(e=>e.type==='AikoReplyPrepared'&&e.owner!=='456'&&(e.result as any)?.text==='Runtime ready')).toBe(true);
+   await f.restart();await f.drive();expect(f.counts().sends).toBe(1);
+  }finally{await f.close();}
+ });
+ test(`${backend}: a foreign settlement after our dispatch claim does not suppress its send`,async()=>{
+  const f=await fixture(backend);
+  try{
+   await f.seed(f.decision('foreign-after-claim'));
+   f.after(()=>f.seedClaim([{type:'AikoDeliverySettled',owner:'456',turn:'proactive:foreign-after-claim',epoch:0,at:Date.now(),result:{status:'delivered'}}]));
+   await f.drive();expect(f.counts().sends).toBe(1);
+   expect((await f.rows()).filter(e=>e.type==='AikoDeliverySettled'&&e.owner==='456')).toHaveLength(1);
+   await f.restart();await f.drive();expect(f.counts().sends).toBe(1);
+  }finally{await f.close();}
+ });
  test(`${backend}: an owner turn arriving during voice preparation retains the contribution through restart`,async()=>{
   const at=Date.now(),f=await fixture(backend,at);
   try{

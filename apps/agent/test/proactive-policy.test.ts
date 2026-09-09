@@ -80,6 +80,37 @@ test("foreign delivery settlement cannot release an owned admission reservation"
   expect(proactivePolicy([...rows, { type: "AikoDeliverySettled", owner: "123", turn: "proactive:earlier", at: now }], "123", decision("later"), now).status).toBe("allow");
 });
 
+test("foreign proactive receipts cannot deny owned atomic admission or dispatch", () => {
+  const proposed: Event = { ...contribution("shared-id"), text: "Verified result" };
+  const admission = { ...accepted("shared-id"), text: proposed.text, supports: proposed.supports,
+    contribution: proposed.contribution, policyRevision: "default" };
+  expect(proactiveAppendAllowed([admission], () => [proposed], "user-123")).toBe(true);
+  for (const rows of [
+    [{ ...proposed, owner: "456" }, proposed],
+    [proposed, { ...admission, owner: "456", chat: "456" }],
+    [proposed, { type: "AikoProactiveSuppressed", owner: "456", id: "shared-id", at: now }],
+  ]) expect(proactiveAppendAllowed([admission], () => rows, "user-123")).toBe(true);
+  for (const owner of [undefined, "123"]) {
+    expect(proactiveAppendAllowed([admission], () => [proposed, { type: "AikoProactiveSuppressed", owner, id: "shared-id", at: now }], "user-123")).toBe(false);
+  }
+  const start = dispatch("shared-id");
+  expect(proactiveAppendAllowed(start, () => [accepted("shared-id")], "user-123")).toBe(true);
+  for (const type of ["AikoDeliveryStarted", "AikoDeliverySettled"]) {
+    const receipt = { type, owner: "456", turn: "proactive:shared-id", epoch: 0, at: now };
+    expect(proactiveAppendAllowed(start, () => [accepted("shared-id"), receipt], "user-123")).toBe(true);
+    for (const owner of [undefined, "123"]) {
+      expect(proactiveAppendAllowed(start, () => [accepted("shared-id"), { ...receipt, owner }], "user-123")).toBe(false);
+    }
+  }
+});
+
+test("an explicitly foreign start cannot supply an owned proactive dispatch claim", () => {
+  const start = dispatch();
+  expect(proactiveAppendAllowed([start[0]!, { ...start[1]!, owner: "456" }], () => [accepted()], "user-123")).toBe(false);
+  expect(proactiveAppendAllowed([...start, { ...start[1]!, owner: "456" }], () => [accepted()], "user-123")).toBe(false);
+  expect(proactiveAppendAllowed([start[0]!, { ...start[1]!, owner: "123" }], () => [accepted()], "user-123")).toBe(true);
+});
+
 test("new evidence supersedes unsent contributions without extending the old expiry or crossing owners", () => {
   const old = contribution("old");
   expect(contributionStatus([old, { ...contribution("foreign"), owner: "456" }], "123", "old", now)).toBe("current");

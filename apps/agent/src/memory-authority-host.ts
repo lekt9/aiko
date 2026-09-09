@@ -108,8 +108,18 @@ export async function createMemoryAuthorityRegistry(storage: AccountStorage, wri
       if (!registered(owner) || !current) throw Error("Memory authority unavailable");
       if (current.writer === writer) return current;
       if (current.writer > writer || current.pending) throw Error("Account writer is fenced by retained memory authority");
-      return append(owner, { ...scope, type: "AikoMemoryAuthorityWriterAdvanced", key: `writer:${writer}`,
-        writer: current.writer, nextWriter: writer, at: Date.now(), expectedRevision: current.revision });
+      try {
+        return await append(owner, { ...scope, type: "AikoMemoryAuthorityWriterAdvanced", key: `writer:${writer}`,
+          writer: current.writer, nextWriter: writer, at: Date.now(), expectedRevision: current.revision });
+      } catch (error) {
+        // Concurrent handoffs can choose different timestamps for the same
+        // desired generation. Confirm the retained generation; never relax
+        // immutable event replay or treat this as permission for pending work.
+        const retained = await read(owner);
+        if (!retained || retained.writer !== writer) throw error;
+        await storage.sync();
+        return retained;
+      }
     },
     /** Trusted host-only transition. The calling host must verify native and
      * remote evidence before constructing a terminal; never expose this as

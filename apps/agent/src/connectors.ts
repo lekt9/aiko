@@ -496,12 +496,18 @@ export class ConnectorEngine {
       const row=await this.load(input.connectionId);
       await this.options.loginOperationGuard?.(input.connectionId,input);
       if(row.provider!=="browser" || this.browserBinding(row).domain!==input.domain || !this.options.secureBrowser?.control) throw Error("Owned private login unavailable");
+      if (input.action === "begin") {
+        // A UI attempt may have opened since the actor read its receipts. Check
+        // the existing private state inside this same mutation queue before
+        // begin can replace a page or discard its partially completed challenge.
+        const current = await this.options.secureBrowser.control(this.browserBinding(row), {action:"status"}, signal);
+        if (!current || current.domain !== input.domain || !["pending", "connected", "disconnected"].includes(current.status) ||
+            current.attemptId && current.attemptId !== input.attemptId && current.status !== "disconnected")
+          throw Error("Private login attempt changed; inspect the current sign-in");
+      }
       const view=await this.options.secureBrowser.control(this.browserBinding(row),{action:input.action,attemptId:input.attemptId,gmailGrant:await this.loginGmailGrant(row)},signal);
       if(view.attemptId!==input.attemptId)throw Error("Login attempt changed");
-      if(view.status==="connected") {
-        const committed=await this.completeBrowser(row);
-        if(committed.status!=="connected" || row.browserVerification?.revision!==view.revision)throw Error("Login custody not committed");
-      }
+      if(view.status==="connected") await this.completeNativeBrowser(row, view.revision);
       if(view.status==="disconnected") {
         row.status="disconnected";delete row.browserVerification;delete row.authorizationUrl;
         await this.save(row);
@@ -537,7 +543,8 @@ export class ConnectorEngine {
     >,
     signal?: AbortSignal,
   ) {
-    const deadline = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(100_000)]);
+    const operationDeadline = AbortSignal.timeout(100_000);
+    const deadline = AbortSignal.any([...(signal ? [signal] : []), operationDeadline]);
     return this.serial(async () => {
       deadline.throwIfAborted();
       const row = await this.load(id);
@@ -596,11 +603,17 @@ export class ConnectorEngine {
         await this.save(row);
       }
       let result;
+      // Leaving the panel stops observation, not an already-admitted private
+      // input. Settle that one dispatch under its own deadline; never resend it.
+      // An approved Gmail handoff can also dispatch during form/finish checks.
+      const assistedContinuation = !!row.loginAssistance && ["form", "finish"].includes(input.action);
+      const privateSignal = !assistedContinuation && ["form", "view", "finish"].includes(input.action) ? deadline : operationDeadline;
       try {
+        deadline.throwIfAborted();
         result = await this.options.secureBrowser.control(
           this.browserBinding(row),
           { ...input, gmailGrant },
-          deadline,
+          privateSignal,
         );
       } catch (error) {
         // Reconcile metadata after a lost private acknowledgement; never resend input.
@@ -610,12 +623,18 @@ export class ConnectorEngine {
             await this.recordLoginObservations(row,observed);
           } catch { /* Busy/lost VM leaves its durable outbox pending for inspection. */ }
         }
-        await report("failed", deadline.aborted ? "Sign-in timed out. Check its status before submitting again." : "This sign-in step could not be completed. Check its status or continue on the website.");
+        await report("failed", privateSignal.aborted ? "Sign-in timed out. Check its status before submitting again." : "This sign-in step could not be completed. Check its status or continue on the website.");
         if (["credentials", "login"].includes(input.action))
           await this.recordEvent(row, "AikoLoginAttemptFailed");
         throw error;
       }
-      if (result.status === "connected") await this.completeBrowser(row);
+      if (result.status === "connected") {
+        try { await this.completeNativeBrowser(row, result.revision); }
+        catch (error) {
+          await report("failed", "Sign-in verification could not be confirmed. Check its status before continuing.");
+          throw error;
+        }
+      }
       await this.recordLoginObservations(row,result);
       await report(result.pageError ? "failed" : result.status === "connected" ? "complete" : "waiting", result.status === "connected" ? "Connected successfully." : result.pageError === "navigation_uncertain" ? "The website stopped responding after sign-in was sent. Check its status before submitting again." : result.pageError ? "The sign-in website could not be loaded. Check its status to try again." : result.requiresOrigin ? "The website needs your permission to continue." : result.fields?.includes("code") ? "Enter the website’s verification code." : result.fields?.length ? "The sign-in form is ready." : "Waiting for the website to finish loading…");
       return result;
@@ -726,21 +745,22 @@ export class ConnectorEngine {
       await this.recordEvent(row, "AikoLoginSubmitted");
       let result;
       try {
+        signal?.throwIfAborted();
         result = await this.options.secureBrowser.control(binding, {
           action: this.options.secureBrowser.native ? "login" : "credentials",
           username,
           password,
           credentialReference: { managerId: input.managerId, reference },
-        }, signal);
+        }, AbortSignal.timeout(100_000));
       } catch {
         await this.recordEvent(row, "AikoLoginAttemptFailed");
         throw new Error(
-          "The saved login could not be submitted. Finish by typing your credentials instead.",
+          "The saved login could not be confirmed. Check its status before submitting again.",
         );
       }
       row.credentialReference = { managerId: input.managerId, reference };
       await this.save(row);
-      if (result.status === "connected") await this.completeBrowser(row);
+      if (result.status === "connected") await this.completeNativeBrowser(row, result.revision);
       return result;
     });
   }
@@ -1095,6 +1115,14 @@ export class ConnectorEngine {
   connections(): Promise<Connection[]> {
     return this.serial(() => this.connectionsUnlocked());
   }
+  /** UI/chat discovery reads committed state without joining private browser
+   * work or renewing expired sessions. Execution still rechecks current custody. */
+  async connectionSnapshot(): Promise<Connection[]> {
+    return (await this.options.store.list(`${this.prefix}connection:`))
+      .map(value => object(value) as StoredConnection)
+      .filter(row => row.owner === this.options.owner)
+      .map(row => this.view(row));
+  }
   private async connectionsUnlocked(): Promise<Connection[]> {
     const rows = (await this.options.store.list(`${this.prefix}connection:`))
       .map((v) => object(v) as StoredConnection)
@@ -1116,6 +1144,11 @@ export class ConnectorEngine {
       domain: connectorDomain(row.connectorId.slice(8)),
       connectionId: row.id,
     };
+  }
+  private async completeNativeBrowser(row: StoredConnection, revision: number) {
+    const committed = await this.completeBrowser(row);
+    if (committed.status !== "connected" || row.browserVerification?.revision !== revision)
+      throw Error("Login custody not committed");
   }
   private async completeBrowser(row: StoredConnection): Promise<Connection> {
     const wasConnected = row.status === "connected";

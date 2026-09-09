@@ -61,6 +61,8 @@ async function fixture() {
         if (method === "Target.attachToTarget")
           return { sessionId: "private-session" };
         if (method === "Target.getTargets") return { targetInfos: [] };
+        if (method === "Runtime.evaluate" && params.expression.includes("const names="))
+          return { result: { value: { username: 1, password: 1, code: 1 } } };
         if (method === "Runtime.evaluate")
           return {
             result: {

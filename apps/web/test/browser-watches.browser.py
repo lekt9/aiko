@@ -82,14 +82,20 @@ no_overflow();audit('restored-watch-held');shot('restored-watch-held')
 click('button','Verify and continue watch')
 wait('document.body.innerText.includes("update could not be confirmed")')
 goto_url('http://127.0.0.1:4187/');wait_for_load();wait('document.body.innerText.includes("Check restored watch")')
+click('button','Pause watch');wait('!!document.querySelector(".watch-status-paused")')
+assert not js('[...document.querySelectorAll("button")].find(e=>e.textContent==="Check restored watch").disabled')
 click('button','Check restored watch')
 wait('document.body.innerText.includes("Restored watch checked.")')
-assert js('document.querySelector(".watch-status")?.textContent')=='Watching'
+assert js('document.querySelector(".watch-status")?.textContent')=='Paused'
 state=json.load(urllib.request.urlopen('http://127.0.0.1:4187/preview/state'))
 restore_calls=[c['input'] for c in state['calls'] if c['operation']=='/reauthorize']
-assert len(restore_calls)==2 and restore_calls[0]==restore_calls[1]
+assert len(restore_calls)==1
 assert set(restore_calls[0])=={'id','expectedGeneration','expectedLifecycleRevision','expectedLeaseRevision','challenge'}
-record('Restored watch explains the hold and recovers the exact request after lost response and page reload without sending proof or epoch')
+checks=[c['input'] for c in state['calls'] if c['operation']=='/check-restore']
+assert checks==[{'id':state['watches'][0]['id'],'requestId':state['watches'][0]['reauthorization']['requestId']}]
+assert state['watches'][0]['reauthorization']['status']=='confirmed'
+record('Lost restore reply survives reload and pause: receipt check confirms the original request while preserving Paused, without another apply or proof or epoch input')
+click('DisclosureTriangle','Preview controls')
 click('button','Delete watch');click('button','Keep watch')
 assert js('document.querySelectorAll(".watch-card").length')==1
 click('button','Delete watch');click('button','Confirm delete')

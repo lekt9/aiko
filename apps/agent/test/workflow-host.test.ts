@@ -293,6 +293,91 @@ test("Native BunHost executes parallel workflow, hydrates transient outputs, cry
   }
 });
 
+for (const failure of ["before-save", "after-save", "receipt-unavailable"] as const)
+  test(`native workflow preserves uncertain or settled custody after ${failure}, including recovery`, async () => {
+    const directory = await mkdtemp("/tmp/aiko-workflow-receipt-");
+    const database = new Database(join(directory, "workflows.sqlite"));
+    const durable = createWorkflowStore(sqliteWorkflowKV(database));
+    let calls = 0, failedSave = false;
+    const store = {
+      ...durable,
+      finishRun: async (...args: Parameters<typeof durable.finishRun>) => {
+        if (failure === "after-save") await durable.finishRun(...args);
+        failedSave = true;
+        throw new Error("private_persistence_failure_sentinel");
+      },
+      getRun: async (...args: Parameters<typeof durable.getRun>) => {
+        if (failedSave && failure === "receipt-unavailable") throw new Error("private_lookup_failure_sentinel");
+        return durable.getRun(...args);
+      },
+    };
+    const dispatcher: WorkflowDispatcher = { resolve: async ({ owner, toolId }) => ({
+      owner, id: toolId, effect: "read", inputSchema: { type: "object" },
+      validate: () => true, authorize: async () => true,
+      execute: async () => { calls++; return { status: "succeeded", output: runtimeOutput }; },
+    }) };
+    const single = { ...program, steps: [program.steps[0]!] };
+    const open = async (name: string, recover = false) => {
+      const controller = new WorkflowController("alice", "user-alice", { store, dispatcher }, s => s);
+      const model = Layer.succeed(Infer, {
+        resolve: () => ({ model: { provider: "test", model_id: "receipt-recovery" } }),
+        react: (request) => Effect.succeed(
+          recover || request.trajectory.some(e => e.type === "ToolReturned")
+            ? { kind: "complete" as const, output: "Receipt inspected." }
+            : { kind: "call" as const, callId: "run", name: "workflow_run",
+                arguments: { program: JSON.stringify(single), input: JSON.stringify({ query: runtimeInput }) } },
+        ),
+      });
+      const definition = actor({ name: "aiko", methods: { message: agentMessageMethod },
+        components: [infer([controller.component(), outputValidateOnce])] });
+      return createBunHost({ database: join(directory, `${name}.sqlite`), actorName: "aiko",
+        actorInstance: "receipt-test", actorFor: () => definition, layersFor: () => controller.inference(model) });
+    };
+    const check = (result: any) => {
+      expect(result.kind).toBe("workflow-receipt");
+      expect(result.runId).toBeString();
+      if (failure === "after-save") {
+        expect(result.receipt.status).toBe("succeeded");
+        expect(result.message).toBeUndefined();
+      } else {
+        expect(result.receipt?.status ?? result.status).toBe("unknown");
+        expect(result.message).toContain("do not repeat");
+      }
+      expect(JSON.stringify(result)).not.toContain("failure_sentinel");
+    };
+    const host = await open("original");
+    let hostClosed = false;
+    try {
+      await host.commitRoot(host.self("user-alice"), {
+        type: "MessageReceived", id: "receipt", text: "Run the saved check", at: Date.now(),
+      });
+      await host.wake("user-alice");
+      const events = await host.read("user-alice");
+      check(events.find(e => e.type === "ToolReturned")?.result);
+      expect(calls).toBe(1);
+      await host.close();
+      hostClosed = true;
+      // Lose native settlement while retaining the workflow's actual SQLite
+      // custody. A fresh controller has neither argument handles nor outputs.
+      const restored = await open("restored", true);
+      try {
+        const cut = events.findIndex(e => e.type === "AikoWorkflowStarted");
+        expect(cut).toBeGreaterThanOrEqual(0);
+        await restored.seed("user-alice", events.slice(0, cut + 1));
+        await restored.recover();
+        const recovered = await restored.read("user-alice");
+        check(recovered.find(e => e.type === "ToolReturned")?.result);
+        expect(recovered.some(e => e.type === "TurnCompleted")).toBe(true);
+        expect(calls).toBe(1);
+      } finally { await restored.close(); }
+      await scanDatabaseFiles(directory, [runtimeInput, runtimeOutput, "failure_sentinel"]);
+    } finally {
+      if (!hostClosed) await host.close();
+      database.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
 test("independent SQLite workflow hosts fence an in-flight and completed run; definitions and terminal receipts cannot be replaced", async () => {
   const directory = await mkdtemp("/tmp/aiko-workflow-fence-");
   const db1 = new Database(join(directory, "workflow.sqlite")),

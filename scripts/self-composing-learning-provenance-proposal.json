@@ -101,17 +101,53 @@
     "sourceDrift": [],
     "custody": "/tmp/learning-lifecycle-proof-c4i4mD/candidate-custody.json",
     "confirmedAgain": "/tmp/learning-lifecycle-proof-PNbFCh/report.json",
-    "matrix": {"correction": "pass", "deletion": "retention assertion fails", "sourceRevocation": "pass", "artifactSupersession": "pass"},
+    "matrix": {
+      "correction": "pass",
+      "deletion": "retention assertion fails",
+      "sourceRevocation": "pass",
+      "artifactSupersession": "pass"
+    },
     "retainedDeletedPayload": [
-      {"thread": "background-123-indexer", "seq": 6, "type": "AikoHookReceived", "id": "hook:independent-c04-source"},
-      {"thread": "background-123-reflection", "seq": 5, "type": "MessageReceived", "id": "reflect:hook:independent-c04-source"}
+      {
+        "thread": "background-123-indexer",
+        "seq": 6,
+        "type": "AikoHookReceived",
+        "id": "hook:independent-c04-source"
+      },
+      {
+        "thread": "background-123-reflection",
+        "seq": 5,
+        "type": "MessageReceived",
+        "id": "reflect:hook:independent-c04-source"
+      }
     ],
     "nativeBoundary": "Authenticated source ingress or real acquired capability; pending notice survives process cut. Native memory_scan/erase with an ok/registered-copies-erased receipt, native remember, trusted owner journal source revocation, and actual record/evaluate/promote supersession. All four stale notices are suppressed. Two more processes preserve exact native sequences and physical counters; erased memory itself does not return.",
-    "regression": {"report": "/tmp/learning-process-proof-ODyaGF/report.json", "exit": 0, "fixtureProcesses": 34, "semanticWholeChildren": ["S21.C01", "S21.C02", "S21.C03", "S21.C05", "S21.C06", "S21.C07"], "sourceInputs": 1195, "sourceDrift": []},
+    "regression": {
+      "report": "/tmp/learning-process-proof-ODyaGF/report.json",
+      "exit": 0,
+      "fixtureProcesses": 34,
+      "semanticWholeChildren": [
+        "S21.C01",
+        "S21.C02",
+        "S21.C03",
+        "S21.C05",
+        "S21.C06",
+        "S21.C07"
+      ],
+      "sourceInputs": 1195,
+      "sourceDrift": []
+    },
     "wholeC04": false,
     "wholeS21": false,
     "runtimeRequest": ".agent-grid/notes/recovery-20260908/requests/proofs.md",
-    "currentFullGate": {"report": "/tmp/proofs-c04-full-gate.json", "exit": 1, "satisfied": 0, "blocked": 187, "parentsBlocked": 25, "fullCompletion": false},
+    "currentFullGate": {
+      "report": "/tmp/proofs-c04-full-gate.json",
+      "exit": 1,
+      "satisfied": 0,
+      "blocked": 187,
+      "parentsBlocked": 25,
+      "fullCompletion": false
+    },
     "limits": "No runtime edit, pin refresh, registration, parent aggregation, deployment or real account mutation. Copied candidate/dependencies do not attest later shared edits, actual workerd, live provider, backups or disk remnants. Earlier evidence and pins below remain historical."
   },
   "recoveryCheckpoint20260908": {
@@ -123,13 +159,26 @@
     "command": "cd /tmp/proofs-final-v3-IJMzIF && env -i PATH=\"$PATH\" TMPDIR=/tmp bun --no-env-file scripts/verify-self-composing-learning-provenance.ts",
     "exit": 0,
     "fixtureProcesses": 34,
-    "semanticWholeChildren": ["S21.C01", "S21.C02", "S21.C03", "S21.C05", "S21.C06", "S21.C07"],
+    "semanticWholeChildren": [
+      "S21.C01",
+      "S21.C02",
+      "S21.C03",
+      "S21.C05",
+      "S21.C06",
+      "S21.C07"
+    ],
     "C06": "Quiet hold/expiry, disabled preferences, topic dismissal, batching, cooldown and actually spent daily budget persist through native process restarts. Exact retained deadlines produce real AlarmFired; a dismissed outcome never dispatches. Cooldown/budget each acquire two distinct verified artifacts (8 jobs/2 reflection calls), spend one real dispatch, hold the second across restart, then deliver once at eligibility with no new model/code/jobs. Genuine repeated acquisition receipts coalesce without new observations or alerts.",
     "C07": "Same default production journey supplies independent gap/unavailable source faults and an actual mid-snapshot journal write; native failures are explicit, a distinct later request recovers, owner-authenticated observation reads return 200 only to the owner and 404 to the foreign owner, foreign notifications and revoked citations are suppressed. Two new processes replay the exact four captured native histories with no new work or roots.",
     "clockBoundary": "Process-local Date.now offsets select noon for the daily-budget setup and advance to retained native deadlines. Physical waits poll at 20ms for at most 15s; every fixture child has a 60s limit. No fabricated alarms, dispatch spend, Checked facts or successful snapshots.",
     "retainedFailures": [
-      {"report": "/tmp/learning-process-proof-QozvaX/report.json", "reason": "All semantic cases passed but five live runtime sources drifted; exit 1, not matched evidence."},
-      {"report": "/tmp/learning-process-proof-r9QzCw/report.json", "reason": "C07 exact-history assertion caught first-start activation of an improperly initialized foreign fixture thread. Fixed fixture by entering that owner through real ingress before the baseline; did not filter or weaken the history assertion."}
+      {
+        "report": "/tmp/learning-process-proof-QozvaX/report.json",
+        "reason": "All semantic cases passed but five live runtime sources drifted; exit 1, not matched evidence."
+      },
+      {
+        "report": "/tmp/learning-process-proof-r9QzCw/report.json",
+        "reason": "C07 exact-history assertion caught first-start activation of an improperly initialized foreign fixture thread. Fixed fixture by entering that owner through real ingress before the baseline; did not filter or weaken the history assertion."
+      }
     ],
     "remaining": [
       "S21.C04 whole correction/deletion/revocation/supersession and deleted-private-payload outcome is not attested by these fixtures.",
@@ -137,6 +186,95 @@
       "Current-source independent registration review is still required. Existing 187 checks, 25 parents, 12 registrations, manifest, plan and gate are unchanged.",
       "Local Bun/native/sandbox with controlled inference/Telegram edges, not deployed Worker, paid provider or live-account evidence."
     ],
-    "currentFullGate": {"report": "/tmp/proofs-current-full-gate.json", "exit": 1, "satisfied": 0, "blocked": 187, "fullCompletion": false, "reason": "20 previously registered outcomes are source-blocked at changed apps/agent/package.json; 167 outcomes remain unregistered. No pin refresh."}
+    "currentFullGate": {
+      "report": "/tmp/proofs-current-full-gate.json",
+      "exit": 1,
+      "satisfied": 0,
+      "blocked": 187,
+      "fullCompletion": false,
+      "reason": "20 previously registered outcomes are source-blocked at changed apps/agent/package.json; 167 outcomes remain unregistered. No pin refresh."
+    }
+  },
+  "continuation20260909": {
+    "registered": false,
+    "report": "/tmp/learning-process-proof-NGL14e/report.json",
+    "reportSha256": "81d1d904b0b1de49436ec443f303bed35e333e97543f3f0ce98da9a8c02bb02c",
+    "command": "TMPDIR=/tmp bun --no-env-file scripts/verify-self-composing-learning-provenance.ts",
+    "exit": 0,
+    "sourceInputs": 1502,
+    "sourceDrift": [],
+    "sourceBefore": "/tmp/learning-process-proof-NGL14e/source-before.json",
+    "sourceAfter": "/tmp/learning-process-proof-NGL14e/source-after.json",
+    "semanticWholeChildren": [
+      "S21.C01",
+      "S21.C02",
+      "S21.C03",
+      "S21.C05",
+      "S21.C06",
+      "S21.C07"
+    ],
+    "assertionsChanged": false,
+    "fixtureChanged": false,
+    "boundary": "Current shared worktree; actual local Bun host, sandbox, SQLite/entity-learn and native alarms; controlled Infer/Telegram and process-local clock offsets. No deployed/live-provider evidence.",
+    "remaining": [
+      "C04 and S21 parent remain unproven.",
+      "No acceptance registration or runtime source pins refreshed."
+    ],
+    "historicalEvidencePreserved": true,
+    "contract": {
+      "id": "1ae6068b",
+      "status": "satisfied",
+      "check": "python /tmp/learning-process-proof-NGL14e/verify-retained.py",
+      "scope": "Retained freshly executed native semantic report plus independently rechecked current source hashes; no runtime rerun inside Contract."
+    }
+  },
+  "continuationSourceRecheck20260909": {
+    "registered": false,
+    "report": "/tmp/learning-process-proof-SL7QZP/report.json",
+    "reportSha256": "6ae432782ae158668e671ee97236431dd62b2ca7b2c54d4a5b4b236593a09cc8",
+    "command": "TMPDIR=/tmp bun --no-env-file scripts/verify-self-composing-learning-provenance.ts",
+    "exit": 1,
+    "semanticWholeChildren": [
+      "S21.C01",
+      "S21.C02",
+      "S21.C03",
+      "S21.C05",
+      "S21.C06",
+      "S21.C07"
+    ],
+    "sourceInputs": 1504,
+    "sourceMatched": false,
+    "sourceDrift": [
+      "apps/agent/src/capability-builder-login.ts",
+      "apps/agent/src/native-login.ts"
+    ],
+    "priorReport": "/tmp/learning-process-proof-NGL14e/report.json",
+    "priorSourceChanges": [
+      "apps/agent/assets/runner.txt",
+      "apps/agent/src/actor.ts",
+      "apps/agent/src/background.ts",
+      "apps/agent/src/capability-builder-connectors.ts",
+      "apps/agent/src/connector-api.ts",
+      "apps/agent/src/connector-login.ts",
+      "apps/agent/src/connector-router-host.ts",
+      "apps/agent/src/connectors.ts",
+      "apps/agent/src/memory-restore.ts",
+      "apps/agent/src/memory.ts",
+      "apps/agent/src/native-google-sso.ts",
+      "apps/agent/src/native-login-page.ts",
+      "apps/agent/src/native-login-render.ts",
+      "apps/agent/src/native-login.ts",
+      "apps/agent/src/observed-network.ts",
+      "apps/agent/src/proactive-policy.ts",
+      "apps/agent/src/promises.ts",
+      "apps/agent/src/server.ts"
+    ],
+    "assertionsChanged": false,
+    "fixtureChanged": false,
+    "disposition": "All semantic assertions passed, but source drift prevents fresh current-source attestation. Prior successful evidence remains historical. No new Contract satisfaction, acceptance registration, or source pin refresh.",
+    "remaining": [
+      "Repeat current-source verification after source stability.",
+      "C04 and S21 parent remain unproven."
+    ]
   }
 }

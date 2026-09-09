@@ -598,7 +598,7 @@ export function createObservedNetworkTools(binding: ObservedNetworkBinding): Nat
             yield* log.append([{ type: "AikoObservedHeadersRecomputed", owner: binding.owner, artifactDigest: action!.artifactDigest, ...writeCounts, at: Date.now() }]);
           if (challenge)
             yield* log.append([{ type: "AikoObservedOriginChallenged", owner: binding.owner, origin: new URL(origins[0]!).hostname, status: challenge.status, headerNames: challenge.headerNames, at: Date.now() }]);
-          if (settled.state === "unknown")
+          if (settled.state === "unknown" || settled.state === "dispatched")
             return { status: "unknown", reason: "Write outcome is uncertain; inspect the app and do not retry automatically", browser: false };
           if (settled.state !== "settled")
             return { status: "rejected", reason: `Write was not dispatched (${settled.state})`, browser: false };

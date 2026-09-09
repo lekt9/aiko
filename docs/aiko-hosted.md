@@ -139,6 +139,35 @@ The deploy command saves only canary credentials, the recovery key and the deplo
 
 Use the deployed `/` console or `/control` with the appropriate credential. `/connect` serves the connector interface. These URLs do not proxy through the developer's computer. Account tokens carry read/write scopes and cannot choose another account by changing query parameters. Telegram sessions are verified against the deployed bot credentials.
 
+### Open native Tardigrade Voyager
+
+The production trace viewer is [Aiko Voyager](https://aiko-voyager.lewis-6d8.workers.dev/), separate from Aiko’s custom `/` console and `/control` page. Sign in with your existing **account or operator token**, then choose an account. This is not the local `:4242` example and does not need a running developer computer.
+
+The viewer serves the pinned Tardie 0.22.0 Voyager JavaScript and CSS unchanged. Its small hosting shell adds sign-in, a **Production · Read-only** banner, sign-out, session checks and readable secondary-label contrast. Account credentials see only their account; an operator can choose among the accounts returned by production.
+
+**Scope:** foreground, router, control, secretary and background threads exposed by the existing account-control API. Events retain their original sequence and payload, with the production API’s current redaction. Arbitrary native child threads not exposed by that API, uncommitted inference previews, new calls, replay, cancellation and actor changes are not enabled. The UI’s **Scope & refresh** link explains this boundary. Event tails refresh about every three seconds (faster during pagination); the thread list refreshes every ten seconds.
+
+**Hosting decision, 8 September 2026:** use a separate, read-only Worker with a service binding to the existing `aiko-agent` Worker. This avoids redeploying unrelated in-progress agent changes and preserves the existing production authorization boundary. It is an API adapter, not another actor runtime, database, copied production instance or execution loop. Reconsider a direct native-host mount only when the production host can expose the same protected read contract, including child-thread custody, without broadening write access.
+
+The viewer forwards only four existing GET routes: `/v1/status`, `/api/control/accounts`, `/api/control/threads` and `/api/control/events`. Production reauthorizes each read and stream reconnect. It stores no server-side trace history or production bearer configuration. After private sign-in submission, the bearer is held in a 30-minute, origin-bound encrypted **Secure / HttpOnly / SameSite=Strict** cookie, not in URLs or native Voyager’s JavaScript storage. Revocation blocks subsequent reads; the page clears on a failed session check (on return to the tab or within one minute while visible). Sign-out uses same-origin fetch: a plain form POST can have `Origin: null` under `no-referrer`, and the server deliberately does not relax its Origin check.
+
+Build and publish just this viewer:
+
+```sh
+bun scripts/build-aiko-voyager.ts
+bun test ./apps/agent/test/voyager.test.ts
+bun scripts/deploy-aiko-voyager.ts --deploy
+bun scripts/verify-aiko-voyager.ts https://aiko-voyager.lewis-6d8.workers.dev
+```
+
+The viewer has its own [Wrangler configuration](../apps/agent/wrangler.voyager.jsonc). Its deploy command does **not** invoke `pnpm ship`, deploy Aiko, stage/commit/push other edits, replace a Telegram webhook, or provision browser VMs. It uses the existing Cloudflare login and saves only its cookie-sealing key in the owner-only `~/.config/unbrowse/aiko-voyager.env` (or the equivalent `$XDG_CONFIG_HOME` path). Preserve that key across deployments to keep current sessions valid; rotation signs browsers out without changing production grants or trace data. Do not blindly retry a publish whose outcome is uncertain; inspect the Worker’s version first.
+
+The build checks viewer-specific types, Wrangler bundling and [real workerd behavior](../scripts/verify-voyager-workerd.mjs). Workerd rejects `redirect: "error"` before fetching even though Bun accepts it; the viewer uses `manual` and rejects all non-2xx responses rather than forwarding credentials across a redirect. The workerd gate exercises the bundled Worker’s sign-in, encrypted session, native SSE, redirect refusal, write denial and current revocation. [Access regressions](../apps/agent/test/voyager.test.ts) cover cookie tampering/expiry, isolation, current revocation, denied mutations, cursor preservation and upstream failure. The [synthetic browser journey](../scripts/voyager.browser.py) uses [its isolated fixture](../scripts/voyager.fixture.ts), keyboard sign-in, error recovery, native pagination, light/dark accessibility and sign-out. Start the fixture with `bun scripts/voyager.fixture.ts`; run the browser script through an isolated `browser-harness` with `UNLOCK_ROOT` and `BU_CDP_URL` set. A full rerun needs a fresh fixture, because its final check revokes its synthetic credential.
+
+The deployed verifier compares a real Telegram account’s event page with an independent production API read, checks native asset digests and confirms cross-account denial using the existing canary credential. Its evidence under `artifacts/voyager/` contains counts and hashes, not customer event bodies or bearer values. `/healthz` alone proves neither authenticated production access nor successful browser rendering.
+
+**Verified 8 September 2026:** viewer version `4785ae29-67d4-49d3-aba4-21ef91bc27b7` passed 24 deployed readback checks, including an exact ten-event comparison with a real Telegram account’s production history, unchanged native asset digests and account isolation. Browser-harness rendered the real production trace with no JavaScript-readable session credential. The local suite passed 12 access regressions (103 assertions), the real workerd gate, and the synthetic browser journey with light/dark accessibility checks. Local evidence is under `artifacts/voyager/` (gitignored). Only the viewer Worker was published; this change did not redeploy the agent or request a new production task/message.
+
 ### Open the connector interface
 
 For this installation, open [Aiko in Telegram](https://t.me/aikospillstea_bot?start=web), press **Start** if needed, then choose **Connect apps** from the chat menu. Select an app or **Add a website**, and complete its private sign-in. Passwords and verification codes belong in that form, never in chat.

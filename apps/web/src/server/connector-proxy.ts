@@ -44,7 +44,7 @@ export async function handleConnectorRequest(
   );
   const allowed = library ? !url.search && (request.method === "GET" && action === "" || request.method === "POST" && ["/inspect", "/revise", "/evaluate", "/promote", "/recall", "/run", "/output", "/from-request"].includes(action))
     : promises ? !url.search && (request.method === "GET" && action === "" || request.method === "POST" && action === "/decision")
-    : watches ? !url.search && (request.method === "GET" && ["", "/discovery"].includes(action) || request.method === "POST" && ["/configure", "/control", "/sample", "/reconcile", "/acknowledge-gap", "/renew", "/reauthorize"].includes(action))
+    : watches ? !url.search && (request.method === "GET" && ["", "/discovery"].includes(action) || request.method === "POST" && ["/configure", "/control", "/sample", "/reconcile", "/acknowledge-gap", "/renew", "/reauthorize", "/check-restore"].includes(action))
     : databases ? request.method === "GET" && (action === "" || action === "/changes" || action === "/sources" || /^\/(?:artifacts|operations|approvals|mappings)\/[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,159}$/.test(action)) || request.method === "POST" && ["/query", "/field", "/commands", "/cancel"].includes(action)
     : observedApproval ? request.method === "POST"
     : messages ? request.method === "GET"

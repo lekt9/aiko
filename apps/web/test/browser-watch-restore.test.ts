@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { watchReauthorizationRequest, type WatchStatus } from "../src/lib/browser-watches";
+import { watchReauthorizationRequest, watchRestoreCheckRequest, type WatchStatus } from "../src/lib/browser-watches";
 const watch: WatchStatus = { id: "watch", generation: 3, lifecycleRevision: 2, controlRevision: 7, leaseRevision: 4,
   status: "needs-attention", config: { id: "watch", label: "Updates", connectionId: "site", connectionRevision: "r1", sourceGeneration: 1,
     origin: "https://example.test", kind: "push", outcome: "received", action: {kind:"actor",instruction:"Summarize"},
@@ -21,4 +21,14 @@ test("lost response and reload reconstruct the same pending request even after t
     expect(watchReauthorizationRequest(current,2000)).toEqual(watchReauthorizationRequest(watch,2000));
     expect(watchReauthorizationRequest({...current,reauthorization:{...current.reauthorization,status:"confirmed"}},2000)).toBeUndefined();
   }
+});
+test("checking an existing restore result needs only its retained ID and preserves pause, expiry and revision changes", () => {
+  const reauthorization = {requestId:"restore:watch:3:original-challenge",challenge:"original-challenge",status:"pending" as const,attempts:1,deadlineAt:5000};
+  for (const change of [{status:"paused"},{status:"deleted"},{config:{...watch.config!,expiresAt:1}},
+    {generation:4,lifecycleRevision:8,leaseRevision:9},{config:undefined,collector:undefined},
+    {collector:{state:"needs-attention",restore:{challenge:"newer-challenge",at:6000}}}]) {
+    expect(watchRestoreCheckRequest({...watch,...change,reauthorization})).toEqual({id:"watch",requestId:reauthorization.requestId});
+  }
+  expect(watchRestoreCheckRequest(watch)).toBeUndefined();
+  expect(watchRestoreCheckRequest({...watch,reauthorization:{...reauthorization,status:"confirmed"}})).toBeUndefined();
 });

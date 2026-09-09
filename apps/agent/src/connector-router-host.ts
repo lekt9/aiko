@@ -39,7 +39,15 @@ export function routerCaller(binding: ToolRouterBinding, host: () => Pick<BunHos
     const prior = before.find(e => e.type === "AikoRouterRequested" && e.id === `${method}:${id}:0`);
     if (prior && JSON.stringify(prior.input) !== serialized) throw new Error("Router invocation conflict");
     await service.commitRoot(service.self(thread), native.eventOf({ input, invocation, at: Date.now() }));
-    await service.wake(thread);
+    try { await service.wake(thread); }
+    catch (error) {
+      // Draining also settles other threads and alarm maintenance. A failure
+      // there cannot undo this invocation's already committed terminal receipt.
+      // Read custody once; never re-dispatch or infer success from a failed read.
+      const settled = native.state(await service.read(thread), invocation);
+      if (settled?.status === "completed") return settled.output;
+      throw error;
+    }
     context.signal.throwIfAborted();
     const state = native.state(await service.read(thread), invocation);
     if (state?.status !== "completed") return { state: "pending", invocationId: id };

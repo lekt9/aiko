@@ -3,7 +3,8 @@ import { createHmac, randomUUID } from "node:crypto";
 import type { VaultCipher } from "../../server/src/crypto.ts";
 import { CdpBackgroundListener, type BackgroundObservation } from "./cdp-background-listener.ts";
 import { BrowserObservationQueue } from "./browser-event-queue.ts";
-import { browserWatchRestoreHold, ensureBrowserWatchRestoreTable, type BrowserWatchRestoreStatus, type BrowserWatchRestoreProof, type BrowserWatchReauthorizeRequest } from "./browser-watch-restore.ts";
+import { browserWatchRestoreHold, ensureBrowserWatchRestoreTable, type BrowserWatchRestoreStatus, type BrowserWatchRestoreProof, type BrowserWatchReauthorizeRequest,
+  type BrowserWatchRepairProof,type BrowserWatchRepairRequest,type BrowserWatchRestoreReceipt } from "./browser-watch-restore.ts";
 import { browserEventOrigin, type BrowserProducerGrant } from "./browser-events.ts";
 import { harnessDigest } from "./harness-library.ts";
 
@@ -80,6 +81,7 @@ export class BrowserWatchRunner {
     this.queue=new BrowserObservationQueue(options.db);
     ensureBrowserWatchRestoreTable(options.db);
     options.db.exec("CREATE TABLE IF NOT EXISTS browser_watch_restore_receipts(producer TEXT PRIMARY KEY,owner TEXT NOT NULL,challenge TEXT NOT NULL,request_digest TEXT NOT NULL,delivery_epoch TEXT NOT NULL)");
+    options.db.exec("CREATE TABLE IF NOT EXISTS browser_watch_repair_receipts(producer TEXT PRIMARY KEY,owner TEXT NOT NULL,request_digest TEXT NOT NULL,repair_digest TEXT NOT NULL,delivery_epoch TEXT NOT NULL)");
     options.db.exec("CREATE TABLE IF NOT EXISTS browser_watch_leases(producer TEXT PRIMARY KEY,owner TEXT NOT NULL,envelope TEXT NOT NULL); CREATE TABLE IF NOT EXISTS browser_watch_privacy(owner TEXT PRIMARY KEY,envelope TEXT NOT NULL); CREATE TABLE IF NOT EXISTS browser_watch_health(producer TEXT NOT NULL,owner TEXT NOT NULL,generation INTEGER NOT NULL,envelope TEXT NOT NULL,pending INTEGER NOT NULL,PRIMARY KEY(producer,generation))");
     options.db.exec("CREATE TABLE IF NOT EXISTS browser_watch_observation_floors(producer TEXT PRIMARY KEY,owner TEXT NOT NULL,floor INTEGER NOT NULL,lapse_from INTEGER NOT NULL,lease_revision INTEGER NOT NULL)");
   }
@@ -217,6 +219,76 @@ export class BrowserWatchRunner {
     return {owner:g.owner,producer:g.producer,profile:g.profile,epoch:g.epoch,generation:g.generation,connectionId:g.connectionId,connectionRevision:g.connectionRevision,
       lifecycleRevision:entry.lease.lifecycleRevision??0,leaseRevision:entry.lease.leaseRevision??0,...(g.deliveryEpoch===undefined?{}:{deliveryEpoch:g.deliveryEpoch}),
       expiresAt:g.expiresAt,challenge:hold.challenge,at:hold.at,...this.queue.restoreProof(g,hostThrough)};
+  }
+  private restoreSourceMatches(entry:Entry,request:BrowserWatchReauthorizeRequest) {
+    const g=entry.lease.grant;
+    return request&&request.owner===g.owner&&request.producer===g.producer&&request.profile===g.profile&&request.epoch===g.epoch&&
+      request.generation===g.generation&&request.connectionId===g.connectionId&&request.connectionRevision===g.connectionRevision;
+  }
+  /** Exact historical result, independent of newer controls; never runs tick. */
+  restoreReceipt(producer:string,request:BrowserWatchReauthorizeRequest):BrowserWatchRestoreReceipt {
+    const entry=this.watches.get(producer);
+    if(this.closed||!entry||!this.restoreSourceMatches(entry,request))throw Error("browser_watch_restore_receipt_unavailable");
+    const digest=harnessDigest(request),g=entry.lease.grant;
+    const row=this.options.db.query("SELECT * FROM browser_watch_restore_receipts WHERE producer=?").get(producer) as {owner:string;challenge:string;request_digest:string;delivery_epoch:string}|null;
+    const applied=row?.owner===g.owner&&row.challenge===request.challenge&&row.request_digest===digest&&row.delivery_epoch===request.deliveryEpoch;
+    const hold=this.restoreHold(entry);
+    if(!applied&&(!hold||hold.challenge!==request.challenge||(g.deliveryEpoch??null)!==request.previousDeliveryEpoch))throw Error("browser_watch_restore_receipt_unavailable");
+    return {owner:g.owner,producer:g.producer,profile:g.profile,epoch:g.epoch,generation:g.generation,connectionId:g.connectionId,connectionRevision:g.connectionRevision,
+      challenge:request.challenge,requestDigest:digest,deliveryEpoch:request.deliveryEpoch,currentDeliveryEpoch:g.deliveryEpoch??null,status:applied?"applied":"unapplied"};
+  }
+  repairProof(producer:string,challenge:string,hostThrough:number):BrowserWatchRepairProof {
+    const proof=this.restoreProof(producer,challenge,hostThrough),entry=this.watches.get(producer)!;
+    const leaseDigest="hmac-sha256:"+createHmac("sha256",entry.lease.grant.secret)
+      .update(JSON.stringify(["browser-watch-repair-lease-v1",harnessDigest(entry.lease),entry.stopped])).digest("hex");
+    return {...proof,stopped:entry.stopped,leaseDigest};
+  }
+  /** Explicit native repair adopts an already permitted epoch. It does not
+   * resume, renew, reset history, or change the current pause watermark. */
+  async repair(producer:string,raw:BrowserWatchRepairRequest,signal?:AbortSignal):Promise<BrowserWatchRunnerStatus> {
+    const request=structuredClone(raw);
+    await this.mutate(async()=>{
+      signal?.throwIfAborted();
+      const entry=this.watches.get(producer),prior=request?.previousRequest,proof=request?.proof;
+      if(this.closed||!entry||!request||Object.keys(request).some(k=>!["previousRequest","previousRequestDigest","proof"].includes(k))||
+        !prior||!proof||!this.restoreSourceMatches(entry,prior)||harnessDigest(prior)!==request.previousRequestDigest||
+        !/^sha256:[a-f0-9]{64}$/.test(request.previousRequestDigest)||
+        !/^[A-Za-z0-9_.:-]{1,160}$/.test(prior.deliveryEpoch)||prior.deliveryEpoch===prior.previousDeliveryEpoch||
+        prior.challenge!==proof.challenge||prior.at!==proof.at||prior.hostThrough>proof.hostThrough)
+        throw Error("browser_watch_repair_request_invalid");
+      const digest=harnessDigest(request),hold=this.restoreHold(entry),g=entry.lease.grant;
+      if(!hold){
+        const receipt=this.options.db.query("SELECT * FROM browser_watch_repair_receipts WHERE producer=?").get(producer) as {owner:string;request_digest:string;repair_digest:string;delivery_epoch:string}|null;
+        if(receipt?.owner!==g.owner||receipt.request_digest!==request.previousRequestDigest||receipt.repair_digest!==digest||receipt.delivery_epoch!==g.deliveryEpoch)
+          throw Error("browser_watch_repair_unconfirmed");
+        return;
+      }
+      const check=()=>{
+        signal?.throwIfAborted();
+        if(this.closed||this.watches.get(producer)!==entry||this.suspended||!this.options.authorized(entry.lease.grant))throw Error("browser_watch_repair_authority_unavailable");
+        if((entry.lease.grant.deliveryEpoch??null)!==prior.previousDeliveryEpoch||
+          harnessDigest(this.repairProof(producer,proof.challenge,proof.hostThrough))!==harnessDigest(proof))throw Error("browser_watch_repair_proof_changed");
+        // The retained original permit must name this very prefix, not an
+        // unrelated historical operation with a reused source/challenge.
+        if(this.queue.restoreProof(entry.lease.grant,prior.hostThrough).prefixDigest!==prior.prefixDigest)throw Error("browser_watch_repair_predecessor_changed");
+      };
+      check();const next=structuredClone(entry.lease);next.grant.deliveryEpoch=prior.deliveryEpoch;
+      const envelope=await this.options.cipher.seal(this.context(producer),next);
+      this.options.db.transaction(()=>{
+        check();
+        this.queue.acknowledgeRestoredPrefix(entry.lease.grant,proof.hostThrough,proof.prefixDigest);
+        this.options.db.query("UPDATE browser_watch_leases SET envelope=? WHERE producer=? AND owner=?").run(JSON.stringify(envelope),producer,this.options.owner);
+        this.options.db.query("INSERT INTO browser_watch_restore_receipts VALUES(?,?,?,?,?) ON CONFLICT(producer) DO UPDATE SET owner=excluded.owner,challenge=excluded.challenge,request_digest=excluded.request_digest,delivery_epoch=excluded.delivery_epoch")
+          .run(producer,g.owner,prior.challenge,request.previousRequestDigest,prior.deliveryEpoch);
+        this.options.db.query("INSERT INTO browser_watch_repair_receipts VALUES(?,?,?,?,?) ON CONFLICT(producer) DO UPDATE SET owner=excluded.owner,request_digest=excluded.request_digest,repair_digest=excluded.repair_digest,delivery_epoch=excluded.delivery_epoch")
+          .run(producer,g.owner,request.previousRequestDigest,digest,prior.deliveryEpoch);
+        this.options.db.query("DELETE FROM browser_watch_restore_holds WHERE producer=? AND owner=? AND challenge=?").run(producer,g.owner,proof.challenge);
+      })();
+      entry.lease=next;entry.status.deliveryEpoch=prior.deliveryEpoch;entry.status.acknowledged=proof.hostThrough;
+    });
+    // Repair is metadata-only. Existing scheduling/current controls decide any
+    // later capture or delivery; the repair response itself starts neither.
+    return this.status().find(status=>status.producer===producer)!;
   }
   async reauthorize(producer:string,raw:BrowserWatchReauthorizeRequest,signal?:AbortSignal):Promise<BrowserWatchRunnerStatus> {
     const request=structuredClone(raw);

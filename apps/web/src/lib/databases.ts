@@ -12,6 +12,11 @@ export function artifactLaunchId(search: string): string | undefined {
   const entries = new URLSearchParams(search).getAll("artifact");
   return entries.length === 1 && /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,159}$/.test(entries[0]!) ? entries[0] : undefined;
 }
+/** A databases-screen launch, checkable without loading the workspace bundle. */
+export function databaseLaunch(search: string) {
+  const params = new URLSearchParams(search);
+  return params.has("artifact") || params.get("screen") === "databases";
+}
 export function databaseClient(authentication?: DatabaseAuthentication) {
   const request = <T>(path: string, body?: object, signal?: AbortSignal) => connectorRequest<T>(path, body, signal, authentication);
   return {

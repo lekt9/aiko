@@ -257,7 +257,7 @@ export async function executeDatabaseRefresh(binding: DatabaseBinding, request: 
     committed++; for (const field of (receipt.result as { changed: string[] }).changed) changed.add(field);
     await journal.append([{ type: "AikoDatabaseRefreshGroupSettled", owner: binding.owner, thread: binding.thread, id: groupId, operationId: request.id, calls: count.calls, bytes: count.bytes, status: error ? "failed" : "completed", at: (binding.now ?? Date.now)() }]);
   }
-  if (!stop) {
+  if (!stop && committed < plan.groups.length) {
     signal.throwIfAborted();
     if (!await binding.authorize("write", signal)) throw new DataError("forbidden", "Refresh authority revoked");
   }
@@ -268,6 +268,8 @@ export async function executeDatabaseRefresh(binding: DatabaseBinding, request: 
     const reason = signal.aborted ? "cancelled" : (error as DataError).code;
     reasons.add(reason); outcome = refreshOutcome(reason);
   }
-  if (stop) { reasons.add(stop); outcome = refreshOutcome(stop); }
+  // Stop authority governs remaining work. Atomic receipts for every group
+  // already prove the occurrence finished, even if its last acknowledgement was lost.
+  if (stop && committed < plan.groups.length) { reasons.add(stop); outcome = refreshOutcome(stop); }
   return binding.store.completeEvaluation(request.id, planRef, { coverage: reasons.size ? "partial" : "complete", reasons: [...reasons], groups: plan.groups.length, committed, failed, calls, bytes, budgetAccounting, changed: [...changed] }, (binding.now ?? Date.now)(), outcome);
 }

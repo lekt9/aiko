@@ -217,6 +217,7 @@ test("challenge notices are attempt/challenge-bound and completion has its own d
   await f.seed({...challenge,id:"replacement",challengeId:crypto.randomUUID()});await f.drive();expect(f.sends).toHaveLength(2);
   f.status("connected");await f.seed({type:"AikoLoginOperationVerified",id:"verified",owner:"123",connectionId:id,attemptId,at:4});await f.drive();
   expect(f.sends).toHaveLength(3);expect(f.sends[2].text).toContain("verified");
+  expect(f.sends[2].reply_markup.inline_keyboard[0][0].text).toBe("Open connection");
   await f.restart();expect(f.sends).toHaveLength(3);
 });
 

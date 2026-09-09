@@ -19,6 +19,7 @@ export interface BrowserWatchRestorePermit {
   queueHead: number; queueAcknowledged: number; queueOffered: number; expiresAt: number; profile: string; restoreAt: number;
 }
 export interface BrowserWatchRestorePorts {
+  restoreReceipt?(permit: BrowserWatchRestorePermit, signal: AbortSignal): Promise<unknown>;
   restoreProof?(producer: string, challenge: string, hostThrough: number, signal: AbortSignal): Promise<unknown>;
   reauthorizeLease?(permit: BrowserWatchRestorePermit, signal: AbortSignal): Promise<unknown>;
 }
@@ -105,13 +106,13 @@ export function createBrowserWatchReauthorization(binding: BrowserWatchRestorePo
   owner: string; journal: WiringJournal;
   scope(rows: readonly Event[], watchId: string): BrowserWatchRestoreScope | undefined;
   current(config: BrowserWatchConfig): boolean;
-  authorize(config: BrowserWatchConfig, signal: AbortSignal): Promise<void>;
+  authorize(config: BrowserWatchConfig, signal: AbortSignal, operation?: "configure" | "reconcile"): Promise<void>;
   status(producer: string, signal: AbortSignal): Promise<unknown>;
   refresh(): Promise<void>;
   mutate<T>(producer: string, task: () => Promise<T>): Promise<T>;
 }) {
   const { owner, journal } = binding;
-  const caches = new Map<string, { config: BrowserWatchConfig; signal: AbortSignal; checked: boolean }>();
+  const caches = new Map<string, { config: BrowserWatchConfig; signal: AbortSignal; checked: boolean; receiptOnly: boolean }>();
   const scope = (rows: readonly Event[], id: string) => binding.scope(own(rows, owner), id);
   const scoped = (rows: readonly Event[], event: Event, permit = true) => {
     const s = scope(rows, String(event.watchId)), g = s?.lease.grant;
@@ -120,6 +121,13 @@ export function createBrowserWatchReauthorization(binding: BrowserWatchRestorePo
       g.connectionId === event.connectionId && g.connectionRevision === event.connectionRevision && s.config.expiresAt === event.expiresAt &&
       (!permit || s.config.expiresAt > Date.now());
   };
+  const custody = (rows: readonly Event[], event: Event) => {
+    const s = scope(rows, String(event.watchId)), g = s?.lease.grant;
+    return !!s && !!g && binding.current(s.config) && s.generation === event.generation &&
+      s.lifecycleRevision >= Number(event.lifecycleRevision) && Number(s.lease.leaseRevision ?? 0) >= Number(event.leaseRevision) &&
+      g.producer === event.producer && g.epoch === event.epoch && g.generation === event.sourceGeneration &&
+      g.connectionId === event.connectionId && g.connectionRevision === event.connectionRevision;
+  };
   const admissionAllowed = (batch: readonly Event[], read: () => readonly Event[]) => {
     if (!browserWatchRestoreAppendAllowed(batch, read)) return false;
     for (const e of batch) {
@@ -127,13 +135,13 @@ export function createBrowserWatchReauthorization(binding: BrowserWatchRestorePo
       if (read().some(p => p.owner === owner && p.type === e.type && p.id === e.id && harnessDigest(p) === harnessDigest(e))) continue;
       const cached = caches.get(harnessDigest(e));
       const request = e.type === types[2] ? requestOf(own(read(), owner), String(e.requestId)) : e;
-      if (e.owner !== owner || !cached || cached.signal.aborted || !binding.current(cached.config) || !request || !scoped(read(), request, e.type !== types[2])) return false;
+      if (e.owner !== owner || !cached || cached.signal.aborted || !binding.current(cached.config) || !request || !(cached.receiptOnly ? e.type === types[2] && e.status === "confirmed" && custody(read(), request) : scoped(read(), request, e.type !== types[2]))) return false;
       cached.checked = true;
     }
     return true;
   };
-  const append = async (e: Event, config: BrowserWatchConfig, signal: AbortSignal) => {
-    const key = harnessDigest(e), cache = { config, signal, checked: false }; caches.set(key, cache);
+  const append = async (e: Event, config: BrowserWatchConfig, signal: AbortSignal, receiptOnly = false) => {
+    const key = harnessDigest(e), cache = { config, signal, checked: false, receiptOnly }; caches.set(key, cache);
     try {
       await journal.transact(rows => {
         const prior = rows.find(p => p.owner === owner && p.type === e.type && p.id === e.id);
@@ -199,6 +207,37 @@ export function createBrowserWatchReauthorization(binding: BrowserWatchRestorePo
       await binding.refresh();
     });
   };
+  /** Explicit receipt lookup never applies a restore or creates delivery authority. */
+  const checkReceipt = async (raw: { id: string; requestId: string }, signal: AbortSignal) => {
+    const args = structuredClone(raw);
+    if (!args || Object.keys(args).some(k => !["id", "requestId"].includes(k)) ||
+      !/^[A-Za-z0-9_.-]{1,64}$/.test(args.id) || typeof args.requestId !== "string" || args.requestId.length > 256) throw Error("watch_restore_invalid");
+    await binding.refresh();
+    const initial = requestOf(own(await journal.read(), owner), args.requestId);
+    if (!initial || initial.watchId !== args.id) throw Error("watch_restore_missing");
+    await binding.mutate(String(initial.producer), async () => {
+      let rows = own(await journal.read(), owner);
+      const request = requestOf(rows, args.requestId)!, permit = permitOf(rows, args.requestId), s = scope(rows, args.id);
+      if (!s || !custody(rows, request)) throw Error("watch_restore_authority_unavailable");
+      await binding.authorize(s.config, signal, "reconcile");
+      if (checksOf(rows, args.requestId).some(e => e.status === "confirmed")) return;
+      if (!permit || !binding.restoreReceipt) return;
+      const status: any = await call(bounded => binding.restoreReceipt!(permit as unknown as BrowserWatchRestorePermit, bounded), signal, Date.now() + 10_000);
+      await binding.refresh(); rows = own(await journal.read(), owner);
+      const current = scope(rows, args.id);
+      if (!current || !custody(rows, request)) throw Error("watch_restore_authority_unavailable");
+      if (!status || status.producer !== permit.producer || status.generation !== permit.sourceGeneration ||
+        status.lifecycleRevision !== current.lifecycleRevision || Number(status.leaseRevision ?? 0) !== Number(current.lease.leaseRevision ?? 0) ||
+        status.expiresAt !== current.config.expiresAt || status.restore || status.deliveryEpoch !== permit.deliveryEpoch ||
+        !Number.isSafeInteger(status.acknowledged) || status.acknowledged < Number(permit.hostThrough)) return;
+      const checks = checksOf(rows, args.requestId);
+      if (checks.some(e => e.status === "confirmed")) return;
+      await append({ type: types[2]!, owner, id: `${args.requestId}:${checks.length}`, at: Date.now(), requestId: args.requestId,
+        watchId: args.id, attempt: checks.length, deadlineAt: request.deadlineAt, status: "confirmed" }, current.config, signal, true);
+      await binding.refresh();
+    });
+    const rows = own(await journal.read(), owner); return browserWatchRestoreState(rows, requestOf(rows, args.requestId));
+  };
   const reauthorize = async (raw: BrowserWatchRestoreInput, signal: AbortSignal) => {
     const args = structuredClone(raw);
     if (!args || Object.keys(args).some(k => !["id", "expectedGeneration", "expectedLifecycleRevision", "expectedLeaseRevision", "challenge"].includes(k)) ||
@@ -221,5 +260,5 @@ export function createBrowserWatchReauthorization(binding: BrowserWatchRestorePo
     await check(requestId, signal);
     const after = own(await journal.read(), owner); return browserWatchRestoreState(after, requestOf(after, requestId));
   };
-  return { reauthorize, check, admissionAllowed };
+  return { reauthorize, check, checkReceipt, admissionAllowed };
 }

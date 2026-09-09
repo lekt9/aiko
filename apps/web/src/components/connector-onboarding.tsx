@@ -138,6 +138,7 @@ export function ConnectorOnboarding() {
   const [authorization, setAuthorization] = useState<string>();
   const [connections, setConnections] = useState<ConnectorConnection[]>();
   const signingIn = useRef(false);
+  const connectionRead = useRef(0);
   useEffect(
     () => () => {
       accountRequests.current?.abort();
@@ -162,23 +163,7 @@ export function ConnectorOnboarding() {
     telegramEnabled.current = true;
     setPending(true);
     try {
-      // A cold account object, or an in-flight automation browser drive, can
-      // stall requests for a minute; retry patiently instead of bouncing the
-      // owner to an error screen.
-      let lastFailure: unknown;
-      for (let attempt = 0; attempt < 5; attempt++) {
-        if (attempt) setNotice("Still opening your apps…");
-        try {
-          await refresh();
-          lastFailure = undefined;
-          break;
-        } catch (failure) {
-          lastFailure = failure;
-          if (failure instanceof MiniAppAuthenticationError) break;
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-        }
-      }
-      if (lastFailure) throw lastFailure;
+      await refresh();
       setSignedIn(true);
       setSignedOut(false);
       setNotice("");
@@ -274,12 +259,21 @@ export function ConnectorOnboarding() {
           if (failure instanceof MiniAppAuthenticationError) abort.abort();
         }
       } finally {
-        if (!abort.signal.aborted) timer = setTimeout(refreshQueue, 3000);
+        // A hidden mini app stops polling; returning to view restarts it.
+        if (!abort.signal.aborted && !document.hidden)
+          timer = setTimeout(refreshQueue, 3000);
       }
     };
+    const onVisibility = () => {
+      if (abort.signal.aborted) return;
+      if (document.hidden) clearTimeout(timer);
+      else void refreshQueue();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     void refreshQueue();
     return () => {
       abort.abort();
+      document.removeEventListener("visibilitychange", onVisibility);
       clearTimeout(timer);
     };
   }, [signedIn, accountVersion]);
@@ -328,6 +322,7 @@ export function ConnectorOnboarding() {
     telegramEnabled.current = false;
     setSignedIn(false);
     ++approvalRead.current;
+    ++connectionRead.current;
     decisionPending.current = false;
     setDeciding(false);
     setApprovals([]);
@@ -376,12 +371,15 @@ export function ConnectorOnboarding() {
     }
   }, [signedIn, connections, pending, nativeInline]);
   async function refresh() {
+    const revision = ++connectionRead.current;
     const result = await request<{
       connections: ConnectorConnection[];
       nativeInline?: boolean;
     }>("/connections");
-    setConnections(result.connections);
-    setNativeInline(result.nativeInline === true);
+    if (revision === connectionRead.current) {
+      setConnections(result.connections);
+      setNativeInline(result.nativeInline === true);
+    }
     return result.connections;
   }
   async function openApp(app: DrawerApp, reconnectId?: string) {
@@ -414,10 +412,10 @@ export function ConnectorOnboarding() {
         setNativeDomain(app.domain);
         setNativeConnection(response.id);
         setSelectedConnection(undefined);
-        const list = await refresh();
-        setNativeUsername(
-          list?.find((item) => item.id === response.id)?.importedUsername,
-        );
+        setNativeUsername(connections?.find((item) => item.id === response.id)?.importedUsername);
+        // The login panel owns its work; refreshing tiles must not hold the
+        // whole app busy after the browser session has been accepted.
+        void refresh().catch(reportError);
         return;
       }
       const url = safeAuthorizationUrl(response.authorizationUrl);

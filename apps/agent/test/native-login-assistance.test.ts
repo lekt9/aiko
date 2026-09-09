@@ -130,6 +130,7 @@ test("private form insertion and submission each recheck the original assistance
         if (method === "Target.attachToTarget") return { sessionId: "session" };
         if (method === "Input.insertText") inserted++;
         if (method === "Runtime.evaluate") {
+          if (params.expression.includes("const names=")) return { result: { value: { username: 1 } } };
           if (params.expression.includes("HTMLFormElement.prototype.requestSubmit.call")) submitted++;
           return { result: { value: params.expression === "location.hostname" ? domain : params.expression === "location.origin" ? `https://${domain}` : true } };
         }

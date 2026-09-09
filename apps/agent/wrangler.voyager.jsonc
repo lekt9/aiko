@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "aiko-voyager",
+  "main": "src/voyager-worker.ts",
+  "compatibility_date": "2026-09-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist/voyager",
+    "binding": "VOYAGER_ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "services": [{ "binding": "AIKO_PRODUCTION", "service": "aiko-agent" }],
+  "vars": { "AIKO_PRODUCTION_URL": "https://aiko-agent.lewis-6d8.workers.dev" },
+  "observability": { "enabled": false }
+}

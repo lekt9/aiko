@@ -21,10 +21,22 @@ const endpoint = process.env.AIKO_GMAIL_FIXTURE_CDP;
     const readState = (id: string) => { const row = db.query("SELECT state FROM login WHERE id=?").get(id) as { state: string } | null; return row ? JSON.parse(row.state) as NativeLoginState : undefined; };
     let vault = new NativeLoginVault(db, "123", nativeLoginCipher(directory, db));
     const lostEffects = new Set<string>();
-    let injectLoss = false;
+    let injectLoss = false, replaceCodeFieldOnRead = false;
     const privateCdp = { close() {}, async send(method: string, parameters: object = {}, sessionId?: string) {
       const active = readState(currentId)?.assistance;
       const result = await cdp.send(method, parameters, sessionId);
+      if (replaceCodeFieldOnRead && active?.stage === "email" && method === "Runtime.evaluate" && String((parameters as { expression?: string }).expression).includes("const bodies=")) {
+        // Deterministic race: replace only the last box after the private mail
+        // read. Do not inspect or expose the generated message/code result.
+        replaceCodeFieldOnRead = false;
+        const target = await cdp.send("Target.attachToTarget", { targetId: readState(currentId)!.targetId, flatten: true });
+        const replaced = await cdp.send("Runtime.evaluate", { expression: `(() => {
+          const boxes=[...document.querySelectorAll('input[name="code"]')];
+          if(boxes.length!==6)return false;
+          boxes[5].replaceWith(boxes[5].cloneNode(true));return true;
+        })()`, returnByValue: true }, target.sessionId);
+        expect(replaced.result?.value).toBe(true);
+      }
       const consuming = active?.stage === "consuming" && (active.method === "email_code" && method === "Runtime.evaluate" && String((parameters as { expression?: string }).expression).includes("HTMLFormElement.prototype.requestSubmit.call") || active.method === "email_link" && method === "Page.navigate");
       if (injectLoss && consuming && !lostEffects.has(active!.method)) { lostEffects.add(active!.method); throw Error("Synthetic lost acknowledgement after dispatch"); }
       return result;
@@ -130,7 +142,7 @@ const endpoint = process.env.AIKO_GMAIL_FIXTURE_CDP;
           throw Error("Synthetic counters unavailable");
         } finally { await cdp.send("Target.closeTarget", { targetId: page.targetId }); }
       };
-      for (const variant of ["wrong-signer", "wrong-request", "ambiguous", "foreign-link", "wrong-account"]) {
+      for (const variant of ["wrong-signer", "wrong-request", "ambiguous", "foreign-link", "stale-code-field", "wrong-account"]) {
         // Gmail's search timestamp is whole-second precision. Separate attempts
         // deliberately; overlapping messages must remain an ambiguity, not guesswork.
         await Bun.sleep(1100);
@@ -141,8 +153,10 @@ const endpoint = process.env.AIKO_GMAIL_FIXTURE_CDP;
         let pendingView = await operate("form");
         for (let n = 0; n < 30 && !pendingView.fields?.includes("username"); n++) { await Bun.sleep(100); pendingView = await operate("form"); }
         const before = await readMetrics();
+        replaceCodeFieldOnRead = variant === "stale-code-field";
         pendingView = await operate("assist", { sourceConnectionId: connection.id, assistMethod: variant === "foreign-link" ? "email_link" : "email_code", assistanceId: crypto.randomUUID(), attemptId: pendingView.attemptId });
         for (let n = 0; n < 10 && !["unsupported", "ambiguous"].includes(pendingView.assistance?.status); n++) { await Bun.sleep(200); pendingView = await operate("finish"); }
+        expect(replaceCodeFieldOnRead).toBe(false);
         expect(pendingView.status).toBe("pending");
         expect(pendingView.assistance?.status).toBe(variant === "ambiguous" ? "ambiguous" : "unsupported");
         expect(await vault.session(readState(target.id)!)).toBeUndefined();

@@ -18,7 +18,8 @@ async function fixture() {
   const owner = "restore-owner", thread = `user-${owner}`, now = Date.now(), challenge = crypto.randomUUID();
   let db = new Database(":memory:"), alarm: number | null = null, active = true, paused = false, lifecycle = 0;
   let permitCommitHook: (() => void) | undefined, proofHook: (() => Promise<void>) | undefined;
-  let losePermit = false, loseClear = false, calls = 0, spoofAck = false;
+  let losePermit = false, loseClear = false, calls = 0, spoofAck = false, receipts = 0;
+  let receiptCommitHook: (() => void) | undefined;
   const occurrences = [harnessDigest("one").slice(7), harnessDigest("two").slice(7)];
   const config: BrowserWatchConfig = { id: "fixture", label: "Fixture", connectionId: "site", connectionRevision: "1", sourceGeneration: 1,
     origin: "https://site.example", kind: "push", outcome: "received", action: { kind: "actor", instruction: "Review" }, expiresAt: now + 3_600_000, backlog: 8, maxOccurrences: 256 };
@@ -44,13 +45,14 @@ async function fixture() {
   } };
   const make = () => engine = createBrowserWatchReauthorization({ owner, journal, refresh: async () => {},
     scope: () => ({ config, lease, generation: 1, lifecycleRevision: lifecycle, active: !paused }),
-    current: () => active, authorize: async (_config, signal) => { signal.throwIfAborted(); if (!active) throw Error("revoked"); },
+    current: () => active, authorize: async (_config, signal, operation = "configure") => { signal.throwIfAborted(); if (!active || operation !== "reconcile" && config.expiresAt <= Date.now()) throw Error("revoked"); },
     mutate: async (_producer, task) => task(),
     status: async () => structuredClone(status),
     restoreProof: async (_producer, _challenge, hostThrough) => {
       await proofHook?.();
       return { ...structuredClone(proof), hostThrough, prefixDigest: proof.prefixDigest ?? browserWatchRestorePrefixDigest({ owner, producer: "producer", epoch: "epoch", generation: 1 }, occurrences.slice(0, hostThrough).map((id, i) => [i + 1, id])) };
     },
+    restoreReceipt: async () => { receipts++; return structuredClone(status); },
     reauthorizeLease: async (permit: BrowserWatchRestorePermit) => {
       calls++; status = { ...status, deliveryEpoch: permit.deliveryEpoch, acknowledged: spoofAck ? 0 : permit.hostThrough, state: "watching", reason: "collecting" }; delete status.restore;
       if (loseClear) { loseClear = false; throw Error("lost_private_ack"); }
@@ -62,6 +64,7 @@ async function fixture() {
     actorFor: () => definition, layersFor: () => Layer.empty, keyOf: e => browserWatchEventKey(e) ?? browserEventKey(e),
     canAppend: (_thread, events, prior) => {
       if (events.some(e => e.type === "AikoBrowserWatchRestorePermitted")) { permitCommitHook?.(); permitCommitHook = undefined; }
+      if (events.some(e => e.type === "AikoBrowserWatchRestoreChecked" && e.status === "confirmed")) { receiptCommitHook?.(); receiptCommitHook = undefined; }
       return engine.admissionAllowed(events, prior);
     } }); make(); };
   await open();
@@ -79,6 +82,12 @@ async function fixture() {
     mutateProof: (value: object) => Object.assign(proof, value),
     losePermit: () => { losePermit = true; }, loseClear: () => { loseClear = true; },
     wrongAck: () => { spoofAck = true; },
+    get receipts() { return receipts; },
+    revokeReceiptCommit: () => { receiptCommitHook = () => { active = false; }; },
+    drift: () => { paused = true; lifecycle = 2; lease.leaseRevision = 1; config.expiresAt = Date.now() - 1;
+      status = { ...status, lifecycleRevision: lifecycle, leaseRevision: 1, expiresAt: config.expiresAt, state: "paused" }; },
+    checkReceipt: async () => { const request = (await read()).find(e => e.type === "AikoBrowserWatchRestoreRequested")!;
+      return engine.checkReceipt({ id: "fixture", requestId: String(request.id) }, AbortSignal.timeout(5000)); },
     holdProof: (fn: () => Promise<void>) => { proofHook = fn; },
     restart: async () => { await host.close(); const bytes = db.serialize(); db.close(); db = Database.deserialize(bytes); await open(); },
     appendEvent: async (sequence: number) => host.seed(thread, [{ type: "AikoBrowserPushObserved", schema: BROWSER_EVENT_SCHEMA, owner,
@@ -143,4 +152,21 @@ test("restore structural guard rejects unbound secret fields and noncontiguous n
   expect(browserWatchRestoreAppendAllowed([permit], () => before.filter(e => !browserEventKey(e)))).toBe(false);
   expect(() => browserWatchRestorePrefix([...before, { ...before.find(e => browserEventKey(e))!, id: "gap", sequence: 3 }],
     { owner: f.owner, producer: "producer", epoch: "epoch", sourceGeneration: 1 })).toThrow();
+});
+
+test("receipt-only restore confirms after pause, expiry and revision drift without applying again", async () => {
+  const f = await fixture(); f.loseClear();
+  expect(await f.run()).toMatchObject({ status: "pending" });
+  const before = (await f.read()).filter(e => e.type === "AikoBrowserWatchRestorePermitted");
+  f.drift(); await f.restart();
+  expect(await f.checkReceipt()).toMatchObject({ status: "confirmed" });
+  expect(f.calls).toBe(1); expect(f.receipts).toBe(1);
+  expect((await f.read()).filter(e => e.type === "AikoBrowserWatchRestorePermitted")).toEqual(before);
+});
+test("receipt-only lookup never applies an unapplied permit and still fences current authority at commit", async () => {
+  const unapplied = await fixture(); unapplied.losePermit(); await unapplied.run(); unapplied.drift();
+  expect(await unapplied.checkReceipt()).toMatchObject({ status: "pending" }); expect(unapplied.calls).toBe(0);
+  const revoked = await fixture(); revoked.loseClear(); await revoked.run(); revoked.drift(); revoked.revokeReceiptCommit();
+  await expect(revoked.checkReceipt()).rejects.toThrow(); expect(revoked.calls).toBe(1);
+  expect((await revoked.read()).some(e => e.type === "AikoBrowserWatchRestoreChecked" && e.status === "confirmed")).toBe(false);
 });

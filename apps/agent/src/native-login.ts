@@ -1,7 +1,9 @@
 import {nativeLoginObservation,loginUuid,type NativeLoginAttemptState} from "./native-login-observation.ts";
-/** Private browser control. Only the authenticated owner API can call this, never an actor tool. */
+/** Private browser control. Credential input stays on the authenticated private
+ * API; actor login controls use the host's metadata-only operation wrapper. */
 import { publicTarget } from "./browser-proxy.ts";
-import { nativeLoginFields, nativeLoginLink, nativeLoginFormSafe, nativeLoginSubmit } from "./native-login-page.ts";
+import { nativeLoginFields, nativeLoginLink, nativeLoginFieldTargets, nativeLoginPrepareFields, nativeLoginFocusField, nativeLoginSubmit } from "./native-login-page.ts";
+import { googleEntryExpression } from "./native-google-sso.ts";
 import { gmailIdentityExpression, authenticatedIdentityExpression } from "./native-gmail-page.ts";
 import { isGmailDomain } from "../../../packages/protocol/src/google-connection.ts";
 import { loginAssistanceMethods, type GmailLoginGrant, type LoginAssistanceMethod, type LoginAssistanceView } from "../../../packages/protocol/src/login-assistance.ts";
@@ -9,7 +11,7 @@ import { assistanceView, type NativeLoginAssistanceState } from "./native-login-
 import { nativeLoginStartUrl, nativeLoginResourceHost, nativeLoginProviderHost, nativeCookieScope, nativeCookieDomainAllowed, nativeLoginScopesOverlap, nativeLoginAuthenticatedSelector } from "./native-login-policy.ts";
 export type NativeLoginInput = { attemptId?: string; challengeId?: string; submissionId?: string; expectedRevision?: number; connectionId: string; domain: string; action: "assist" | "assist_consent" | "login" | "renew" | "begin" | "status" | "form" | "credentials" | "view" | "click" | "type" | "key" | "scroll" | "finish" | "disconnect" | "navigate" | "allow_origin"; sourceConnectionId?: string; assistanceId?: string; assistMethod?: LoginAssistanceMethod; gmailGrant?: GmailLoginGrant; url?: string; credentialReference?: { managerId: string; reference: string }; username?: string; password?: string; code?: string; x?: number; y?: number; text?: string; key?: string; delta?: number };
 export type NativeLoginState = NativeLoginAttemptState & { assistance?: NativeLoginAssistanceState; connectionId: string; domain: string; targetId?: string; preserveTargetIds?: string[]; approvedOrigins?: string[]; navigationRecovered?: boolean; inputDispatched?: boolean; credentialSubmittedAt?: number; discoveredLoginUrls?: string[]; status: "pending" | "connected" | "disconnected"; expiresAt: number; revision: number; credentialsSaved?: boolean; expired?: boolean; verifiedSession?: { expiresAt: number; revision: number; credentialsSaved?: boolean } };
-export type NativeLoginView = Pick<NativeLoginAttemptState,"attemptId"|"challenge"|"submission"|"loginReceipts"> & { assistance?: LoginAssistanceView; status: NativeLoginState["status"]; domain: string; currentHost?: string; requiresOrigin?: string; pageError?: "navigation_failed" | "navigation_uncertain"; fields?: string[]; screenshot?: string; width?: number; height?: number; expiresAt: number; revision: number; credentialsSaved?: boolean };
+export type NativeLoginView = Pick<NativeLoginAttemptState,"attemptId"|"challenge"|"submission"|"loginReceipts"> & { assistance?: LoginAssistanceView; status: NativeLoginState["status"]; domain: string; currentHost?: string; requiresOrigin?: string; pageError?: "navigation_failed" | "navigation_uncertain"; fields?: string[]; providers?: ("google")[]; screenshot?: string; width?: number; height?: number; expiresAt: number; revision: number; credentialsSaved?: boolean };
 export type PrivateCdp = {send(method:string,params:object,sessionId?:string):Promise<any>;close():void};
 /** Expired private pages must be cleaned, not merely ignored: they still hold login state. */
 export async function prepareNativeLogin(input: NativeLoginInput, states: NativeLoginState[], run: (input: NativeLoginInput, reason?: "expired") => Promise<NativeLoginView | void>, now = Date.now()) {
@@ -222,10 +224,10 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMi
   if (input.action === "credentials") {
     // Reject ambiguous forms and foreign submit destinations before inserting any secret.
     const names = (["username","password","code"] as const).filter(name => !!input[name]);
-    const safe = await evaluate(`(() => {const f=${fieldsExpression}; const names=${JSON.stringify(names)};
-      const safeForm=${nativeLoginFormSafe};
-      return location.protocol === 'https:' && names.every(n => f[n].length === 1 && safeForm(f[n][0]));})()`);
-    if (!safe) throw Error("This sign-in step needs a supported, unambiguous form");
+    const nonce=crypto.randomUUID();
+    const plan = await evaluate(nativeLoginPrepareFields(currentOrigin,names,input.code?.length ?? 0,nonce));
+    if (!plan || typeof plan !== "object" || !names.every(name => Number.isInteger(plan[name]) && (plan[name] === 1 || name === "code" && plan[name] >= 4 && plan[name] <= 8 && input.code?.length === plan[name])))
+      throw Error("This sign-in step needs a supported, unambiguous form and a complete code");
     state.inputDispatched=true;
     if (input.username) state.credentialSubmittedAt = Math.floor(Date.now() / 1000) * 1000;
     dependencies.save(state);
@@ -233,18 +235,15 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMi
       state.submission={id:input.submissionId!,challengeId:state.challenge!.id,revision:state.challenge!.revision,status:"dispatched"};
       nativeLoginObservation(state,"submission_dispatched"); dependencies.save(state);
     }
-    for (const name of names) {
-      const focused = await evaluate(`(() => {const f=${fieldsExpression};const e=f[${JSON.stringify(name)}][0];
-        const safeForm=${nativeLoginFormSafe};
-        if(location.origin !== ${JSON.stringify(currentOrigin)} || location.protocol !== 'https:' || !e || !safeForm(e)) return false;
-        e.focus();e.select();return document.activeElement === e;})()`);
+    for (const name of names) for(let index=0;index<plan[name];index++) {
+      const focused = await evaluate(nativeLoginFocusField(currentOrigin,name,index,nonce));
       if (!focused) throw Error("Sign-in page changed; try again");
       dependencies.beforeCredentialDispatch?.(state);
-      await cdp.send("Input.insertText",{text:input[name]},sessionId);
+      await cdp.send("Input.insertText",{text:plan[name] === 1 ? input[name] : input[name]![index]},sessionId);
     }
     // Submit the selected login form, not an arbitrary button elsewhere on the page.
     dependencies.beforeCredentialDispatch?.(state);
-    const submitted = await evaluate(nativeLoginSubmit(currentOrigin));
+    const submitted = await evaluate(nativeLoginSubmit(currentOrigin,nonce));
     if (!submitted) throw Error("Sign-in page changed; inspect it before continuing");
     if(submitted==="enter") {
       dependencies.beforeCredentialDispatch?.(state);
@@ -255,8 +254,11 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMi
     return {...summary(), fields: []};
   }
   if (input.action === "form" || input.action === "begin") {
-    const fields = await evaluate(`(() => {const f=${fieldsExpression};return Object.keys(f).filter(n => f[n].length === 1);})()`);
-    if(Array.isArray(fields) && !fields.length && !state.inputDispatched && (state.discoveredLoginUrls?.length ?? 0)<3) {
+    const fields = await evaluate(`(() => {const f=${fieldsExpression};const targets=${nativeLoginFieldTargets};return Object.keys(f).filter(n => targets(f,n).length > 0);})()`);
+    // Only a fixed provider kind leaves the page. Discovery does not grant
+    // source cookies, provider navigation, account selection or OAuth consent.
+    const providers: ("google")[] = sameApp && !isGmailDomain(state.domain) && await evaluate(googleEntryExpression(currentOrigin,false)) === 1 ? ["google"] : [];
+    if(Array.isArray(fields) && !fields.length && !providers.length && !state.inputDispatched && (state.discoveredLoginUrls?.length ?? 0)<3) {
       const link=await evaluate(nativeLoginLink);
       let destination: URL | undefined;
       try { if(typeof link === "string")destination=publicTarget(link); } catch {}
@@ -274,7 +276,7 @@ export async function nativeLogin(input:NativeLoginInput, dependencies:{reopenMi
       state.challenge={id:crypto.randomUUID(),revision:(state.challenge?.revision??0)+1,expiresAt:Math.min(state.expiresAt,Date.now()+5*60_000)};
       delete state.submission;nativeLoginObservation(state,"challenge");dependencies.save(state);
     }
-    return {...summary(),currentHost:String(hostname),fields:Array.isArray(fields) ? fields.filter(n => ["username","password","code"].includes(n)) : []};
+    return {...summary(),currentHost:String(hostname),fields:Array.isArray(fields) ? fields.filter(n => ["username","password","code"].includes(n)) : [],providers};
   }
   if(["type","click","key"].includes(input.action)) {state.inputDispatched=true;dependencies.save(state);}
   if(input.action === "type") {

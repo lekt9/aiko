@@ -1,6 +1,7 @@
 # Start: bun --no-env-file apps/web/test/ui-recovery.preview.ts
 # Run with browser-harness and an isolated BU_CDP_URL. No provider or account APIs.
 import os, pathlib, json
+from concurrent.futures import ThreadPoolExecutor
 root = pathlib.Path(os.environ['UNLOCK_ROOT'])
 helpers = (root / 'scripts/browser_helpers.py').read_text().replace("OUT = ROOT / 'artifacts/vault-qa'", "OUT = ROOT / 'artifacts/agents-principles-fixes-2026-09-08'")
 exec(helpers)
@@ -19,6 +20,22 @@ def add_approval():
 
 def database_status(status):
     js('uiFixture.databaseStatus=' + str(status))
+
+def reload_decision(accept):
+    # Chrome holds mouseReleased until a native confirm is answered. Keep CDP
+    # available to answer that dialog while the actual coordinate click waits.
+    cdp('Page.enable'); drain_events()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        clicked = executor.submit(click, 'button', 'Reload table')
+        deadline = time.monotonic() + 4
+        dialog = None
+        while not dialog and time.monotonic() < deadline:
+            dialog = next((e for e in drain_events() if e.get('method') == 'Page.javascriptDialogOpening'), None)
+            if not dialog: time.sleep(.05)
+        assert dialog and dialog['params']['type'] == 'confirm'
+        assert dialog['params']['message'] == 'Discard unsaved changes and reload this table?'
+        cdp('Page.handleJavaScriptDialog', accept=accept)
+        clicked.result(timeout=4)
 
 def viewport_shot(name):
     data = cdp('Page.captureScreenshot', format='png', captureBeyondViewport=False)['data']
@@ -234,6 +251,21 @@ try:
     wait('!!document.querySelector("input[aria-label=Project]")')
     assert js('document.querySelector("input[aria-label=Project]").value') == 'Keep my edit'
     record('UI-2: transient failures and explicit retries preserve an existing-record draft')
+
+    reload_decision(False)
+    assert js('document.querySelector("input[aria-label=Project]").value') == 'Keep my edit'
+    database_status(503)
+    reload_decision(True)
+    wait('!!document.querySelector(".db-artifact > .db-error")')
+    assert js('!!document.querySelector(".db-record")')
+    database_status(200); click('button', 'Retry refresh')
+    wait('!!document.querySelector("input[aria-label=Project]")')
+    assert js('document.querySelector("input[aria-label=Project]").value') == 'Keep my edit'
+    reload_decision(True)
+    wait('!!document.querySelector("table")')
+    click('button', 'Open record Original project')
+    assert js('document.querySelector("input[aria-label=Project]").value') == 'Original project'
+    record('UI-2: cancelled or failed discard reload preserves the draft; successful discard resets even an unchanged row revision')
 
     for status in [401, 403]:
         open_fixture('?database'); wait('!!document.querySelector("table")')

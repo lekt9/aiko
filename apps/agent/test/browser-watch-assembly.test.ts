@@ -402,7 +402,10 @@ for(const loseAck of [false,true])test(`restored private queue rejoins guarded n
   expect(status.collector.restore.queue).toMatchObject({head:2,acknowledged:1});
   const input={id:f.config.id,expectedGeneration:status.generation,expectedLifecycleRevision:status.lifecycleRevision,expectedLeaseRevision:status.leaseRevision,challenge:status.collector.restore.challenge};
   f.setRelay(true);if(loseAck)f.loseRestoreReply();
-  const result=await f.channels.watches!.reauthorize(input,signal());
+  const request=()=>new Request("https://account.example/api/channels/browser-watches/reauthorize",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)});
+  expect((await browserWatchApi(request(),"watch-assembly",f.channels.watches,{owner:"watch-assembly",scopes:["read"]},()=>{})).status).toBe(403);
+  const response=await browserWatchApi(request(),"watch-assembly",f.channels.watches,{owner:"watch-assembly",scopes:["write"]},()=>{});
+  expect(response.status).toBe(200);const result=(await response.json() as any).result;
   expect(result).toMatchObject({status:loseAck?"pending":"confirmed"});
   await f.drive();expect(f.calls).toHaveLength(2);
   const permit=(await f.events()).find(e=>e.type==="AikoBrowserWatchRestorePermitted")!;

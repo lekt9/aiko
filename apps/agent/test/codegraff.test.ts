@@ -21,6 +21,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { browserWatchRestorePrefixDigest } from "../src/browser-watch-restore.ts";
 
 function store(): SandboxStore {
   const values = new Map<string, unknown>();
@@ -1789,7 +1790,8 @@ function restoreProofFor(lease:ReturnType<typeof watchLease>):import('../src/bro
   return {owner:g.owner,producer:g.producer,profile:g.profile,epoch:g.epoch,generation:g.generation,connectionId:g.connectionId,
     connectionRevision:g.connectionRevision,lifecycleRevision:lease.lifecycleRevision??0,leaseRevision:lease.leaseRevision??0,
     ...(g.deliveryEpoch?{deliveryEpoch:g.deliveryEpoch}:{}),expiresAt:g.expiresAt,challenge:crypto.randomUUID(),at:Date.now(),
-    queue:{head:8,acknowledged:3,offered:6},hostThrough:5,prefixDigest:`sha256:${'a'.repeat(64)}`};
+    queue:{head:8,acknowledged:3,offered:6},hostThrough:5,
+    prefixDigest:browserWatchRestorePrefixDigest(g,Array.from({length:5},(_,index)=>[index+1,String(index+1).repeat(64)] as const))};
 }
 function restoreRequestFor(proof:ReturnType<typeof restoreProofFor>):import('../src/browser-watch-restore.ts').BrowserWatchReauthorizeRequest {
   const {deliveryEpoch,...scope}=proof;return {...scope,previousDeliveryEpoch:deliveryEpoch??null,deliveryEpoch:crypto.randomUUID()};
@@ -1806,7 +1808,8 @@ test('restore proof is an exact passive encrypted read with no source identity d
     for(const patch of [{owner:'foreign'},{profile:'foreign'},{epoch:'foreign'},{producer:'foreign'},{generation:2},
       {connectionId:'foreign'},{connectionRevision:'foreign'},{lifecycleRevision:1},{leaseRevision:1},{deliveryEpoch:'other'},
       {expiresAt:proof.expiresAt+1},{challenge:crypto.randomUUID()},{hostThrough:4},{privatePayload:'PRIVATE_RESTORE'},
-      {queue:{head:8,acknowledged:7,offered:6}},{prefixDigest:'bad'},{at:0}]){
+      {queue:{head:8,acknowledged:7,offered:6}},{prefixDigest:'bad'},{prefixDigest:`sha256:${proof.prefixDigest}`},
+      {prefixDigest:proof.prefixDigest.toUpperCase()},{at:0}]){
       remote.reply((output,request)=>request.operation==='watch-restore-proof'?{...proof,...patch}:output);
       await expect(f.sandbox.watchRestoreProof(proof.producer,proof.challenge,proof.hostThrough)).rejects.toThrow('Browser watch restore proof');
     }
@@ -1840,7 +1843,7 @@ test('restore reauthorization retains exact request across lost acknowledgement 
     try{
       await expect(rebuilt.watchConfigure(lease)).rejects.toThrow('restore unresolved');
       await expect(rebuilt.watchReauthorize(proof.producer,{...request,deliveryEpoch:crypto.randomUUID()})).rejects.toThrow('request conflict');
-      await expect(rebuilt.watchReauthorize(proof.producer,{...request,prefixDigest:`sha256:${'b'.repeat(64)}`})).rejects.toThrow('request conflict');
+      await expect(rebuilt.watchReauthorize(proof.producer,{...request,prefixDigest:'b'.repeat(64)})).rejects.toThrow('request conflict');
       expect(restored.requests).toHaveLength(0);
       expect((await rebuilt.watchReauthorize(proof.producer,request)).deliveryEpoch).toBe(request.deliveryEpoch);
       expect((await f.state.get<any[]>('codegraff:browser-watch-configurations'))![0]).toMatchObject({deliveryEpoch:request.deliveryEpoch});
