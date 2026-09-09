@@ -20,12 +20,12 @@ Aiko is one client of this capability. Other agents should use the same owner-bo
 
 ### What we should heavily focus on
 
-| Focus | Proposed share of near-term effort | Outcome |
-| --- | ---: | --- |
-| Identity, app discovery and durable authenticated access | 30% | One initial connection opens a continuing discovery path; users resolve exceptional challenges instead of routinely setting up each app again. |
-| Browser indexing and executable API graphs | 35% | Visiting and using an app teaches reusable requests, inputs, dependencies and operations. |
-| Graph recall, user context and action reuse | 20% | Agents find existing capabilities, fetch relevant current facts and act without rebuilding integrations. |
-| Incremental maintenance, recovery and user control | 15% | Learned access and capabilities keep working, or explain the precise exception that needs attention. |
+| Focus                                                    | Proposed share of near-term effort | Outcome                                                                                                                                        |
+| -------------------------------------------------------- | ---------------------------------: | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity, app discovery and durable authenticated access |                                30% | One initial connection opens a continuing discovery path; users resolve exceptional challenges instead of routinely setting up each app again. |
+| Browser indexing and executable API graphs               |                                35% | Visiting and using an app teaches reusable requests, inputs, dependencies and operations.                                                      |
+| Graph recall, user context and action reuse              |                                20% | Agents find existing capabilities, fetch relevant current facts and act without rebuilding integrations.                                       |
+| Incremental maintenance, recovery and user control       |                                15% | Learned access and capabilities keep working, or explain the precise exception that needs attention.                                           |
 
 These shares express focus, not estimates or separate infrastructure projects. Authenticated replay, semantic memory and maintenance belong in the same first product proof. UI polish supports that proof; general optimisers, rich databases, calling and video expansion can wait.
 
