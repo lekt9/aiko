@@ -2,6 +2,8 @@
 
 Date: 2026-09-06. Status: implementation in progress, not product acceptance.
 
+For the owner-clarified product direction and proposed delivery sequence, see [Product prioritisation: the universal connector](product-prioritisation.md): identity-led app discovery, authenticated browser indexing, API graph memory and reusable actions across apps and socials. The full requirements and acceptance gates in this brief remain intact.
+
 ## Source and scope
 
 The owner supplied a 20-item brief and approved its implementation. The brief
