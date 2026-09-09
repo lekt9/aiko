@@ -207,7 +207,10 @@ function authUrl(value: unknown): string {
 }
 
 const catalogScopes = new WeakMap<HttpFetch, Map<string, CatalogCache>>();
-const ownerQueues = new Map<string, Promise<unknown>>();
+// Per store, not process-wide owner. Tests (and any future multi-host process)
+// each have their own KV; sharing one queue let a long browser/media host starve
+// an unrelated login import for the same fixture owner id.
+const ownerQueues = new WeakMap<ConnectorStore, Map<string, Promise<unknown>>>();
 
 /** Bind once to the authenticated account. Do not construct from model-supplied owner IDs. */
 export class ConnectorEngine {
@@ -399,7 +402,12 @@ export class ConnectorEngine {
     }
   }
   private serial<T>(run: () => Promise<T>): Promise<T> {
-    const prior = ownerQueues.get(this.prefix) ?? Promise.resolve();
+    let queues = ownerQueues.get(this.options.store);
+    if (!queues) {
+      queues = new Map();
+      ownerQueues.set(this.options.store, queues);
+    }
+    const prior = queues.get(this.prefix) ?? Promise.resolve();
     const queuedAt = Date.now();
     const next = prior
       .catch(() => undefined)
@@ -412,11 +420,10 @@ export class ConnectorEngine {
           });
         return run();
       });
-    ownerQueues.set(this.prefix, next);
+    queues.set(this.prefix, next);
     void next
       .finally(() => {
-        if (ownerQueues.get(this.prefix) === next)
-          ownerQueues.delete(this.prefix);
+        if (queues.get(this.prefix) === next) queues.delete(this.prefix);
       })
       .catch(() => undefined);
     return next;

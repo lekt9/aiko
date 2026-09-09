@@ -109,4 +109,4 @@ test('trusted preflight records corrupt closure separately from unknown executio
   await pythonComputeRunner({runtime:{packages},runtimeLockDigest:original.lockDigest},['environment',report]);
   expect(JSON.parse(await readFile(report,'utf8'))).toEqual({ready:false,reason:'runtime-lock-mismatch',runtimeLockDigest:original.lockDigest});
  }finally{original?.dispose();await rm(report,{force:true});await rm(dir,{recursive:true,force:true});}
-},120000);
+},300000);

@@ -1,6 +1,7 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { Memory, tardigradeLogSource } from "entity-learn";
+import { Memory as HostMemory } from "entity-learn/cloudflare";
 import {
   indexLearning,
   memorySnapshot,
@@ -534,16 +535,17 @@ test("hundreds of native log episodes preserve a complete semantic root and rema
 
 test("learning recovers original native commit evidence after commit-before-return and unrelated SQLite writes", async () => {
   const binding = await fixture();
-  const refresh = Memory.prototype.refresh;
-  const crash = spyOn(Memory.prototype, "refresh").mockImplementation(async function (
-    this: Memory, ...args: Parameters<Memory["refresh"]>
+  // Host memory is entity-learn/cloudflare Memory, not the Node file subclass.
+  const refresh = HostMemory.prototype.refresh;
+  HostMemory.prototype.refresh = async function (
+    this: HostMemory, ...args: Parameters<HostMemory["refresh"]>
   ) {
     await refresh.apply(this, args);
     throw Error("lost native return after SQLite commit");
-  });
+  };
   try {
     await expect(indexLearning(binding, input, redactor())).rejects.toThrow("lost native return");
-  } finally { crash.mockRestore(); }
+  } finally { HostMemory.prototype.refresh = refresh; }
   const memory = openMemory(binding);
   let original: ReturnType<Memory["journal"]["events"]>[number];
   let originalVersion: number;

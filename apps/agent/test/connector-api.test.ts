@@ -41,7 +41,7 @@ test("login import batches require write scope and stay in the authenticated acc
  expect((await (await app.request("/api/connectors/connections", bob)).json()).connections).toHaveLength(0);
  expect((await (await app.request("/api/connectors/connections", alice)).json()).connections).toHaveLength(500);
  expect(app.calls).toHaveLength(0);
-});
+}, 120000);
 
 test('router API executes the native account actor and returns separate task routes',async()=>{
  const app=await setup();

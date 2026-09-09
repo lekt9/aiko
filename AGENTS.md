@@ -1,3 +1,71 @@
+# CLAUDE.md
+
+Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
+
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+
+## 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them - don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+## 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+## 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it - don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+## 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+---
+
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+
+
 # Working on Unlock
 
 Make everything user friendly and simple. Judge the work by whether a person can understand it, trust it, and accomplish something useful. Apply this to interfaces, agent behavior, APIs, architecture, documentation, and your own workflow.
@@ -125,7 +193,7 @@ This is a maintained map, not a claim that current builds or production behavior
 | Shared contracts and clients | [packages/protocol/](packages/protocol/), [packages/sdk/README.md](packages/sdk/README.md): check consumers when changing a contract. 2026-09-09 — Hosted login imports share a 500-row/1-MiB UTF-8 JSON [policy](packages/protocol/src/login-import.ts) across preview and HTTP/engine boundaries ([joined checks](apps/agent/test/login-import-boundaries.test.ts)). [SDK cancellation](tests/aiko-sdk.test.ts) covers credential lookup and body consumption; late tokens cannot dispatch cancelled writes. |
 | Optional custody backend | [apps/server/src/](apps/server/src/), [tests/backend/](tests/backend/): separate from hosted Aiko identity/storage. 2026-09-09 — Normal sync requires ready, verified, current-generation state before and after verification; revoked/stale sessions recover through explicit owner paths ([transaction tests](tests/backend/runtime-status.test.ts)). Seed recipe cookies at their own host ([scope tests](tests/backend/recipes.test.ts)); recheck both invariants when changing renewal. |
 | Shared browser dependency | 2026-09-08 — User-requested direct `link:` restored: [agent dependencies](apps/agent/package.json) and root tooling resolve `@unbrowse/browser-harness` to `../unbrowse-playground/runtime`, not a snapshot. [Setup, CI access and rebuild rules](docs/shared-browser-runtime.md); [identity and source-edit bundle checks](apps/agent/test/shared-browser-library.test.ts). Keep Unlock's background listener in `apps/agent/src/cdp-background-listener.ts`; do not recreate copied core source. Install both lockfiles with scripts disabled. Long-running processes/VM bundles require restart/rebuild; no automatic deployment. [entity-learn](packages/entity-learn/) remains local. Task threads now use owner-bound tabs; queue native selection + dispatch, keep sign-in/cookies account-wide, and close exact targets without the v0.36 `tab close` sibling-loss bug. [Tab contract and verification](docs/shared-browser-runtime.md#concurrent-tasks-and-account-tabs): graph capture now pins transient page ancestry and dispatch-owned call IDs; never borrow a sibling's response/window. Preserve per-page allowances and unique live request IDs across observer replacement ([learning regressions](apps/agent/test/browser-learning.test.ts)). Recheck cleanup, capture attribution and remote event flush when changing scheduling. |
-| Shared Worker test fixtures | 2026-09-08 — Imported [Worker fixtures](apps/agent/test/registry-worker-host.test.ts) register cleanup per invocation with `onTestFinished`; a defining-file `afterEach` left the network trap active in importing tests and broke later HTTP evaluations ([evidence](artifacts/browser-events/revision-fixture-cleanup/evidence.json)). 2026-09-09 — Multiple fixtures in one test share a counted network fence; cleanup order must not restore another fixture’s stale fetch stub. Bun test commands need explicit `./apps/...` paths, and targeted Vitest runs exclude `artifacts/`, to avoid matching archived checkouts ([browser verifier](scripts/verify-browser-events.ts)). Preserve cleanup across importing callers when extending this fixture. |
+| Shared Worker test fixtures | 2026-09-08 — Imported [Worker fixtures](apps/agent/test/registry-worker-host.test.ts) register cleanup per invocation with `onTestFinished`; a defining-file `afterEach` left the network trap active in importing tests and broke later HTTP evaluations ([evidence](artifacts/browser-events/revision-fixture-cleanup/evidence.json)). 2026-09-09 — Multiple fixtures in one test share a counted network fence; cleanup order must not restore another fixture’s stale fetch stub. Bun test commands need explicit `./apps/...` paths, and targeted Vitest runs exclude `artifacts/`, to avoid matching archived checkouts ([browser verifier](scripts/verify-browser-events.ts)). Preserve cleanup across importing callers when extending this fixture. 2026-09-09 — Connector mutation queues are per KV store, not process-wide owner id, so one fixture host cannot starve another login import ([engine](apps/agent/src/connectors.ts)). |
 | Browser events and reusable tools | 2026-09-09 — [Design](docs/browser-events-and-reusable-tools.md) uses typed channels and immutable harnesses. Worker `AIKO_BROWSER_WATCH_CONFIG` mounts owner-scoped catalogs on the native sign-in sandbox; webhook keys use separate owner-scoped references and destination IDs cannot be rebound after rotation ([host checks](apps/agent/test/browser-watch-config-host.test.ts)); Bun rejects this flag because its default sessions differ. Discovery is passive; saved harness execution rechecks current context. The [Saved tools API](apps/agent/src/harness-library-api.ts) reuses this library; inspect/recall/output POSTs require read scope at both Worker gates, while run/evaluate retain write and effect checks. Catalog retirement must cut retained producer/source grants across restart. Explicit actor/webhook capabilities use pending native receipts with immutable deadlines; preserve backlog until settlement. Actor admission reads the current connector row through Worker `storage.kv.get` inside the Router commit; [workerd witness](scripts/verify-browser-watch-kv.ts) covers storage coherence and revocation. Async proof caches are insufficient. Preserve private-login cutoffs and encrypted, count-fenced loss history in the [runner](apps/agent/src/browser-watch-runner.ts). [Harness actions](apps/agent/src/browser-watch-actions.ts) use native library receipts; paused watches retain receipt-only authority. Pause/resume uses an exact private lifecycle revision and queue watermark, preserving source sequence/history across restart ([joined checks](apps/agent/test/browser-watch-assembly.test.ts)); passive Codegraff status/release never starts or resumes a VM. Renewal uses a separate lease revision and atomic private-confirmation/source amendment; retain cumulative usage, the single pinned source operation and existing receipt deadlines. Expired confirmations cannot reactivate collection ([renewal checks](apps/agent/test/browser-watch-source-renewal.test.ts)). Remote webhook requests require an exact single-use native permit after private request preparation; [joined tests](apps/agent/test/browser-watch-webhook-assembly.test.ts) cover guarded commit and restart without resend. Permits must use explicit `appendControl`: Worker `seed` imports history without the application guard. Job admission alone grants no send authority. Edited session reads use the existing resolver and independently registered library cases; evaluation authority cannot become ordinary run authority ([read binding](apps/agent/src/harness-observed-network.ts)). Disabling the watch capability must also fence retained outbox work. Restored producers stay held before snapshot publication; reauthorization preserves queue identity and rotates only signed delivery authority. Observed admission must use guarded append and check the retained receipt before ack ([restore design and remaining repair work](docs/browser-events-and-reusable-tools.md)). The full browser journey remains unverified. Preserve [handler effect restrictions](apps/agent/src/channel-wiring.ts); code presence and the proposal are not deployed-feature evidence. Recheck host bindings and the [evidence record](docs/browser-events-status.md) before claiming readiness. |
 
 ### Commands
@@ -139,7 +207,7 @@ Defined in [package.json](package.json); prerequisites are in [README.md](README
 | Local agent | `pnpm aiko:dev` — requires local setup from the agent docs |
 | Build / types | `pnpm build`; `pnpm typecheck` |
 | General tests | `pnpm test` — builds backend, runs Vitest, agent tests, and browser client tests |
-| Agent tests | `pnpm test:aiko` — entity-learn validation then Bun `--timeout 30000`; use `TMPDIR=/tmp` so Chromium/CDP and sealed-runtime work do not inherit a long agent-grid temp path |
+| Agent tests | `pnpm test:aiko` — entity-learn validation then Bun `--timeout 60000 --parallel=1`; one worker so fixture hosts do not share process-wide queues or sealed-runtime setup. Use `TMPDIR=/tmp` so Chromium/CDP and sealed-runtime work do not inherit a long agent-grid temp path |
 | Backend integration | `pnpm test:backend` — requires `UNLOCK_TEST_DATABASE_URL` pointing to a dedicated loopback PostgreSQL test database; creates/drops test schemas |
 | Hosted checks | `pnpm aiko:cloud:build`; `pnpm aiko:cloud:verify` — Worker-specific types/build and local workerd verification; agent typechecking excludes the Worker entry point. Not deployment or live-provider validation. 2026-09-09 — Keep random ID creation out of Worker module scope; initialise on first execution ([experiment clock](apps/agent/src/harness-experiment.ts)). A successful build alone missed this startup failure; retain the real workerd check. 2026-09-09 — Effect 4 rc declares `Layer`'s provided-services parameter contravariant (`in ROut`); a host-test `layersFor: () => Layer.empty` fails typecheck when inferred services are `unknown` and needs `Layer.empty as Layer.Layer<unknown>` ([native-replay.test.ts](apps/agent/test/native-replay.test.ts)). |
 | Hosted release | 2026-09-09 — [`pnpm ship`](docs/aiko-hosted.md#ship-an-existing-installation-with-one-command) builds, checkpoints/pushes this checkout, gates tests, then publishes frozen Mini App + native Worker/runner artifacts once. Git checkpoint ≠ accepted release. `--verify` reconciles readback without republishing; retain uncertain receipts in the common Git directory. Linked browser source is fingerprinted, not committed by this command. Recheck [release tests](scripts/ship.test.ts) when changing gates or recovery. |

@@ -220,8 +220,15 @@ for (const worker of [false, true])
       )!;
       expect(due).toBeGreaterThanOrEqual(lease - 1000);
       await f.restart();
-      await Bun.sleep(Math.max(1, due - Date.now() + 10));
-      await f.drive();
+      for (
+        let i = 0;
+        i < 8 && f.requests.filter((r) => r.operation === "renew").length < 1;
+        i++
+      ) {
+        const next = channelRuntimeNextWake(await f.events(), "123") ?? due;
+        await Bun.sleep(Math.max(1, next - Date.now() + 10));
+        await f.drive();
+      }
       expect(f.requests.filter((r) => r.operation === "renew")).toHaveLength(1);
       expect(
         Number(

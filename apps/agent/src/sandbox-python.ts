@@ -106,7 +106,7 @@ async function command(args: string[], parent: AbortSignal, limit = 1048576): Pr
  * bounded tmpfs scratch, with no host home, vault, gateway env or network. */
 export async function createPythonSandboxRuntime(options: PythonRuntimeOptions = {}): Promise<SandboxPythonRuntime> {
   if (process.platform !== "linux") throw Error("Python isolation requires Linux Bubblewrap");
-  const setup = AbortSignal.timeout(120000), parent = await resourceParent(options.cgroupRoot);
+  const setup = AbortSignal.timeout(300000), parent = await resourceParent(options.cgroupRoot);
   const probeScope = await createResourceScope(parent, { wallMs: 1000, requests: 0, outputBytes: 1 });
   await probeScope.close();
   const python = await realpath(options.python ?? "/usr/bin/python3"), bubblewrap = await realpath(options.bubblewrap ?? "/usr/bin/bwrap");

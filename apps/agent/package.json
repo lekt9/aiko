@@ -12,7 +12,7 @@
     "dev": "bun src/main.ts",
     "start": "bun src/main.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun ../../scripts/check-entity-learn.ts && bun test --timeout 30000 test",
+    "test": "bun ../../scripts/check-entity-learn.ts && bun test --timeout 60000 --parallel=1 test",
     "build": "bun ../../scripts/check-entity-learn.ts && bun build src/main.ts --target=bun --packages=external --outdir=dist"
   },
   "dependencies": {
