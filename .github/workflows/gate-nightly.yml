@@ -1,0 +1,51 @@
+name: gate-nightly
+
+# The full witness suite on a schedule.
+#
+# `zig build gate` is the acceptance criterion for this repository: each of the
+# 25 witnesses drives the public CLI from an empty directory and asserts against
+# durable state rather than stdout resemblance. Several stand up servers on
+# loopback, replay whole agent runs, or fire the same node twice and compare
+# bytes. That makes the suite the expensive half of CI, and CI on this
+# repository has been failing at job-start on the Actions budget.
+#
+# So the suite is split by trigger rather than trimmed by content. Every push
+# runs `zig build test` in ci.yml; pull requests and default-branch pushes also
+# run `zig build gate` there; and this workflow runs the whole thing nightly so
+# a green history exists independent of what anyone happened to push.
+#
+# Hermetic by construction: no secrets, no repository network access. The only
+# outbound fetch is the pinned Zig toolchain, and every gate that speaks HTTP
+# speaks it to 127.0.0.1.
+on:
+  schedule:
+    # 02:00 UTC daily.
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-nightly
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: zig build test + gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: mlugg/setup-zig@v2
+        with:
+          # Pinned to `minimum_zig_version` in build.zig.zon.
+          version: 0.16.0
+      - name: Both layers' test suites
+        run: zig build test --summary all
+      - name: Runnable witnesses
+        run: zig build gate --summary all
+      - name: Both layers linked in one process
+        run: ./zig-out/bin/aiko-doctor

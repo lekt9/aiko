@@ -1,14 +1,124 @@
 name: ci
 
+# Pushes on every branch, not just main/master. The default branch of this
+# repository is not named `main`, so a branch filter here meant the branch that
+# actually ships was the one branch CI never ran on.
 on:
   push:
-    branches: [main, master]
   pull_request:
   workflow_dispatch:
 
+# CI on this repository has been failing at job-start with "an Actions budget is
+# preventing further use". Cost is therefore a correctness concern, not a
+# nicety: a workflow that cannot start proves nothing. Two things follow —
+# superseded runs are cancelled, and the expensive non-hermetic jobs keep the
+# trigger scope they had before pushes were widened above.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pinned to `minimum_zig_version` in build.zig.zon. Both layers' manifests
+  # pin the same version; a toolchain that drifts from it is caught by
+  # tests/zig-doctrine-gate.sh rather than discovered at runtime.
+  ZIG_VERSION: 0.16.0
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # Hermetic Zig jobs. No secrets, no network beyond the toolchain download, no
+  # package registries. These run on every push and every pull request.
+  # ---------------------------------------------------------------------------
+
+  zig-test:
+    name: zig build test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Both layers' test suites
+        run: zig build test --summary all
+
+  zig-gate:
+    name: zig build gate
+    # The gates are the acceptance criterion, not the unit tests: each drives
+    # the public CLI from an empty directory and asserts against durable state.
+    # The suite is 25 witnesses plus the self-check, several of which stand up
+    # servers and replay whole agent runs, so it is the expensive half. It runs
+    # on pull requests and on default-branch pushes; every other push gets
+    # `zig build test` above, and the full suite also runs nightly in
+    # gate-nightly.yml.
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.ref_name == 'master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Both layers' test suites
+        run: zig build test --summary all
+      - name: Runnable witnesses
+        run: zig build gate --summary all
+
+  neuron-standalone:
+    name: neuron builds and tests without contract
+    # The one-way dependency is architecture, not convention: neuron building
+    # and testing with contract absent is the mechanical evidence that a
+    # delivered system survives the interpreter being unavailable. Asserting it
+    # from the root build proves nothing, because the root build has both trees
+    # present. This job runs the sub-build in its own directory instead.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: neuron's manifest declares no dependency on contract
+        # The build graph, not the prose: `neuron/build.zig` legitimately uses
+        # the word "contract" in a step description, so this looks at the
+        # manifest's dependency surface and at `b.dependency` calls instead.
+        run: |
+          if grep -qi 'contract' neuron/build.zig.zon; then
+            echo "neuron/build.zig.zon names contract; the one-way direction is broken" >&2
+            exit 1
+          fi
+          if grep -q 'b\.dependency(' neuron/build.zig; then
+            echo "neuron/build.zig resolves a dependency; neuron must resolve none" >&2
+            exit 1
+          fi
+      - name: neuron test suite, standalone
+        working-directory: neuron
+        run: zig build test --summary all
+
+  smoke-cross:
+    name: smoke zig cross (x86_64-linux-gnu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: cross compile smoke
+        run: zig build -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseFast --summary all
+
+  # ---------------------------------------------------------------------------
+  # Non-hermetic jobs: macOS runners, crates.io, npm, Homebrew. These keep the
+  # trigger scope they had before `on: push` was widened, so widening the Zig
+  # coverage above does not widen the Actions bill below.
+  # ---------------------------------------------------------------------------
+
   installer-config:
     name: macOS installer CI/CD contract
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.ref_name == 'master'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,6 +127,7 @@ jobs:
 
   macos-installer-smoke:
     name: macOS product installer smoke
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.ref_name == 'master'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +146,7 @@ jobs:
           toolchain: "1.92.0"
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: ${{ env.ZIG_VERSION }}
       - name: Install protoc and frontend dependencies
         run: |
           brew install protobuf
@@ -67,23 +178,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  zig-test:
-    name: zig test + gate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
-      - name: zig build test
-        run: zig build test --summary all
-      - name: zig build gate
-        run: zig build gate --summary all
-
   cargo-check:
     name: cargo check
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.ref_name == 'master'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -104,19 +201,9 @@ jobs:
         working-directory: aiko
         run: cargo check --all-targets --workspace
 
-  smoke-cross:
-    name: smoke zig cross (x86_64-linux-gnu)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
-      - name: cross compile smoke
-        run: zig build -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseFast --summary all
-
   portable-smoke:
     name: portable package smoke
+    if: github.event_name != 'push' || github.ref_name == 'main' || github.ref_name == 'master'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -124,7 +211,7 @@ jobs:
           fetch-depth: 0
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: ${{ env.ZIG_VERSION }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.92.0"
